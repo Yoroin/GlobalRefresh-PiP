@@ -14,28 +14,49 @@ class BackgroundTaskManager: NSObject {
     static let shared = BackgroundTaskManager()
     
     func startPlay() {
-        audioPlayer.play()
+        configureAudioSession()
+        audioPlayer?.prepareToPlay()
+        audioPlayer?.play()
     }
     
     func stopPlay() {
-        audioPlayer.stop()
+        audioPlayer?.stop()
+        audioPlayer?.currentTime = 0
+        deactivateAudioSession()
     }
     
-    var audioPlayer: AVAudioPlayer!
+    private var audioPlayer: AVAudioPlayer?
     
     private override init() {
         super.init()
-        
+        guard let mp3URL = Bundle.main.url(forResource: "slience", withExtension: "mp3") else {
+            print("未找到静音音频")
+            return
+        }
+
+        do {
+            try audioPlayer = AVAudioPlayer(contentsOf: mp3URL)
+            audioPlayer?.volume = 0
+            audioPlayer?.numberOfLoops = -1
+            audioPlayer?.prepareToPlay()
+        } catch {
+            print(error)
+        }
+    }
+
+    private func configureAudioSession() {
         do {
             // 设置后台模式和锁屏模式下依旧能够播放
-            try AVAudioSession.sharedInstance().setCategory(.playback, options: .mixWithOthers)
+            try AVAudioSession.sharedInstance().setCategory(.playback, mode: .default, options: .mixWithOthers)
             try AVAudioSession.sharedInstance().setActive(true)
-            
-            let mp4Video = Bundle.main.url(forResource: "slience", withExtension: "mp3")
-            try audioPlayer = AVAudioPlayer.init(contentsOf: mp4Video!)
-            audioPlayer.volume = 0
-            audioPlayer.numberOfLoops = -1
-            print("成功")
+        } catch {
+            print(error)
+        }
+    }
+
+    private func deactivateAudioSession() {
+        do {
+            try AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
         } catch {
             print(error)
         }

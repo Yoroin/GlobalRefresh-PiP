@@ -1,0 +1,24 @@
+.DS_Store
+
+# Xcode local state
+*.xcuserstate
+*.xcbkptlist
+xcuserdata/
+DerivedData/
+
+# Build outputs
+build/
+build_outputs/
+*.ipa
+*.xcarchive
+
+# Local signing material
+*.mobileprovision
+*.p12
+*.cer
+
+# Local scratch files generated during UI experiments
+orig_*.png
+title_*.png
+test_records/
+公交线网优化公示_*.png
