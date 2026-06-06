@@ -88,8 +88,7 @@ struct PiPHomeView: View {
                 .padding(.top, 82)
                 .padding(.trailing, 20)
                 .opacity(isSettingsVisible ? 1 : 0)
-                .scaleEffect(isSettingsVisible ? 1 : 0.98, anchor: .topTrailing)
-                .offset(x: isSettingsVisible ? 0 : 4, y: isSettingsVisible ? 0 : -6)
+                .scaleEffect(isSettingsVisible ? 1 : 0.92, anchor: .topTrailing)
                 .allowsHitTesting(isSettingsVisible)
                 .accessibilityHidden(!isSettingsVisible)
                 .zIndex(10)
@@ -143,12 +142,30 @@ struct PiPHomeView: View {
         }
         .padding(16)
         .frame(width: 306)
-        .modifier(SettingsGlassContainer(cornerRadius: 28))
+        .background(settingsPopoverBackground)
         .overlay(
-            RoundedRectangle(cornerRadius: 28, style: .continuous)
-                .stroke(Color.white.opacity(0.24), lineWidth: 1)
+            RoundedRectangle(cornerRadius: 22, style: .continuous)
+                .stroke(Color.white.opacity(0.18), lineWidth: 1)
         )
-        .clipShape(RoundedRectangle(cornerRadius: 28, style: .continuous))
+        .clipShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
+        .shadow(color: Color.black.opacity(0.16), radius: 18, x: 0, y: 10)
+    }
+
+    private var settingsPopoverBackground: some View {
+        let shape = RoundedRectangle(cornerRadius: 22, style: .continuous)
+        return Group {
+            if #available(iOS 26.0, *) {
+                shape
+                    .fill(Color(UIColor.secondarySystemGroupedBackground).opacity(0.08))
+                    .glassEffect(.regular.interactive(), in: shape)
+            } else if #available(iOS 15.0, *) {
+                shape
+                    .fill(.ultraThinMaterial)
+                    .overlay(shape.fill(Color(UIColor.secondarySystemGroupedBackground).opacity(0.28)))
+            } else {
+                shape.fill(Color(UIColor.secondarySystemGroupedBackground).opacity(0.9))
+            }
+        }
     }
 
     private var rememberHeightBinding: Binding<Bool> {
@@ -186,7 +203,7 @@ struct PiPHomeView: View {
     }
 
     private func animateSettingsVisibility(_ isVisible: Bool) {
-        withAnimation(.interpolatingSpring(mass: 0.45, stiffness: 420, damping: 36, initialVelocity: 0.18)) {
+        withAnimation(.interpolatingSpring(mass: 0.45, stiffness: 420, damping: 36, initialVelocity: 0.12)) {
             isSettingsVisible = isVisible
         }
     }
@@ -207,7 +224,7 @@ private struct SettingsGearButton: View {
             .overlay(
                 shape
                     .strokeBorder(
-                        Color.white.opacity(isExpanded ? 0.38 : 0.22),
+	                        Color(UIColor.separator).opacity(isExpanded ? 0.72 : 0.52),
                         lineWidth: 1
                     )
             )
@@ -219,14 +236,14 @@ private struct SettingsGearButton: View {
     private func gearGlassBackground(shape: Circle) -> some View {
         if #available(iOS 26.0, *) {
             shape
-                .fill(Color(UIColor.secondarySystemGroupedBackground).opacity(isExpanded ? 0.36 : 0.22))
+                .fill(Color(UIColor.secondarySystemBackground).opacity(isExpanded ? 0.4 : 0.22))
                 .glassEffect(.regular.interactive(), in: shape)
         } else if #available(iOS 15.0, *) {
             shape
-                .fill(.ultraThinMaterial)
-                .overlay(
-                    shape.fill(Color(UIColor.secondarySystemGroupedBackground).opacity(isExpanded ? 0.38 : 0.24))
-                )
+	                .fill(.regularMaterial)
+	                .overlay(
+	                    shape.fill(Color(UIColor.secondarySystemGroupedBackground).opacity(isExpanded ? 0.56 : 0.4))
+	                )
         } else {
             shape
                 .fill(Color(UIColor.secondarySystemGroupedBackground).opacity(isExpanded ? 0.9 : 0.76))
@@ -265,26 +282,49 @@ private struct SettingsGlassContainer: ViewModifier {
 
 struct VersionPageView: View {
     let isDebugModeEnabled: Bool
+    let isIOS26AudioKeepAliveEnabled: Bool
+    let debugPanelResetToken: Int
     let onShowChangelog: () -> Void
     let onShowFAQ: () -> Void
     let onCopyDebugLog: () -> Void
+    let onCopyPowerLog: () -> Void
+    let onCopyMetricLog: () -> Void
+    let onCopyKeepAliveLog: () -> Void
     let onSetDebugMode: (Bool) -> Void
+    let onRequestEnableDebugMode: () -> Void
+    let onSetIOS26AudioKeepAlive: (Bool) -> Void
     @State private var isDebugPanelVisible = false
     @State private var displayedDebugModeEnabled: Bool
+    @State private var displayedIOS26AudioKeepAliveEnabled: Bool
 
     init(
         isDebugModeEnabled: Bool,
+        isIOS26AudioKeepAliveEnabled: Bool,
+        debugPanelResetToken: Int,
         onShowChangelog: @escaping () -> Void,
         onShowFAQ: @escaping () -> Void,
         onCopyDebugLog: @escaping () -> Void,
-        onSetDebugMode: @escaping (Bool) -> Void
+        onCopyPowerLog: @escaping () -> Void,
+        onCopyMetricLog: @escaping () -> Void,
+        onCopyKeepAliveLog: @escaping () -> Void,
+        onSetDebugMode: @escaping (Bool) -> Void,
+        onRequestEnableDebugMode: @escaping () -> Void,
+        onSetIOS26AudioKeepAlive: @escaping (Bool) -> Void
     ) {
         self.isDebugModeEnabled = isDebugModeEnabled
+        self.isIOS26AudioKeepAliveEnabled = isIOS26AudioKeepAliveEnabled
+        self.debugPanelResetToken = debugPanelResetToken
         self.onShowChangelog = onShowChangelog
         self.onShowFAQ = onShowFAQ
         self.onCopyDebugLog = onCopyDebugLog
+        self.onCopyPowerLog = onCopyPowerLog
+        self.onCopyMetricLog = onCopyMetricLog
+        self.onCopyKeepAliveLog = onCopyKeepAliveLog
         self.onSetDebugMode = onSetDebugMode
+        self.onRequestEnableDebugMode = onRequestEnableDebugMode
+        self.onSetIOS26AudioKeepAlive = onSetIOS26AudioKeepAlive
         _displayedDebugModeEnabled = State(initialValue: isDebugModeEnabled)
+        _displayedIOS26AudioKeepAliveEnabled = State(initialValue: isIOS26AudioKeepAliveEnabled)
     }
 
     var body: some View {
@@ -331,9 +371,22 @@ struct VersionPageView: View {
                         .font(.system(size: 15, weight: .semibold))
                         .foregroundColor(Color(UIColor.secondaryLabel))
 
-                    Text("1.0.5")
-                        .font(.system(size: 32, weight: .bold, design: .rounded))
-                        .foregroundColor(Color(UIColor.label))
+                    HStack(spacing: 8) {
+                        Text("1.0.6")
+                            .font(.system(size: 32, weight: .bold, design: .rounded))
+                            .foregroundColor(Color(UIColor.label))
+
+                        if displayedDebugModeEnabled {
+                            Text(displayedIOS26AudioKeepAliveEnabled ? "音频强保活" : "仅PiP保活")
+                                .font(.system(size: 12, weight: .bold))
+                                .foregroundColor(Color(UIColor.systemBlue))
+                                .padding(.horizontal, 9)
+                                .frame(height: 24)
+                                .background(versionFlagBackground)
+                        }
+                    }
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.72)
                 }
 
                 Divider()
@@ -341,79 +394,57 @@ struct VersionPageView: View {
 
                 VersionDescriptionView()
 
-                ZStack(alignment: .top) {
+                Color.clear
+                    .frame(height: 46)
+                .padding(.top, 24)
+
+                VStack(spacing: 10) {
                     HStack(spacing: 10) {
-                        Spacer(minLength: 0)
-
-                        Button {
-                            UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                        CopyLogButton(title: "复制调试日志", systemImage: "doc.on.doc") {
                             dismissDebugPanel()
-                            onShowFAQ()
-                        } label: {
-                            HStack(spacing: 8) {
-                                Image(systemName: "questionmark.circle")
-                                    .font(.system(size: 17, weight: .bold))
-                                Text("常见问题")
-                                    .font(.system(size: 17, weight: .bold))
-                            }
-                            .foregroundColor(Color(UIColor.systemBlue))
-                            .padding(.horizontal, 18)
-                            .frame(height: 46)
+                            onCopyDebugLog()
                         }
-                        .buttonStyle(GlassCapsuleButtonStyle())
 
-                        Button {
-                            UIImpactFeedbackGenerator(style: .light).impactOccurred()
-                            toggleDebugPanel()
-                        } label: {
-                            DebugModeButton(isExpanded: isDebugPanelVisible)
+                        CopyLogButton(title: "复制耗电日志", systemImage: "bolt.batteryblock") {
+                            dismissDebugPanel()
+                            onCopyPowerLog()
                         }
-                        .buttonStyle(.plain)
-
-                        Spacer(minLength: 0)
                     }
 
-                    DebugModePanel(
-                        isEnabled: displayedDebugModeEnabled,
-                        onSetEnabled: setDebugMode
-                    )
-                    .offset(x: 28, y: -106)
-                    .scaleEffect(isDebugPanelVisible ? 1 : 0.92, anchor: .bottomTrailing)
-                    .opacity(isDebugPanelVisible ? 1 : 0)
-                    .allowsHitTesting(isDebugPanelVisible)
-                    .zIndex(4)
-                }
-                .frame(maxWidth: .infinity)
-                .frame(height: 46)
-                .padding(.top, 14)
-                .zIndex(3)
+                    HStack(spacing: 10) {
+                        CopyLogButton(title: "复制系统指标日志", systemImage: "waveform.path.ecg.rectangle") {
+                            dismissDebugPanel()
+                            onCopyMetricLog()
+                        }
 
-                Button {
-                    UIImpactFeedbackGenerator(style: .light).impactOccurred()
-                    dismissDebugPanel()
-                    onCopyDebugLog()
-                } label: {
-                    HStack(spacing: 8) {
-                        Image(systemName: "doc.on.doc")
-                            .font(.system(size: 16, weight: .bold))
-                        Text("复制调试日志")
-                            .font(.system(size: 16, weight: .bold))
+                        CopyLogButton(title: "复制保活日志", systemImage: "timer.circle") {
+                            dismissDebugPanel()
+                            onCopyKeepAliveLog()
+                        }
                     }
-                    .foregroundColor(Color(UIColor.systemBlue))
-                    .padding(.horizontal, 18)
-                    .frame(height: 44)
                 }
-                .buttonStyle(GlassCapsuleButtonStyle())
                 .opacity(displayedDebugModeEnabled ? 1 : 0)
                 .allowsHitTesting(displayedDebugModeEnabled)
-                .frame(height: 44)
+                .frame(height: 98)
             }
             .padding(.horizontal, 28)
+            .padding(.top, 104)
+            .frame(maxHeight: .infinity, alignment: .top)
             .animation(nil, value: displayedDebugModeEnabled)
+
+            fixedFAQButtons
+            fixedDebugPanel
         }
         .onChange(of: isDebugModeEnabled) { newValue in
             guard newValue != displayedDebugModeEnabled else { return }
             displayedDebugModeEnabled = newValue
+        }
+        .onChange(of: isIOS26AudioKeepAliveEnabled) { newValue in
+            guard newValue != displayedIOS26AudioKeepAliveEnabled else { return }
+            displayedIOS26AudioKeepAliveEnabled = newValue
+        }
+        .onChange(of: debugPanelResetToken) { _ in
+            dismissDebugPanel()
         }
     }
 
@@ -436,7 +467,94 @@ struct VersionPageView: View {
         withTransaction(transaction) {
             displayedDebugModeEnabled = isEnabled
         }
-        onSetDebugMode(isEnabled)
+        if isEnabled {
+            displayedDebugModeEnabled = false
+            onRequestEnableDebugMode()
+        } else {
+            onSetDebugMode(false)
+        }
+    }
+
+    private func setIOS26AudioKeepAlive(_ isEnabled: Bool) {
+        var transaction = Transaction()
+        transaction.disablesAnimations = true
+        withTransaction(transaction) {
+            displayedIOS26AudioKeepAliveEnabled = isEnabled
+        }
+        onSetIOS26AudioKeepAlive(isEnabled)
+    }
+
+    private var fixedFAQButtons: some View {
+        GeometryReader { proxy in
+            HStack(spacing: 10) {
+                Button {
+                    UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                    dismissDebugPanel()
+                    onShowFAQ()
+                } label: {
+                    HStack(spacing: 8) {
+                        Image(systemName: "questionmark.circle")
+                            .font(.system(size: 17, weight: .bold))
+                        Text("常见问题")
+                            .font(.system(size: 17, weight: .bold))
+                    }
+                    .foregroundColor(Color(UIColor.systemBlue))
+                    .padding(.horizontal, 18)
+                    .frame(height: 46)
+                }
+                .buttonStyle(GlassCapsuleButtonStyle())
+
+                Button {
+                    UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                    toggleDebugPanel()
+                } label: {
+                    DebugModeButton(isExpanded: isDebugPanelVisible)
+                }
+                .buttonStyle(.plain)
+            }
+            .frame(height: 46)
+            .position(x: proxy.size.width / 2, y: fixedFAQRowCenterY)
+        }
+        .zIndex(4)
+    }
+
+    private var fixedDebugPanel: some View {
+        GeometryReader { proxy in
+            DebugModePanel(
+                isEnabled: displayedDebugModeEnabled,
+                isIOS26AudioKeepAliveEnabled: displayedIOS26AudioKeepAliveEnabled,
+                onSetEnabled: setDebugMode,
+                onSetIOS26AudioKeepAlive: setIOS26AudioKeepAlive
+            )
+            .scaleEffect(isDebugPanelVisible ? 1 : 0.92, anchor: .top)
+            .opacity(isDebugPanelVisible ? 1 : 0)
+            .allowsHitTesting(isDebugPanelVisible)
+            .position(x: proxy.size.width / 2, y: fixedFAQRowCenterY + 54 + debugPanelCenterOffset)
+        }
+        .zIndex(5)
+    }
+
+    private var fixedFAQRowCenterY: CGFloat { 442 }
+
+    private var debugPanelCenterOffset: CGFloat {
+        displayedDebugModeEnabled ? 82 : 44
+    }
+
+    private var versionFlagBackground: some View {
+        let shape = Capsule()
+        return Group {
+            if #available(iOS 26.0, *) {
+                shape
+                    .fill(Color(UIColor.secondarySystemGroupedBackground).opacity(0.22))
+                    .glassEffect(.regular.interactive(), in: shape)
+            } else if #available(iOS 15.0, *) {
+                shape
+                    .fill(.ultraThinMaterial)
+                    .overlay(shape.fill(Color(UIColor.secondarySystemGroupedBackground).opacity(0.28)))
+            } else {
+                shape.fill(Color(UIColor.secondarySystemGroupedBackground).opacity(0.9))
+            }
+        }
     }
 }
 
@@ -453,7 +571,7 @@ private struct DebugModeButton: View {
             .background(debugGlassBackground(shape: shape))
             .overlay(
                 shape.strokeBorder(
-                    Color.white.opacity(isExpanded ? 0.38 : 0.22),
+	                    Color(UIColor.separator).opacity(isExpanded ? 0.72 : 0.52),
                     lineWidth: 1
                 )
             )
@@ -469,30 +587,70 @@ private struct DebugModeButton: View {
                 .glassEffect(.regular.interactive(), in: shape)
         } else if #available(iOS 15.0, *) {
             shape
-                .fill(.ultraThinMaterial)
-                .overlay(shape.fill(Color(UIColor.secondarySystemGroupedBackground).opacity(isExpanded ? 0.38 : 0.24)))
+                .fill(.regularMaterial)
+                .overlay(shape.fill(Color(UIColor.secondarySystemBackground).opacity(isExpanded ? 0.54 : 0.38)))
         } else {
-            shape.fill(Color(UIColor.secondarySystemGroupedBackground).opacity(isExpanded ? 0.9 : 0.76))
+            shape.fill(Color(UIColor.secondarySystemBackground).opacity(isExpanded ? 0.84 : 0.64))
         }
+    }
+}
+
+private struct CopyLogButton: View {
+    let title: String
+    let systemImage: String
+    let action: () -> Void
+
+    var body: some View {
+        Button {
+            UIImpactFeedbackGenerator(style: .light).impactOccurred()
+            action()
+        } label: {
+            HStack(spacing: 6) {
+                Image(systemName: systemImage)
+                    .font(.system(size: 14, weight: .bold))
+                    .frame(width: 18, alignment: .center)
+                Text(title)
+                    .font(.system(size: 14, weight: .bold))
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.74)
+            }
+            .foregroundColor(Color(UIColor.systemBlue))
+            .padding(.horizontal, 12)
+            .frame(maxWidth: 152)
+            .frame(height: 44)
+        }
+        .buttonStyle(GlassCapsuleButtonStyle())
     }
 }
 
 private struct DebugModePanel: View {
     let isEnabled: Bool
+    let isIOS26AudioKeepAliveEnabled: Bool
     let onSetEnabled: (Bool) -> Void
+    let onSetIOS26AudioKeepAlive: (Bool) -> Void
     @State private var displayedIsEnabled: Bool
+    @State private var displayedIOS26AudioKeepAliveEnabled: Bool
 
-    init(isEnabled: Bool, onSetEnabled: @escaping (Bool) -> Void) {
+    init(
+        isEnabled: Bool,
+        isIOS26AudioKeepAliveEnabled: Bool,
+        onSetEnabled: @escaping (Bool) -> Void,
+        onSetIOS26AudioKeepAlive: @escaping (Bool) -> Void
+    ) {
         self.isEnabled = isEnabled
+        self.isIOS26AudioKeepAliveEnabled = isIOS26AudioKeepAliveEnabled
         self.onSetEnabled = onSetEnabled
+        self.onSetIOS26AudioKeepAlive = onSetIOS26AudioKeepAlive
         _displayedIsEnabled = State(initialValue: isEnabled)
+        _displayedIOS26AudioKeepAliveEnabled = State(initialValue: isIOS26AudioKeepAliveEnabled)
     }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
             HStack(spacing: 10) {
                 Image(systemName: "wrench.and.screwdriver")
-                    .font(.system(size: 16, weight: .bold))
+                    .font(.system(size: 18, weight: .bold))
+                    .frame(width: 22, alignment: .center)
                 Text("调试模式")
                     .font(.system(size: 16, weight: .bold))
                     .lineLimit(1)
@@ -500,27 +658,58 @@ private struct DebugModePanel: View {
                 Toggle("", isOn: immediateBinding)
                     .labelsHidden()
             }
+            .frame(height: 32)
 
-            Text("开启后显示复制调试日志按钮")
+            Text("开启后显示调试、耗电和系统指标日志按钮")
                 .font(.system(size: 12, weight: .semibold))
                 .foregroundColor(Color(UIColor.secondaryLabel))
                 .lineLimit(1)
                 .minimumScaleFactor(0.8)
+
+            if displayedIsEnabled {
+                Divider()
+                    .opacity(0.42)
+
+                HStack(spacing: 10) {
+                    Image(systemName: "waveform")
+                        .font(.system(size: 18, weight: .bold))
+                        .frame(width: 22, alignment: .center)
+                    Text("保活方案切换")
+                        .font(.system(size: 16, weight: .bold))
+                        .lineLimit(1)
+                    Spacer(minLength: 10)
+                    Toggle("", isOn: iOS26AudioBinding)
+                        .labelsHidden()
+                }
+                .frame(height: 32)
+
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("开启：默认音频强保活，小概率影响铃声音量调节按钮，推荐使用")
+                    Text("关闭：仅 PiP 保活，更省电且减少音频冲突，但是会降低存活几率以及可能出现低版本兼容性问题，谨慎选择")
+                }
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundColor(Color(UIColor.secondaryLabel))
+                .fixedSize(horizontal: false, vertical: true)
+            }
         }
         .foregroundColor(Color(UIColor.label))
         .padding(.horizontal, 16)
         .padding(.vertical, 14)
-        .frame(width: 245)
+        .frame(width: 300)
         .background(panelBackground)
         .overlay(
             RoundedRectangle(cornerRadius: 22, style: .continuous)
-                .stroke(Color.white.opacity(0.24), lineWidth: 1)
+                .stroke(Color.white.opacity(0.18), lineWidth: 1)
         )
         .clipShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
         .shadow(color: Color.black.opacity(0.16), radius: 18, x: 0, y: 10)
         .onChange(of: isEnabled) { newValue in
             guard newValue != displayedIsEnabled else { return }
             displayedIsEnabled = newValue
+        }
+        .onChange(of: isIOS26AudioKeepAliveEnabled) { newValue in
+            guard newValue != displayedIOS26AudioKeepAliveEnabled else { return }
+            displayedIOS26AudioKeepAliveEnabled = newValue
         }
     }
 
@@ -535,12 +724,23 @@ private struct DebugModePanel: View {
         )
     }
 
+    private var iOS26AudioBinding: Binding<Bool> {
+        Binding(
+            get: { displayedIOS26AudioKeepAliveEnabled },
+            set: { newValue in
+                guard newValue != displayedIOS26AudioKeepAliveEnabled else { return }
+                displayedIOS26AudioKeepAliveEnabled = newValue
+                onSetIOS26AudioKeepAlive(newValue)
+            }
+        )
+    }
+
     private var panelBackground: some View {
         let shape = RoundedRectangle(cornerRadius: 22, style: .continuous)
         return Group {
             if #available(iOS 26.0, *) {
                 shape
-                    .fill(Color(UIColor.secondarySystemGroupedBackground).opacity(0.2))
+                    .fill(Color(UIColor.secondarySystemGroupedBackground).opacity(0.08))
                     .glassEffect(.regular.interactive(), in: shape)
             } else if #available(iOS 15.0, *) {
                 shape
@@ -705,14 +905,8 @@ private struct SettingsToggleRow: View {
                 .labelsHidden()
         }
         .foregroundColor(Color(UIColor.label))
-        .padding(.horizontal, 18)
+        .padding(.horizontal, 4)
         .frame(height: 76)
-        .background(settingsRowBackground)
-        .overlay(
-            RoundedRectangle(cornerRadius: 22, style: .continuous)
-                .stroke(Color.white.opacity(0.22), lineWidth: 1)
-        )
-        .clipShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
         .onChange(of: isOn.wrappedValue) { newValue in
             guard newValue != displayedIsOn else { return }
             displayedIsOn = newValue
@@ -730,26 +924,6 @@ private struct SettingsToggleRow: View {
         )
     }
 
-    private var settingsRowBackground: some View {
-        let shape = RoundedRectangle(cornerRadius: 22, style: .continuous)
-
-        return Group {
-            if #available(iOS 26.0, *) {
-                shape
-                    .fill(Color.white.opacity(0.08))
-                    .glassEffect(.regular.interactive(), in: shape)
-            } else if #available(iOS 15.0, *) {
-                shape
-                    .fill(.ultraThinMaterial)
-                    .overlay(
-                        shape.fill(Color(UIColor.secondarySystemGroupedBackground).opacity(0.26))
-                    )
-            } else {
-                shape
-                    .fill(Color(UIColor.secondarySystemGroupedBackground).opacity(0.84))
-            }
-        }
-    }
 }
 
 private struct SettingsLiquidGlassButtonStyle: ButtonStyle {
@@ -847,7 +1021,7 @@ private struct GlassCapsuleButtonStyle: ButtonStyle {
             .background(glassBackground(isPressed: configuration.isPressed, shape: shape))
             .overlay(
                 shape.strokeBorder(
-                    Color.white.opacity(configuration.isPressed ? 0.34 : 0.22),
+	                    legacyStrokeColor(isPressed: configuration.isPressed),
                     lineWidth: 1
                 )
             )
@@ -867,14 +1041,21 @@ private struct GlassCapsuleButtonStyle: ButtonStyle {
                 .glassEffect(.regular.interactive(), in: shape)
         } else if #available(iOS 15.0, *) {
             shape
-                .fill(.ultraThinMaterial)
-                .overlay(
-                    shape.fill(Color(UIColor.secondarySystemBackground).opacity(isPressed ? 0.36 : 0.2))
-                )
+	                .fill(.regularMaterial)
+	                .overlay(
+	                    shape.fill(Color(UIColor.secondarySystemBackground).opacity(isPressed ? 0.54 : 0.38))
+	                )
         } else {
             shape
                 .fill(Color(UIColor.secondarySystemBackground).opacity(isPressed ? 0.84 : 0.64))
         }
+    }
+
+    private func legacyStrokeColor(isPressed: Bool) -> Color {
+        if #available(iOS 26.0, *) {
+            return Color.white.opacity(isPressed ? 0.34 : 0.22)
+        }
+        return Color(UIColor.separator).opacity(isPressed ? 0.72 : 0.52)
     }
 }
 

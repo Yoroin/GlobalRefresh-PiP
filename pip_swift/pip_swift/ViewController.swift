@@ -83,6 +83,9 @@ class ViewController: UIViewController, AVPictureInPictureControllerDelegate {
     private let userDefaultsScrollingEnabledKey = "pip.home.scrollingEnabled"
     private let userDefaultsRememberPiPHeightKey = "pip.home.rememberPiPHeight"
     private let userDefaultsPiPHeightKey = "pip.home.rememberedPiPHeight"
+    static let userDefaultsIOS26AudioKeepAliveKey = "pip.keepAlive.iOS26AudioEnabled"
+    static let userDefaultsIOS26PiPOnlyKeepAliveKey = "pip.keepAlive.iOS26PiPOnlyEnabled"
+    static let iOS26KeepAliveModeDidChangeNotification = Notification.Name("pip.iOS26KeepAliveModeDidChange")
     private var currentPiPSize: CGSize {
         CGSize(width: pipWidth, height: clampedPiPHeight)
     }
@@ -107,18 +110,28 @@ class ViewController: UIViewController, AVPictureInPictureControllerDelegate {
 
         print("画中画初始化前：\(UIApplication.shared.windows)")
         AppDebugLogger.log("Home viewDidLoad")
+        PowerUsageLogger.markLaunch()
+        KeepAliveLogger.markAppLaunch()
 
         loadHomePreferences()
         setupSwiftUI()
 
         NotificationCenter.default.addObserver(self, selector: #selector(handleEnterForeground), name: UIApplication.willEnterForegroundNotification, object: nil)
         NotificationCenter.default.addObserver(self, selector: #selector(handleEnterBackground), name: UIApplication.didEnterBackgroundNotification, object: nil)
+        NotificationCenter.default.addObserver(self, selector: #selector(handleKeepAliveModeDidChange), name: Self.iOS26KeepAliveModeDidChangeNotification, object: nil)
     }
 
     override func viewDidLayoutSubviews() {
         super.viewDidLayoutSubviews()
         guard playerLayer != nil else { return }
         centerPlayerLayer()
+    }
+
+    override func viewWillDisappear(_ animated: Bool) {
+        super.viewWillDisappear(animated)
+        if isSettingsExpanded {
+            isSettingsExpanded = false
+        }
     }
 
     deinit {
@@ -254,6 +267,7 @@ class ViewController: UIViewController, AVPictureInPictureControllerDelegate {
             return false
         }
         NotificationCenter.default.addObserver(self, selector: #selector(handleAudioInterruption), name: AVAudioSession.interruptionNotification, object: nil)
+        NotificationCenter.default.addObserver(self, selector: #selector(handleAudioRouteChange), name: AVAudioSession.routeChangeNotification, object: nil)
         hasPreparedPiPInfrastructure = true
         AppDebugLogger.log("Prepare PiP infrastructure success")
         return true
@@ -485,7 +499,16 @@ class ViewController: UIViewController, AVPictureInPictureControllerDelegate {
     private func keepPlaybackAlive() {
         guard shouldKeepPiPPlaybackAlive else { return }
         configurePiPAudioSession()
-        BackgroundTaskManager.shared.startPlay()
+        if shouldUsePiPOnlyKeepAlive {
+            BackgroundTaskManager.shared.stopPlay()
+            PowerUsageLogger.markKeepAliveStop()
+            KeepAliveLogger.heartbeat()
+            AppDebugLogger.log("Skip silent keepAlive audio, PiP-only keepAlive")
+        } else {
+            PowerUsageLogger.markKeepAliveStart()
+            BackgroundTaskManager.shared.startPlay()
+            KeepAliveLogger.heartbeat()
+        }
         playerLayer?.player?.play()
     }
 
@@ -500,6 +523,17 @@ class ViewController: UIViewController, AVPictureInPictureControllerDelegate {
 
     private var shouldKeepPiPPlaybackAlive: Bool {
         wantsPiPActive && ((pipController?.isPictureInPictureActive ?? false) || isPiPTransitioning || isPiPActiveForUI)
+    }
+
+    private var shouldUsePiPOnlyKeepAlive: Bool {
+        if UserDefaults.standard.object(forKey: Self.userDefaultsIOS26AudioKeepAliveKey) == nil {
+            if let legacyPiPOnly = UserDefaults.standard.object(forKey: Self.userDefaultsIOS26PiPOnlyKeepAliveKey) as? Bool {
+                UserDefaults.standard.set(!legacyPiPOnly, forKey: Self.userDefaultsIOS26AudioKeepAliveKey)
+            } else {
+                UserDefaults.standard.set(true, forKey: Self.userDefaultsIOS26AudioKeepAliveKey)
+            }
+        }
+        return !UserDefaults.standard.bool(forKey: Self.userDefaultsIOS26AudioKeepAliveKey)
     }
 
     private func updatePiPAutomaticStartPolicy() {
@@ -1132,26 +1166,41 @@ class ViewController: UIViewController, AVPictureInPictureControllerDelegate {
 
     @objc private func handleEnterForeground() {
         print("进入前台")
+        PowerUsageLogger.markForegroundStart()
         AppDebugLogger.log("Enter foreground, keepAlive=\(shouldKeepPiPPlaybackAlive)")
+        if shouldKeepPiPPlaybackAlive {
+            KeepAliveLogger.markEnterForeground()
+        }
         endBackgroundTask()
         if needsLegacyPiPCompatibility && shouldKeepPiPPlaybackAlive {
             keepPlaybackAlive()
         } else {
             BackgroundTaskManager.shared.stopPlay()
+            PowerUsageLogger.markKeepAliveStop()
             playerLayer?.player?.play()
         }
     }
 
     @objc private func handleEnterBackground() {
         print("进入后台")
+        PowerUsageLogger.markBackgroundStart()
         AppDebugLogger.log("Enter background, keepAlive=\(shouldKeepPiPPlaybackAlive)")
         guard shouldKeepPiPPlaybackAlive else {
             BackgroundTaskManager.shared.stopPlay()
+            PowerUsageLogger.markKeepAliveStop()
             endBackgroundTask()
             return
         }
         beginBackgroundTaskIfNeeded()
+        KeepAliveLogger.markEnterBackground(mode: shouldUsePiPOnlyKeepAlive ? "仅PiP保活" : "PiP+静音音频保活")
         keepPlaybackAlive()
+    }
+
+    @objc private func handleKeepAliveModeDidChange() {
+        AppDebugLogger.log("KeepAlive mode changed, PiPOnly=\(shouldUsePiPOnlyKeepAlive), active=\(shouldKeepPiPPlaybackAlive)")
+        guard shouldKeepPiPPlaybackAlive else { return }
+        keepPlaybackAlive()
+        KeepAliveLogger.markPiPStarted(mode: shouldUsePiPOnlyKeepAlive ? "仅PiP保活" : "PiP+静音音频保活")
     }
 
     @objc private func handleAudioInterruption(_ notification: Notification) {
@@ -1167,6 +1216,7 @@ class ViewController: UIViewController, AVPictureInPictureControllerDelegate {
         case .began:
             AppDebugLogger.log("Audio interruption began")
             BackgroundTaskManager.shared.stopPlay()
+            PowerUsageLogger.markKeepAliveStop()
         case .ended:
             guard shouldKeepPiPPlaybackAlive else { return }
             AppDebugLogger.log("Audio interruption ended, resume keepAlive")
@@ -1174,6 +1224,29 @@ class ViewController: UIViewController, AVPictureInPictureControllerDelegate {
         @unknown default:
             break
         }
+    }
+
+    @objc private func handleAudioRouteChange(_ notification: Notification) {
+        AppDebugLogger.log("Audio route changed: \(currentAudioRouteDescription), external=\(hasExternalAudioRoute)")
+        guard shouldKeepPiPPlaybackAlive else { return }
+        keepPlaybackAlive()
+    }
+
+    private var hasExternalAudioRoute: Bool {
+        AVAudioSession.sharedInstance().currentRoute.outputs.contains { output in
+            switch output.portType {
+            case .airPlay, .bluetoothA2DP, .bluetoothHFP, .bluetoothLE:
+                return true
+            default:
+                return false
+            }
+        }
+    }
+
+    private var currentAudioRouteDescription: String {
+        AVAudioSession.sharedInstance().currentRoute.outputs
+            .map { "\($0.portType.rawValue):\($0.portName)" }
+            .joined(separator: ",")
     }
 
     func pictureInPictureControllerWillStartPictureInPicture(_ pictureInPictureController: AVPictureInPictureController) {
@@ -1198,6 +1271,8 @@ class ViewController: UIViewController, AVPictureInPictureControllerDelegate {
         isPiPActiveForUI = true
         startDisplayLinks()
         keepPlaybackAlive()
+        PowerUsageLogger.markPiPStart()
+        KeepAliveLogger.markPiPStarted(mode: shouldUsePiPOnlyKeepAlive ? "仅PiP保活" : "PiP+静音音频保活")
         AppDebugLogger.log("PiP did start")
         print("画中画弹出后：\(UIApplication.shared.windows)")
     }
@@ -1230,6 +1305,9 @@ class ViewController: UIViewController, AVPictureInPictureControllerDelegate {
         wantsPiPActive = false
         updatePiPAutomaticStartPolicy()
         BackgroundTaskManager.shared.stopPlay()
+        PowerUsageLogger.markPiPStop()
+        PowerUsageLogger.markKeepAliveStop()
+        KeepAliveLogger.markPiPStopped(reason: "PiP did stop")
         endBackgroundTask()
         AppDebugLogger.log("PiP did stop")
 

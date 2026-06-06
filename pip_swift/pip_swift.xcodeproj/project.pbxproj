@@ -19,6 +19,10 @@
 				AA50ED29265E319E006DD1A6 /* VersionViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA50ED28265E319E006DD1A6 /* VersionViewController.swift */; };
 				AA50ED2B265E319E006DD1A6 /* AdaptiveSheetPresentation.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA50ED2A265E319E006DD1A6 /* AdaptiveSheetPresentation.swift */; };
 				AA50ED2D265E319E006DD1A6 /* AppDebugLogger.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA50ED2C265E319E006DD1A6 /* AppDebugLogger.swift */; };
+				AA50ED2F265E319E006DD1A6 /* PowerUsageLogger.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA50ED2E265E319E006DD1A6 /* PowerUsageLogger.swift */; };
+					AA50ED31265E319E006DD1A6 /* MetricKitLogger.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA50ED30265E319E006DD1A6 /* MetricKitLogger.swift */; };
+					AA50ED33265E319E006DD1A6 /* KeepAliveLogger.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA50ED32265E319E006DD1A6 /* KeepAliveLogger.swift */; };
+					AA50ED35265E319E006DD1A6 /* KeepAliveModeText.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA50ED34265E319E006DD1A6 /* KeepAliveModeText.swift */; };
 		D950ED16265E319D006DD1A6 /* Main.storyboard in Resources */ = {isa = PBXBuildFile; fileRef = D950ED14265E319D006DD1A6 /* Main.storyboard */; };
 		D950ED18265E319E006DD1A6 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = D950ED17265E319E006DD1A6 /* Assets.xcassets */; };
 		D950ED1B265E319E006DD1A6 /* LaunchScreen.storyboard in Resources */ = {isa = PBXBuildFile; fileRef = D950ED19265E319E006DD1A6 /* LaunchScreen.storyboard */; };
@@ -41,6 +45,10 @@
 				AA50ED28265E319E006DD1A6 /* VersionViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VersionViewController.swift; sourceTree = "<group>"; };
 				AA50ED2A265E319E006DD1A6 /* AdaptiveSheetPresentation.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AdaptiveSheetPresentation.swift; sourceTree = "<group>"; };
 				AA50ED2C265E319E006DD1A6 /* AppDebugLogger.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppDebugLogger.swift; sourceTree = "<group>"; };
+				AA50ED2E265E319E006DD1A6 /* PowerUsageLogger.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PowerUsageLogger.swift; sourceTree = "<group>"; };
+					AA50ED30265E319E006DD1A6 /* MetricKitLogger.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MetricKitLogger.swift; sourceTree = "<group>"; };
+					AA50ED32265E319E006DD1A6 /* KeepAliveLogger.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KeepAliveLogger.swift; sourceTree = "<group>"; };
+					AA50ED34265E319E006DD1A6 /* KeepAliveModeText.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KeepAliveModeText.swift; sourceTree = "<group>"; };
 		D950ED15265E319D006DD1A6 /* Base */ = {isa = PBXFileReference; lastKnownFileType = file.storyboard; name = Base; path = Base.lproj/Main.storyboard; sourceTree = "<group>"; };
 		D950ED17265E319E006DD1A6 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		D950ED1A265E319E006DD1A6 /* Base */ = {isa = PBXFileReference; lastKnownFileType = file.storyboard; name = Base; path = Base.lproj/LaunchScreen.storyboard; sourceTree = "<group>"; };
@@ -114,9 +122,13 @@
 								AA50ED24265E319E006DD1A6 /* TutorialTabBarController.swift */,
 								AA50ED26265E319E006DD1A6 /* FrameRateTestTabBarController.swift */,
 								AA50ED28265E319E006DD1A6 /* VersionViewController.swift */,
-								AA50ED2A265E319E006DD1A6 /* AdaptiveSheetPresentation.swift */,
-								AA50ED2C265E319E006DD1A6 /* AppDebugLogger.swift */,
-									D950ED0E265E319D006DD1A6 /* AppDelegate.swift */,
+									AA50ED2A265E319E006DD1A6 /* AdaptiveSheetPresentation.swift */,
+									AA50ED2C265E319E006DD1A6 /* AppDebugLogger.swift */,
+											AA50ED2E265E319E006DD1A6 /* PowerUsageLogger.swift */,
+											AA50ED30265E319E006DD1A6 /* MetricKitLogger.swift */,
+											AA50ED32265E319E006DD1A6 /* KeepAliveLogger.swift */,
+											AA50ED34265E319E006DD1A6 /* KeepAliveModeText.swift */,
+											D950ED0E265E319D006DD1A6 /* AppDelegate.swift */,
 				D950ED10265E319D006DD1A6 /* SceneDelegate.swift */,
 				D950ED14265E319D006DD1A6 /* Main.storyboard */,
 				D950ED17265E319E006DD1A6 /* Assets.xcassets */,
@@ -252,9 +264,13 @@
 						AA50ED25265E319E006DD1A6 /* TutorialTabBarController.swift in Sources */,
 						AA50ED27265E319E006DD1A6 /* FrameRateTestTabBarController.swift in Sources */,
 						AA50ED29265E319E006DD1A6 /* VersionViewController.swift in Sources */,
-						AA50ED2B265E319E006DD1A6 /* AdaptiveSheetPresentation.swift in Sources */,
-						AA50ED2D265E319E006DD1A6 /* AppDebugLogger.swift in Sources */,
-						D950ED0F265E319D006DD1A6 /* AppDelegate.swift in Sources */,
+							AA50ED2B265E319E006DD1A6 /* AdaptiveSheetPresentation.swift in Sources */,
+								AA50ED2D265E319E006DD1A6 /* AppDebugLogger.swift in Sources */,
+									AA50ED2F265E319E006DD1A6 /* PowerUsageLogger.swift in Sources */,
+									AA50ED31265E319E006DD1A6 /* MetricKitLogger.swift in Sources */,
+									AA50ED33265E319E006DD1A6 /* KeepAliveLogger.swift in Sources */,
+									AA50ED35265E319E006DD1A6 /* KeepAliveModeText.swift in Sources */,
+							D950ED0F265E319D006DD1A6 /* AppDelegate.swift in Sources */,
 				D950ED11265E319D006DD1A6 /* SceneDelegate.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;

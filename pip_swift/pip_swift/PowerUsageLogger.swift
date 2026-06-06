@@ -1,0 +1,186 @@
+//
+//  PowerUsageLogger.swift
+//  pip_swift
+//
+
+import UIKit
+import Darwin
+
+enum PowerUsageLogger {
+    private static let launchDateKey = "pip.power.launchDate"
+    private static let foregroundStartKey = "pip.power.foregroundStart"
+    private static let foregroundTotalKey = "pip.power.foregroundTotal"
+    private static let backgroundStartKey = "pip.power.backgroundStart"
+    private static let backgroundTotalKey = "pip.power.backgroundTotal"
+    private static let pipStartKey = "pip.power.pipStart"
+    private static let pipTotalKey = "pip.power.pipTotal"
+    private static let keepAliveStartKey = "pip.power.keepAliveStart"
+    private static let keepAliveTotalKey = "pip.power.keepAliveTotal"
+    private static let pipStartCountKey = "pip.power.pipStartCount"
+    private static let pipStopCountKey = "pip.power.pipStopCount"
+    private static let keepAliveStartCountKey = "pip.power.keepAliveStartCount"
+    private static let keepAliveStopCountKey = "pip.power.keepAliveStopCount"
+    private static let backgroundEntryCountKey = "pip.power.backgroundEntryCount"
+    private static let foregroundEntryCountKey = "pip.power.foregroundEntryCount"
+
+    static func markLaunch() {
+        UIDevice.current.isBatteryMonitoringEnabled = true
+        let defaults = UserDefaults.standard
+        if defaults.object(forKey: launchDateKey) == nil {
+            defaults.set(Date().timeIntervalSince1970, forKey: launchDateKey)
+        }
+        markForegroundStart()
+    }
+
+    static func markForegroundStart() {
+        stopTimer(startKey: backgroundStartKey, totalKey: backgroundTotalKey)
+        startTimerIfNeeded(foregroundStartKey)
+        increment(foregroundEntryCountKey)
+    }
+
+    static func markBackgroundStart() {
+        stopTimer(startKey: foregroundStartKey, totalKey: foregroundTotalKey)
+        startTimerIfNeeded(backgroundStartKey)
+        increment(backgroundEntryCountKey)
+    }
+
+    static func markPiPStart() {
+        startTimerIfNeeded(pipStartKey)
+        increment(pipStartCountKey)
+    }
+
+    static func markPiPStop() {
+        stopTimer(startKey: pipStartKey, totalKey: pipTotalKey)
+        increment(pipStopCountKey)
+    }
+
+    static func markKeepAliveStart() {
+        startTimerIfNeeded(keepAliveStartKey)
+        increment(keepAliveStartCountKey)
+    }
+
+    static func markKeepAliveStop() {
+        stopTimer(startKey: keepAliveStartKey, totalKey: keepAliveTotalKey)
+        increment(keepAliveStopCountKey)
+    }
+
+    static func exportText() -> String {
+        UIDevice.current.isBatteryMonitoringEnabled = true
+        let defaults = UserDefaults.standard
+        let info = Bundle.main.infoDictionary
+        let version = info?["CFBundleShortVersionString"] as? String ?? "unknown"
+        let build = info?["CFBundleVersion"] as? String ?? "unknown"
+        let bundleID = Bundle.main.bundleIdentifier ?? "unknown"
+        let device = UIDevice.current
+        let launchTimestamp = defaults.double(forKey: launchDateKey)
+        let launchText = launchTimestamp > 0 ? beijingFormatter.string(from: Date(timeIntervalSince1970: launchTimestamp)) : "unknown"
+
+        return """
+        全局高刷耗电辅助日志
+        App版本：\(version) (\(build))
+        Bundle ID：\(bundleID)
+        系统版本：iOS \(device.systemVersion)
+        设备型号：\(deviceModelIdentifier)
+        生成时间：\(beijingFormatter.string(from: Date())) 北京时间
+        当前保活模式：\(KeepAliveModeText.current)
+        首次统计时间：\(launchText) 北京时间
+
+        当前电量：\(batteryLevelText)
+        充电状态：\(batteryStateText)
+
+        前台累计：\(durationText(total(for: foregroundTotalKey, startKey: foregroundStartKey)))
+        后台累计：\(durationText(total(for: backgroundTotalKey, startKey: backgroundStartKey)))
+        悬浮窗开启累计：\(durationText(total(for: pipTotalKey, startKey: pipStartKey)))
+        后台保活音频累计：\(durationText(total(for: keepAliveTotalKey, startKey: keepAliveStartKey)))
+
+        前台进入次数：\(defaults.integer(forKey: foregroundEntryCountKey))
+        后台进入次数：\(defaults.integer(forKey: backgroundEntryCountKey))
+        悬浮窗开启次数：\(defaults.integer(forKey: pipStartCountKey))
+        悬浮窗关闭次数：\(defaults.integer(forKey: pipStopCountKey))
+        保活音频启动次数：\(defaults.integer(forKey: keepAliveStartCountKey))
+        保活音频停止次数：\(defaults.integer(forKey: keepAliveStopCountKey))
+
+        模式说明：仅PiP保活不启动静音音频；音频强保活会累计后台保活音频时长。
+        说明：iOS 不允许普通 App 读取系统电池用量百分比，本日志用于辅助判断悬浮窗、后台保活和音频会话的运行时长。
+        """
+    }
+
+    static func copyToPasteboard() {
+        UIPasteboard.general.string = exportText()
+    }
+
+    private static func startTimerIfNeeded(_ key: String) {
+        let defaults = UserDefaults.standard
+        guard defaults.double(forKey: key) <= 0 else { return }
+        defaults.set(Date().timeIntervalSince1970, forKey: key)
+    }
+
+    private static func stopTimer(startKey: String, totalKey: String) {
+        let defaults = UserDefaults.standard
+        let start = defaults.double(forKey: startKey)
+        guard start > 0 else { return }
+        let elapsed = max(0, Date().timeIntervalSince1970 - start)
+        defaults.set(defaults.double(forKey: totalKey) + elapsed, forKey: totalKey)
+        defaults.removeObject(forKey: startKey)
+    }
+
+    private static func total(for totalKey: String, startKey: String) -> TimeInterval {
+        let defaults = UserDefaults.standard
+        let total = defaults.double(forKey: totalKey)
+        let start = defaults.double(forKey: startKey)
+        guard start > 0 else { return total }
+        return total + max(0, Date().timeIntervalSince1970 - start)
+    }
+
+    private static func increment(_ key: String) {
+        let defaults = UserDefaults.standard
+        defaults.set(defaults.integer(forKey: key) + 1, forKey: key)
+    }
+
+    private static func durationText(_ duration: TimeInterval) -> String {
+        let seconds = max(0, Int(duration.rounded()))
+        let hours = seconds / 3600
+        let minutes = (seconds % 3600) / 60
+        let remainingSeconds = seconds % 60
+        return "\(hours)小时\(minutes)分\(remainingSeconds)秒"
+    }
+
+    private static var batteryLevelText: String {
+        let level = UIDevice.current.batteryLevel
+        guard level >= 0 else { return "未知" }
+        return "\(Int((level * 100).rounded()))%"
+    }
+
+    private static var batteryStateText: String {
+        switch UIDevice.current.batteryState {
+        case .unknown:
+            return "未知"
+        case .unplugged:
+            return "未充电"
+        case .charging:
+            return "充电中"
+        case .full:
+            return "已充满"
+        @unknown default:
+            return "未知"
+        }
+    }
+
+    private static var beijingFormatter: DateFormatter {
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.timeZone = TimeZone(identifier: "Asia/Shanghai")
+        formatter.dateFormat = "yyyy-MM-dd HH:mm:ss.SSS"
+        return formatter
+    }
+
+    private static var deviceModelIdentifier: String {
+        var systemInfo = utsname()
+        uname(&systemInfo)
+        let mirror = Mirror(reflecting: systemInfo.machine)
+        return mirror.children.reduce(into: "") { identifier, element in
+            guard let value = element.value as? Int8, value != 0 else { return }
+            identifier.append(String(UnicodeScalar(UInt8(value))))
+        }
+    }
+}

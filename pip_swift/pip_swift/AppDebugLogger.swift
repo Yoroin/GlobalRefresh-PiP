@@ -53,6 +53,7 @@ enum AppDebugLogger {
         系统版本：iOS \(device.systemVersion)
         设备型号：\(deviceModelIdentifier)
         生成时间：\(beijingFormatter.string(from: Date())) 北京时间
+        当前保活模式：\(KeepAliveModeText.current)
 
         最近日志：
         \(entries.isEmpty ? "暂无日志" : entries.joined(separator: "\n"))

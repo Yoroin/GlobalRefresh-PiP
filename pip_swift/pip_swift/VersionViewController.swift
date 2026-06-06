@@ -10,6 +10,22 @@ import SnapKit
 final class VersionViewController: UIViewController {
     private var hostingController: UIHostingController<VersionPageView>?
     private var isDebugModeEnabled = AppDebugLogger.isDebugModeEnabled
+    private var debugPanelResetToken = 0
+    private var isIOS26AudioKeepAliveEnabled: Bool {
+        get {
+            if UserDefaults.standard.object(forKey: ViewController.userDefaultsIOS26AudioKeepAliveKey) == nil {
+                if let legacyPiPOnly = UserDefaults.standard.object(forKey: ViewController.userDefaultsIOS26PiPOnlyKeepAliveKey) as? Bool {
+                    UserDefaults.standard.set(!legacyPiPOnly, forKey: ViewController.userDefaultsIOS26AudioKeepAliveKey)
+                } else {
+                    UserDefaults.standard.set(true, forKey: ViewController.userDefaultsIOS26AudioKeepAliveKey)
+                }
+            }
+            return UserDefaults.standard.bool(forKey: ViewController.userDefaultsIOS26AudioKeepAliveKey)
+        }
+        set {
+            UserDefaults.standard.set(newValue, forKey: ViewController.userDefaultsIOS26AudioKeepAliveKey)
+        }
+    }
 
     override func viewDidLoad() {
         super.viewDidLoad()
@@ -19,6 +35,8 @@ final class VersionViewController: UIViewController {
     private func setupSwiftUI() {
         let rootView = VersionPageView(
             isDebugModeEnabled: isDebugModeEnabled,
+            isIOS26AudioKeepAliveEnabled: isIOS26AudioKeepAliveEnabled,
+            debugPanelResetToken: debugPanelResetToken,
             onShowChangelog: { [weak self] in
                 self?.presentChangelog()
             },
@@ -28,8 +46,23 @@ final class VersionViewController: UIViewController {
             onCopyDebugLog: { [weak self] in
                 self?.copyDebugLog()
             },
+            onCopyPowerLog: { [weak self] in
+                self?.copyPowerLog()
+            },
+            onCopyMetricLog: { [weak self] in
+                self?.copyMetricLog()
+            },
+            onCopyKeepAliveLog: { [weak self] in
+                self?.copyKeepAliveLog()
+            },
             onSetDebugMode: { [weak self] newValue in
                 self?.setDebugMode(newValue)
+            },
+            onRequestEnableDebugMode: { [weak self] in
+                self?.confirmEnableDebugMode()
+            },
+            onSetIOS26AudioKeepAlive: { [weak self] newValue in
+                self?.setIOS26AudioKeepAlive(newValue)
             }
         )
         let hostingController = UIHostingController(rootView: rootView)
@@ -44,9 +77,17 @@ final class VersionViewController: UIViewController {
         hostingController.didMove(toParent: self)
     }
 
+    override func viewWillDisappear(_ animated: Bool) {
+        super.viewWillDisappear(animated)
+        debugPanelResetToken += 1
+        updateSwiftUI()
+    }
+
     private func updateSwiftUI() {
         hostingController?.rootView = VersionPageView(
             isDebugModeEnabled: isDebugModeEnabled,
+            isIOS26AudioKeepAliveEnabled: isIOS26AudioKeepAliveEnabled,
+            debugPanelResetToken: debugPanelResetToken,
             onShowChangelog: { [weak self] in
                 self?.presentChangelog()
             },
@@ -56,8 +97,23 @@ final class VersionViewController: UIViewController {
             onCopyDebugLog: { [weak self] in
                 self?.copyDebugLog()
             },
+            onCopyPowerLog: { [weak self] in
+                self?.copyPowerLog()
+            },
+            onCopyMetricLog: { [weak self] in
+                self?.copyMetricLog()
+            },
+            onCopyKeepAliveLog: { [weak self] in
+                self?.copyKeepAliveLog()
+            },
             onSetDebugMode: { [weak self] newValue in
                 self?.setDebugMode(newValue)
+            },
+            onRequestEnableDebugMode: { [weak self] in
+                self?.confirmEnableDebugMode()
+            },
+            onSetIOS26AudioKeepAlive: { [weak self] newValue in
+                self?.setIOS26AudioKeepAlive(newValue)
             }
         )
     }
@@ -81,9 +137,50 @@ final class VersionViewController: UIViewController {
         present(alert, animated: true)
     }
 
+    private func copyPowerLog() {
+        PowerUsageLogger.copyToPasteboard()
+        let alert = UIAlertController(title: "耗电日志已复制", message: "可以直接粘贴发送给开发者", preferredStyle: .alert)
+        alert.addAction(UIAlertAction(title: "确定", style: .default))
+        present(alert, animated: true)
+    }
+
+    private func copyMetricLog() {
+        MetricKitLogger.shared.copyToPasteboard()
+        let alert = UIAlertController(title: "系统指标日志已复制", message: "MetricKit 通常需要约24小时生成数据，若暂无指标可稍后再试", preferredStyle: .alert)
+        alert.addAction(UIAlertAction(title: "确定", style: .default))
+        present(alert, animated: true)
+    }
+
+    private func copyKeepAliveLog() {
+        KeepAliveLogger.copyToPasteboard()
+        let alert = UIAlertController(title: "保活日志已复制", message: "可以直接粘贴发送给开发者", preferredStyle: .alert)
+        alert.addAction(UIAlertAction(title: "确定", style: .default))
+        present(alert, animated: true)
+    }
+
     private func setDebugMode(_ isEnabled: Bool) {
         isDebugModeEnabled = isEnabled
         AppDebugLogger.isDebugModeEnabled = isEnabled
+        updateSwiftUI()
+    }
+
+    private func confirmEnableDebugMode() {
+        let alert = UIAlertController(
+            title: "打开调试模式可能引发不稳定因素，请谨慎开启",
+            message: nil,
+            preferredStyle: .alert
+        )
+        alert.addAction(UIAlertAction(title: "取消", style: .cancel))
+        alert.addAction(UIAlertAction(title: "确认开启", style: .default) { [weak self] _ in
+            self?.setDebugMode(true)
+        })
+        present(alert, animated: true)
+    }
+
+    private func setIOS26AudioKeepAlive(_ isEnabled: Bool) {
+        isIOS26AudioKeepAliveEnabled = isEnabled
+        NotificationCenter.default.post(name: ViewController.iOS26KeepAliveModeDidChangeNotification, object: nil)
+        updateSwiftUI()
     }
 }
 
@@ -136,6 +233,14 @@ private final class ChangelogViewController: UIViewController {
                     "修复iOS16部分用户卡顿的问题，修复iOS16部分用户相机可能导致的闪退问题以及自定义悬浮窗高度不生效的问题（感谢两位老铁的崩溃日志和测试）",
                     "修复部分用户反馈的音频冲突问题",
                     "优化旧版iOS系统的UI，未适配液态玻璃的组件采用高斯模糊"
+                ]
+            ),
+            makeSection(
+                version: "1.0.6（26.6.6）",
+                items: [
+                    "调试模式新增 保活方案切换 开关，可尝试切换为更省电的仅PiP保活方案，但后台留存率可能下降可能出现低版本兼容性问题，可自行选择",
+                    "修复关闭悬浮窗后进入后台可能自动重新开启的问题",
+                    "调试模式新增复制耗电日志和系统指标日志功能，用于辅助排查耗电变化；新增复制保活日志功能，用于辅助推断后台保活中断时间段"
                 ]
             )
         ])
@@ -203,7 +308,7 @@ private final class FAQViewController: UIViewController {
         let stackView = UIStackView(arrangedSubviews: [
             makeQuestion(
                 question: "1.这个APP的作用是什么？",
-                answer: "通过将悬浮窗挂在侧面，解锁系统的1-120hz自适应刷新率，而非1-80hz，可以使流畅度得到提升"
+                answer: "通过将悬浮窗挂在侧面，解锁系统的1-120hz自适应刷新率，而非1-80hz，可以使流畅度得到提升，跟悬浮时钟是一个效果"
             ),
             makeQuestion(
                 question: "2.生效后是一直120hz吗，会不会很耗电",
