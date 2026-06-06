@@ -39,6 +39,7 @@ class ViewController: UIViewController, AVPictureInPictureControllerDelegate {
     private var isCompactPiPStyle = true
     private var isLoadingHomePreferences = false
     private var hasPreparedPiPInfrastructure = false
+    private var wantsPiPActive = false
     private var isSettingsExpanded = false {
         didSet {
             guard oldValue != isSettingsExpanded else { return }
@@ -345,9 +346,7 @@ class ViewController: UIViewController, AVPictureInPictureControllerDelegate {
         pipController.delegate = self
         pipController.setValue(1, forKey: "controlsStyle")
         pipController.requiresLinearPlayback = true
-        if #available(iOS 14.2, *) {
-            pipController.canStartPictureInPictureAutomaticallyFromInline = true
-        }
+        updatePiPAutomaticStartPolicy()
     }
 
     private func setupCustomView() {
@@ -397,7 +396,7 @@ class ViewController: UIViewController, AVPictureInPictureControllerDelegate {
     }
 
     private func togglePiP() {
-        AppDebugLogger.log("Toggle PiP tapped, active=\(pipController?.isPictureInPictureActive ?? false), prepared=\(hasPreparedPiPInfrastructure)")
+        AppDebugLogger.log("Toggle PiP tapped, active=\(pipController?.isPictureInPictureActive ?? false), prepared=\(hasPreparedPiPInfrastructure), wants=\(wantsPiPActive)")
         if pipController == nil, !preparePiPInfrastructureIfNeeded() {
             isPiPActiveForUI = false
             showMessage("当前环境不支持悬浮窗")
@@ -416,12 +415,16 @@ class ViewController: UIViewController, AVPictureInPictureControllerDelegate {
 
         if pipController.isPictureInPictureActive {
             AppDebugLogger.log("Stop PiP requested")
+            wantsPiPActive = false
+            updatePiPAutomaticStartPolicy()
             pendingPiPStartWorkItem?.cancel()
             pipStartTimeoutWorkItem?.cancel()
             isPiPActiveForUI = false
             stopPiPSmoothly()
         } else {
             AppDebugLogger.log("Start PiP requested")
+            wantsPiPActive = true
+            updatePiPAutomaticStartPolicy()
             didRetryLegacyPiPStart = false
             isPiPActiveForUI = true
             configureRunningText()
@@ -496,7 +499,13 @@ class ViewController: UIViewController, AVPictureInPictureControllerDelegate {
     }
 
     private var shouldKeepPiPPlaybackAlive: Bool {
-        (pipController?.isPictureInPictureActive ?? false) || isPiPTransitioning || isPiPActiveForUI
+        wantsPiPActive && ((pipController?.isPictureInPictureActive ?? false) || isPiPTransitioning || isPiPActiveForUI)
+    }
+
+    private func updatePiPAutomaticStartPolicy() {
+        if #available(iOS 14.2, *) {
+            pipController?.canStartPictureInPictureAutomaticallyFromInline = wantsPiPActive
+        }
     }
 
     private var shouldPreviewPiPHeightLive: Bool {
@@ -787,6 +796,8 @@ class ViewController: UIViewController, AVPictureInPictureControllerDelegate {
         pipStartTimeoutWorkItem?.cancel()
         pendingPiPStartWorkItem = nil
         pipStartTimeoutWorkItem = nil
+        wantsPiPActive = false
+        updatePiPAutomaticStartPolicy()
         hidePiPContentForClosing()
         detachLegacyCustomViewIfNeeded()
         restorePiPVisualSurfaces()
@@ -1178,6 +1189,8 @@ class ViewController: UIViewController, AVPictureInPictureControllerDelegate {
         pendingPiPStartWorkItem = nil
         pipStartTimeoutWorkItem = nil
         didRetryLegacyPiPStart = false
+        wantsPiPActive = true
+        updatePiPAutomaticStartPolicy()
         prepareCustomViewForPiPStart()
         configureRunningText()
         showPiPContentForOpening()
@@ -1214,6 +1227,8 @@ class ViewController: UIViewController, AVPictureInPictureControllerDelegate {
         isStoppingPiP = false
         isPiPTransitioning = false
         didRetryLegacyPiPStart = false
+        wantsPiPActive = false
+        updatePiPAutomaticStartPolicy()
         BackgroundTaskManager.shared.stopPlay()
         endBackgroundTask()
         AppDebugLogger.log("PiP did stop")
