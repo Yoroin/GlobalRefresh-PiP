@@ -110,6 +110,12 @@
 - 原作者：CaiWanFeng
 - 修改完善：Yoroin
 
+## 来源与署名
+
+本项目基于 [CaiWanFeng/PiP](https://github.com/CaiWanFeng/PiP) 修改开发，原作者为 CaiWanFeng，当前修改版由 Yoroin 继续维护。
+
+如果基于本项目继续修改、分发或发布 App，请保留原作者 CaiWanFeng、当前修改版 Yoroin 以及对应项目地址。请勿将本项目或其修改版声称为完全原创作品。
+
 ## 免责声明
 
 本项目仅供学习和个人测试使用。使用者需要自行承担安装、签名、使用过程中的风险。请勿将本项目用于违反平台规则、商业侵权或其他不当用途。
