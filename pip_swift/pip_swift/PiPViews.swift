@@ -36,6 +36,7 @@ struct PiPHomeView: View {
     let pipRuntimeStartedAt: Date?
     let overlayResetToken: Int
     let isScrollingEnabled: Bool
+    let isClockModeEnabled: Bool
     let remembersPiPHeight: Bool
     let isSettingsExpanded: Bool
     let onTogglePiP: () -> Void
@@ -43,6 +44,7 @@ struct PiPHomeView: View {
     let onToggleStyle: () -> Void
     let onCustomizeHeight: () -> Void
     let onToggleScrolling: () -> Void
+    let onSetClockMode: (Bool) -> Void
     let onToggleSettings: () -> Void
     let onDismissSettings: () -> Void
     let onSetRememberPiPHeight: (Bool) -> Void
@@ -368,6 +370,15 @@ struct PiPHomeView: View {
                 .foregroundColor(Color(UIColor.secondaryLabel))
                 .fixedSize(horizontal: false, vertical: true)
                 .padding(.horizontal, 4)
+
+            SettingsToggleRow(
+                title: "文本悬浮窗",
+                systemImage: "text.alignleft",
+                isOn: textModeBinding,
+                statusText: { isOn in
+                    isOn ? "悬浮窗显示默认文本" : "悬浮窗显示当前时间"
+                }
+            )
         }
         .padding(16)
         .frame(width: 306)
@@ -417,6 +428,19 @@ struct PiPHomeView: View {
                 UIImpactFeedbackGenerator(style: .light).impactOccurred()
                 dismissPiPStatusInfoIfNeeded()
                 onToggleScrolling()
+            }
+        )
+    }
+
+    private var textModeBinding: Binding<Bool> {
+        Binding(
+            get: { !isClockModeEnabled },
+            set: { newValue in
+                let shouldEnableClock = !newValue
+                guard shouldEnableClock != isClockModeEnabled else { return }
+                UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                dismissPiPStatusInfoIfNeeded()
+                onSetClockMode(shouldEnableClock)
             }
         )
     }
@@ -662,7 +686,7 @@ struct VersionPageView: View {
 
                 Color.clear
                     .frame(height: 46)
-                .padding(.top, 24)
+                    .padding(.top, 24)
 
                 HStack(spacing: 10) {
                     CopyLogButton(
@@ -747,6 +771,16 @@ struct VersionPageView: View {
         onSetIOS26AudioKeepAlive(isEnabled)
     }
 
+    private func openGitHubLink() {
+        UIImpactFeedbackGenerator(style: .light).impactOccurred()
+        DiagnosticsRuntimeState.recordUserAction("打开GitHub")
+        dismissKeepAliveInfoPanel()
+        dismissDebugPanel()
+        if let url = URL(string: "https://github.com/Yoroin/GlobalRefresh-PiP") {
+            UIApplication.shared.open(url)
+        }
+    }
+
     private var keepAliveModeTitle: String {
         displayedIOS26AudioKeepAliveEnabled ? "音频强保活" : "PiP保活-低功耗"
     }
@@ -760,6 +794,13 @@ struct VersionPageView: View {
     private var fixedFAQButtons: some View {
         GeometryReader { proxy in
             HStack(spacing: 10) {
+                Button {
+                    openGitHubLink()
+                } label: {
+                    GitHubLinkIcon()
+                }
+                .buttonStyle(.plain)
+
                 Button {
                     UIImpactFeedbackGenerator(style: .light).impactOccurred()
                     dismissKeepAliveInfoPanel()
@@ -919,6 +960,45 @@ private struct DebugModeButton: View {
                 .overlay(shape.fill(Color(UIColor.secondarySystemBackground).opacity(isExpanded ? 0.54 : 0.38)))
         } else {
             shape.fill(Color(UIColor.secondarySystemBackground).opacity(isExpanded ? 0.84 : 0.64))
+        }
+    }
+}
+
+private struct GitHubLinkIcon: View {
+    var body: some View {
+        let shape = Circle()
+
+        Image("github-mark")
+            .renderingMode(.template)
+            .resizable()
+            .scaledToFit()
+            .foregroundColor(Color(UIColor.label))
+            .frame(width: 25, height: 25)
+        .frame(width: 44, height: 44)
+        .background(glassBackground(shape: shape))
+        .overlay(
+            shape.strokeBorder(
+                Color(UIColor.separator).opacity(0.52),
+                lineWidth: 1
+            )
+        )
+        .clipShape(Circle())
+        .contentShape(Circle())
+        .accessibilityLabel("GitHub")
+    }
+
+    @ViewBuilder
+    private func glassBackground(shape: Circle) -> some View {
+        if #available(iOS 26.0, *) {
+            shape
+                .fill(Color(UIColor.secondarySystemGroupedBackground).opacity(0.22))
+                .glassEffect(.regular.interactive(), in: shape)
+        } else if #available(iOS 15.0, *) {
+            shape
+                .fill(.regularMaterial)
+                .overlay(shape.fill(Color(UIColor.secondarySystemBackground).opacity(0.38)))
+        } else {
+            shape.fill(Color(UIColor.secondarySystemBackground).opacity(0.64))
         }
     }
 }

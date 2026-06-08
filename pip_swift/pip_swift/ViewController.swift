@@ -22,9 +22,11 @@ class ViewController: UIViewController, AVPictureInPictureControllerDelegate {
     private var legacyCustomViewHeightConstraint: Constraint?
     private var customView: UIView!
     private var textView: UITextView!
+    private var clockLabel: UILabel!
     private var videoCallContentController: UIViewController?
     private var hostingController: UIHostingController<PiPHomeView>?
     private var scrollDisplayLink: CADisplayLink?
+    private var clockTimer: Timer?
     private var lastScrollTimestamp: CFTimeInterval?
     private var playerEndObserver: NSObjectProtocol?
     private var backgroundTask: UIBackgroundTaskIdentifier = .invalid
@@ -71,6 +73,16 @@ class ViewController: UIViewController, AVPictureInPictureControllerDelegate {
             updateHomeView()
         }
     }
+    private var isClockModeEnabled = false {
+        didSet {
+            guard oldValue != isClockModeEnabled else { return }
+            if !isLoadingHomePreferences {
+                UserDefaults.standard.set(isClockModeEnabled, forKey: userDefaultsClockModeEnabledKey)
+            }
+            configureRunningText()
+            updateHomeView()
+        }
+    }
     private lazy var pipHeight: CGFloat = compactPiPHeight
     private var isPiPActiveForUI = false {
         didSet {
@@ -78,14 +90,22 @@ class ViewController: UIViewController, AVPictureInPictureControllerDelegate {
             updateHomeView()
         }
     }
+    private lazy var clockFormatter: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.dateFormat = "HH:mm:ss"
+        return formatter
+    }()
 
-    private let pipWidth: CGFloat = 300
+    private let textPiPWidth: CGFloat = 300
+    private let clockPiPWidth: CGFloat = 200
     private let defaultPiPHeight: CGFloat = 120
     private let compactPiPHeight: CGFloat = 44
     private let minPiPHeight: CGFloat = 0.1
     private let maxPiPHeight: CGFloat = 220
     private let userDefaultsScrollingEnabledKey = "pip.home.scrollingEnabled"
     private let userDefaultsRememberPiPHeightKey = "pip.home.rememberPiPHeight"
+    private let userDefaultsClockModeEnabledKey = "pip.home.clockModeEnabled"
     private let userDefaultsPiPHeightKey = "pip.home.rememberedPiPHeight"
     private let userDefaultsPiPRuntimeStartedAtKey = "pip.home.runtimeStartedAt"
     private let userDefaultsPiPRuntimeDurationKey = "pip.home.runtimeDuration"
@@ -95,7 +115,10 @@ class ViewController: UIViewController, AVPictureInPictureControllerDelegate {
     static let userDefaultsIOS26PiPOnlyKeepAliveKey = "pip.keepAlive.iOS26PiPOnlyEnabled"
     static let iOS26KeepAliveModeDidChangeNotification = Notification.Name("pip.iOS26KeepAliveModeDidChange")
     private var currentPiPSize: CGSize {
-        CGSize(width: pipWidth, height: clampedPiPHeight)
+        CGSize(width: currentPiPWidth, height: clampedPiPHeight)
+    }
+    private var currentPiPWidth: CGFloat {
+        isClockModeEnabled ? clockPiPWidth : textPiPWidth
     }
     private var clampedPiPHeight: CGFloat {
         min(max(pipHeight, minPiPHeight), maxPiPHeight)
@@ -180,6 +203,7 @@ class ViewController: UIViewController, AVPictureInPictureControllerDelegate {
         pendingPiPStartWorkItem?.cancel()
         pipStartTimeoutWorkItem?.cancel()
         stopDisplayLinks()
+        stopClockTimer()
         endBackgroundTask()
     }
 
@@ -198,6 +222,7 @@ class ViewController: UIViewController, AVPictureInPictureControllerDelegate {
             pipRuntimeStartedAt: pipRuntimeStartedAt,
             overlayResetToken: overlayResetToken,
             isScrollingEnabled: isScrollingEnabled,
+            isClockModeEnabled: isClockModeEnabled,
             remembersPiPHeight: remembersPiPHeight,
             isSettingsExpanded: isSettingsExpanded,
             onTogglePiP: { [weak self] in self?.togglePiP() },
@@ -205,6 +230,7 @@ class ViewController: UIViewController, AVPictureInPictureControllerDelegate {
             onToggleStyle: { [weak self] in self?.togglePiPStyle() },
             onCustomizeHeight: { [weak self] in self?.presentPiPHeightEditor() },
             onToggleScrolling: { [weak self] in self?.toggleScrolling() },
+            onSetClockMode: { [weak self] newValue in self?.setClockMode(newValue) },
             onToggleSettings: { [weak self] in self?.toggleSettingsPanel() },
             onDismissSettings: { [weak self] in self?.dismissSettingsPanel() },
             onSetRememberPiPHeight: { [weak self] newValue in self?.setRememberPiPHeight(newValue) }
@@ -237,6 +263,7 @@ class ViewController: UIViewController, AVPictureInPictureControllerDelegate {
             pipRuntimeStartedAt: pipRuntimeStartedAt,
             overlayResetToken: overlayResetToken,
             isScrollingEnabled: isScrollingEnabled,
+            isClockModeEnabled: isClockModeEnabled,
             remembersPiPHeight: remembersPiPHeight,
             isSettingsExpanded: isSettingsExpanded,
             onTogglePiP: { [weak self] in self?.togglePiP() },
@@ -244,6 +271,7 @@ class ViewController: UIViewController, AVPictureInPictureControllerDelegate {
             onToggleStyle: { [weak self] in self?.togglePiPStyle() },
             onCustomizeHeight: { [weak self] in self?.presentPiPHeightEditor() },
             onToggleScrolling: { [weak self] in self?.toggleScrolling() },
+            onSetClockMode: { [weak self] newValue in self?.setClockMode(newValue) },
             onToggleSettings: { [weak self] in self?.toggleSettingsPanel() },
             onDismissSettings: { [weak self] in self?.dismissSettingsPanel() },
             onSetRememberPiPHeight: { [weak self] newValue in self?.setRememberPiPHeight(newValue) }
@@ -257,6 +285,10 @@ class ViewController: UIViewController, AVPictureInPictureControllerDelegate {
         if UserDefaults.standard.object(forKey: userDefaultsScrollingEnabledKey) != nil {
             isScrollingEnabled = UserDefaults.standard.bool(forKey: userDefaultsScrollingEnabledKey)
         }
+
+        isClockModeEnabled = UserDefaults.standard.object(forKey: userDefaultsClockModeEnabledKey) == nil
+            ? true
+            : UserDefaults.standard.bool(forKey: userDefaultsClockModeEnabledKey)
 
         remembersPiPHeight = UserDefaults.standard.bool(forKey: userDefaultsRememberPiPHeightKey)
         if remembersPiPHeight,
@@ -367,7 +399,9 @@ class ViewController: UIViewController, AVPictureInPictureControllerDelegate {
             "wants=\(wantsPiPActive)",
             "transition=\(isPiPTransitioning)",
             "height=\(formattedHeight(clampedPiPHeight))",
+            "width=\(Int(currentPiPWidth))pt",
             "scroll=\(isScrollingEnabled)",
+            "clock=\(isClockModeEnabled)",
             "mode=\(shouldUsePiPOnlyKeepAlive ? "PiP保活-低功耗" : "音频强保活")"
         ].joined(separator: ",")
         DiagnosticsRuntimeState.updatePiPState(state)
@@ -483,6 +517,7 @@ class ViewController: UIViewController, AVPictureInPictureControllerDelegate {
     }
 
     private func teardownPiPInfrastructure() {
+        stopClockTimer()
         playerLayer?.removeFromSuperlayer()
         playerLayer = nil
         pipController = nil
@@ -490,6 +525,7 @@ class ViewController: UIViewController, AVPictureInPictureControllerDelegate {
         customView?.removeFromSuperview()
         customView = nil
         textView = nil
+        clockLabel = nil
         pipSourceView?.removeFromSuperview()
         pipSourceView = nil
         pipSourceWidthConstraint = nil
@@ -592,6 +628,21 @@ class ViewController: UIViewController, AVPictureInPictureControllerDelegate {
         textView.snp.makeConstraints { make in
             make.edges.equalToSuperview()
         }
+
+        clockLabel = UILabel()
+        clockLabel.textAlignment = .center
+        clockLabel.textColor = .white
+        clockLabel.backgroundColor = .black
+        clockLabel.adjustsFontSizeToFitWidth = true
+        clockLabel.minimumScaleFactor = 0.45
+        clockLabel.baselineAdjustment = .alignCenters
+        clockLabel.isHidden = true
+        customView.addSubview(clockLabel)
+        clockLabel.snp.makeConstraints { make in
+            make.edges.equalToSuperview().inset(2)
+        }
+
+        configureRunningText()
     }
 
     private func attachCustomViewToPiPContent() {
@@ -850,7 +901,7 @@ class ViewController: UIViewController, AVPictureInPictureControllerDelegate {
     }
 
     private func startDisplayLinks() {
-        guard isScrollingEnabled else { return }
+        guard isScrollingEnabled, !isClockModeEnabled else { return }
         stopDisplayLinks()
 
         let scrollDisplayLink = CADisplayLink(target: self, selector: #selector(updateScrollingText(_:)))
@@ -864,6 +915,20 @@ class ViewController: UIViewController, AVPictureInPictureControllerDelegate {
         scrollDisplayLink?.invalidate()
         scrollDisplayLink = nil
         lastScrollTimestamp = nil
+    }
+
+    private func startClockTimerIfNeeded() {
+        guard isClockModeEnabled else { return }
+        stopClockTimer()
+        updateClockLabel()
+        let timer = Timer(timeInterval: 1, target: self, selector: #selector(updateClockLabel), userInfo: nil, repeats: true)
+        RunLoop.main.add(timer, forMode: .common)
+        clockTimer = timer
+    }
+
+    private func stopClockTimer() {
+        clockTimer?.invalidate()
+        clockTimer = nil
     }
 
     private func configureForScrollingTextRefreshRate(_ displayLink: CADisplayLink) {
@@ -881,7 +946,7 @@ class ViewController: UIViewController, AVPictureInPictureControllerDelegate {
     }
 
     @objc private func updateScrollingText(_ displayLink: CADisplayLink) {
-        guard let textView else {
+        guard let textView, !isClockModeEnabled else {
             stopDisplayLinks()
             return
         }
@@ -892,6 +957,11 @@ class ViewController: UIViewController, AVPictureInPictureControllerDelegate {
         if textView.contentOffset.y > textView.contentSize.height {
             textView.contentOffset = .zero
         }
+    }
+
+    @objc private func updateClockLabel() {
+        guard let clockLabel else { return }
+        clockLabel.text = clockFormatter.string(from: Date())
     }
 
     private func startPiPSmoothly() {
@@ -980,6 +1050,7 @@ class ViewController: UIViewController, AVPictureInPictureControllerDelegate {
         pendingPiPStartWorkItem?.cancel()
         pipStartTimeoutWorkItem?.cancel()
         stopDisplayLinks()
+        stopClockTimer()
         hidePiPContentForClosing()
         preparePiPVisualSurfacesForClosing()
         movePiPSourceViewOffscreenForClosing()
@@ -1174,6 +1245,7 @@ class ViewController: UIViewController, AVPictureInPictureControllerDelegate {
             customView.layer.removeAllAnimations()
             customView.alpha = 0
             textView.alpha = 0
+            clockLabel?.alpha = 0
             customView.superview?.layoutIfNeeded()
         }
     }
@@ -1182,6 +1254,7 @@ class ViewController: UIViewController, AVPictureInPictureControllerDelegate {
         guard let customView, let textView else { return }
         UIView.performWithoutAnimation {
             textView.alpha = 1
+            clockLabel?.alpha = 1
             customView.alpha = 1
             customView.superview?.layoutIfNeeded()
         }
@@ -1280,6 +1353,23 @@ class ViewController: UIViewController, AVPictureInPictureControllerDelegate {
 
     private func configureRunningText() {
         guard let textView else { return }
+        if isClockModeEnabled {
+            stopDisplayLinks()
+            customView?.backgroundColor = .white
+            textView.isHidden = true
+            clockLabel?.isHidden = false
+            updateClockAppearance()
+            if shouldPreviewPiPHeightLive {
+                startClockTimerIfNeeded()
+            } else {
+                stopClockTimer()
+            }
+            return
+        }
+
+        stopClockTimer()
+        customView?.backgroundColor = .white
+        clockLabel?.isHidden = true
         textView.isHidden = false
         textView.text = originalPiPText
         textView.backgroundColor = .black
@@ -1288,16 +1378,42 @@ class ViewController: UIViewController, AVPictureInPictureControllerDelegate {
         textView.layoutIfNeeded()
     }
 
+    private func updateClockAppearance() {
+        guard let clockLabel else { return }
+        let fontSize = min(max(clampedPiPHeight * 0.74, 18), 58)
+        clockLabel.font = .monospacedDigitSystemFont(ofSize: fontSize, weight: .black)
+        clockLabel.textColor = .black
+        clockLabel.backgroundColor = .white
+        updateClockLabel()
+    }
+
     private func toggleScrolling() {
         DiagnosticsRuntimeState.recordUserAction(isScrollingEnabled ? "关闭悬浮窗内容滚动" : "开启悬浮窗内容滚动")
         isScrollingEnabled.toggle()
         AppDebugLogger.log("PiP text scrolling changed, enabled=\(isScrollingEnabled)")
-        if isScrollingEnabled {
+        if isScrollingEnabled, !isClockModeEnabled {
             if pipController?.isPictureInPictureActive == true {
                 startDisplayLinks()
             }
         } else {
             stopDisplayLinks()
+        }
+    }
+
+    private func setClockMode(_ isEnabled: Bool) {
+        DiagnosticsRuntimeState.recordUserAction(isEnabled ? "切换为时分秒悬浮窗" : "切换为文本悬浮窗")
+        isClockModeEnabled = isEnabled
+        AppDebugLogger.log("PiP clock mode changed, enabled=\(isClockModeEnabled)")
+        videoCallContentController?.preferredContentSize = currentPiPSize
+        updatePiPSourceGeometry()
+        reloadPlayerItemIfNeededForCurrentSize()
+        if pipController?.isPictureInPictureActive == true {
+            configureRunningText()
+            if !isClockModeEnabled && isScrollingEnabled {
+                startDisplayLinks()
+            }
+        } else if !isClockModeEnabled {
+            stopClockTimer()
         }
     }
 
@@ -1575,6 +1691,7 @@ class ViewController: UIViewController, AVPictureInPictureControllerDelegate {
             isPiPActiveForUI = false
         }
         stopDisplayLinks()
+        stopClockTimer()
         updateDiagnosticsPiPState()
         updateDisplaySleepDiagnostics(reason: "PiP即将停止", shouldLog: true)
         AppDebugLogger.log("PiP will stop")
