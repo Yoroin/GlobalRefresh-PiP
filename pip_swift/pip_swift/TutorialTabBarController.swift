@@ -147,22 +147,24 @@ private struct TutorialStepView: View {
 
             GeometryReader { proxy in
                 let isStepOne = imageName == "tutorial-step-1"
+                let shortSide = min(proxy.size.width, proxy.size.height)
+                let isCompact = shortSide <= 340 || proxy.size.height <= 600
                 let imageHeight = isStepOne
-                    ? min(proxy.size.height * 0.64, 500)
-                    : min(proxy.size.height * 0.68, 520)
+                    ? min(proxy.size.height * (isCompact ? 0.52 : 0.64), isCompact ? 360 : 500)
+                    : min(proxy.size.height * (isCompact ? 0.55 : 0.68), isCompact ? 380 : 520)
                 let imageWidth = imageHeight * (1206.0 / 2622.0)
 
                 VStack(alignment: .leading, spacing: 0) {
                     Text(title)
-                        .font(.system(size: 34, weight: .black, design: .rounded))
+                        .font(.system(size: isCompact ? 30 : 34, weight: .black, design: .rounded))
                         .foregroundColor(Color(UIColor.label))
 
                     Text(content)
-                        .font(.system(size: 19, weight: .semibold))
+                        .font(.system(size: isCompact ? 16 : 19, weight: .semibold))
                         .foregroundColor(Color(UIColor.secondaryLabel))
-                        .lineSpacing(6)
+                        .lineSpacing(isCompact ? 3 : 6)
                         .fixedSize(horizontal: false, vertical: true)
-                        .padding(.top, 24)
+                        .padding(.top, isCompact ? 14 : 24)
 
                     HStack {
                         Spacer(minLength: 0)
@@ -179,14 +181,14 @@ private struct TutorialStepView: View {
                             )
                         Spacer(minLength: 0)
                     }
-                    .padding(.top, 10)
+                    .padding(.top, isCompact ? 8 : 10)
 
                     Spacer(minLength: 0)
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-                .padding(.horizontal, 24)
-                .padding(.top, 14)
-                .padding(.bottom, 12)
+                .padding(.horizontal, isCompact ? 18 : 24)
+                .padding(.top, isCompact ? 8 : 14)
+                .padding(.bottom, isCompact ? 8 : 12)
             }
         }
     }

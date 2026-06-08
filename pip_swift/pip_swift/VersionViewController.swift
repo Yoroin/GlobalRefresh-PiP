@@ -52,6 +52,7 @@ final class VersionViewController: UIViewController {
         let rootView = VersionPageView(
             isDebugModeEnabled: isDebugModeEnabled,
             isIOS26AudioKeepAliveEnabled: isIOS26AudioKeepAliveEnabled,
+            isDebugDiagnosticsEnabled: DebugDiagnosticsMonitor.isEnabled,
             debugPanelResetToken: debugPanelResetToken,
             onShowChangelog: { [weak self] in
                 self?.presentChangelog()
@@ -102,6 +103,7 @@ final class VersionViewController: UIViewController {
         hostingController?.rootView = VersionPageView(
             isDebugModeEnabled: isDebugModeEnabled,
             isIOS26AudioKeepAliveEnabled: isIOS26AudioKeepAliveEnabled,
+            isDebugDiagnosticsEnabled: DebugDiagnosticsMonitor.isEnabled,
             debugPanelResetToken: debugPanelResetToken,
             onShowChangelog: { [weak self] in
                 self?.presentChangelog()
@@ -173,6 +175,7 @@ final class VersionViewController: UIViewController {
                 DiagnosticsRuntimeState.refreshAppState()
                 DiagnosticsRuntimeState.updateCurrentPage("版本")
             }
+            self.updateSwiftUI()
         })
         present(alert, animated: true)
     }
@@ -244,12 +247,12 @@ private final class ChangelogViewController: UIViewController {
 
         let stackView = UIStackView(arrangedSubviews: [
             makeSection(
-                version: "1.0.7（26.6.7）",
+                version: "1.0.7（26.6.8）",
                 items: [
                     "为了减少耗电量，经过实测对比后APP将默认启用为更为省电的仅PiP保活新方案，后台保活效果仍为显著，且解决了小部分场景下的音频冲突问题",
                     "可通过版本号-下方或首页查看当前保活模式",
                     "不再推荐使用老方案，如有需求可再自行前往调试模式-自由切换",
-                    "首页新增悬浮窗状态检测，方便查看是否生效以及隐藏和是否被杀后台，点击可查看每次打开后的持续运行时间以及上次关闭时间",
+                    "首页新增悬浮窗状态检测，方便查看是否生效以及隐藏和是否被杀后台，点击可查看每次打开后的持续运行时间以及上次关闭时间，便于判断后台留存时间",
                     "首页停止滚动按钮移至二级菜单，防止误解"
                 ]
             ),
@@ -393,7 +396,7 @@ private final class FAQViewController: UIViewController {
             ),
             makeQuestion(
                 question: "8.新旧保活模式有什么区别哪个更好",
-                answer: "经过实测后更推荐新模式仅PiP保活方案，更为省电作为默认方案，跟老方案音频强保活对比保活率一致实测没有出现杀后台，并且避免了可能出现的部分用户反馈的音频冲突问题，当然也保留了选择空间，可自行前往调试模式切换"
+                answer: "经过实测后更推荐新模式仅PiP保活方案作为默认方案，更为省电，跟老方案音频强保活对比保活率一致实测没有出现杀后台，并且避免了可能出现的部分用户反馈的音频冲突问题，当然也保留了选择空间，可自行前往调试模式切换"
             )
         ])
         stackView.axis = .vertical

@@ -106,6 +106,7 @@ enum DiagnosticsRuntimeState {
     private static var currentPage = "未记录"
     private static var pipState = "未记录"
     private static var displaySleepState = "未记录"
+    private static var pipSurfaceState = "未记录"
     private static var lastUserAction = "无"
     private static var lastEvent = "无"
 
@@ -160,6 +161,7 @@ enum DiagnosticsRuntimeState {
         currentPage = "未记录"
         pipState = "未记录"
         displaySleepState = "未记录"
+        pipSurfaceState = "未记录"
         lastUserAction = "无"
         lastEvent = "无"
         lock.unlock()
@@ -194,6 +196,10 @@ enum DiagnosticsRuntimeState {
         update { displaySleepState = state }
     }
 
+    static func updatePiPSurfaceState(_ state: String) {
+        update { pipSurfaceState = state }
+    }
+
     static func recordUserAction(_ action: String) {
         update { lastUserAction = action }
         AppDebugLogger.log("用户操作：\(action)")
@@ -205,10 +211,17 @@ enum DiagnosticsRuntimeState {
 
     static func snapshotText(includeAudio: Bool = true) -> String {
         let base: String = lockedValue {
-            "App=\(appState), 页面=\(currentPage), 悬浮窗=\(pipState), 熄屏=\(displaySleepState), 最后操作=\(lastUserAction), 最后事件=\(lastEvent)"
+            "App=\(appState), 页面=\(currentPage), 悬浮窗=\(pipState), 悬浮窗显示层=\(pipSurfaceState), 熄屏=\(displaySleepState), 最后操作=\(lastUserAction), 最后事件=\(lastEvent)"
         }
         guard includeAudio else { return base }
         return "\(base), 音频=\(audioSessionSnapshotText)"
+    }
+
+    static var isForegroundActive: Bool {
+        lock.lock()
+        let value = appState == "前台活跃"
+        lock.unlock()
+        return value
     }
 
     private static func update(_ block: () -> Void) {
@@ -254,6 +267,7 @@ enum MainThreadWatchdog {
     private static var lastBeat = Date()
     private static var lastReport = Date.distantPast
     private static var isHanging = false
+    private static var currentHangIsForeground = true
     private static var hasPendingPing = false
 
     static var isEnabled: Bool {
@@ -283,12 +297,15 @@ enum MainThreadWatchdog {
                 let now = Date()
                 let gap = now.timeIntervalSince(lastBeat)
                 if gap > threshold {
+                    let isForegroundActive = DiagnosticsRuntimeState.isForegroundActive
                     if !isHanging {
                         isHanging = true
+                        currentHangIsForeground = isForegroundActive
                         lastReport = now
                         AppDebugLogger.log(
                             String(
-                                format: "主线程卡顿开始：%.2f秒未响应 | %@ | %@",
+                                format: "%@：%.2f秒未响应 | %@ | %@",
+                                isForegroundActive ? "主线程卡顿开始" : "后台主线程挂起记录",
                                 gap,
                                 PerformanceDiagnosticsLogger.currentSnapshotText(),
                                 DiagnosticsRuntimeState.snapshotText()
@@ -298,7 +315,8 @@ enum MainThreadWatchdog {
                         lastReport = now
                         AppDebugLogger.log(
                             String(
-                                format: "主线程卡顿持续：%.2f秒未响应 | %@",
+                                format: "%@：%.2f秒未响应 | %@",
+                                currentHangIsForeground ? "主线程卡顿持续" : "后台主线程仍处于挂起状态",
                                 gap,
                                 DiagnosticsRuntimeState.snapshotText()
                             )
@@ -319,7 +337,8 @@ enum MainThreadWatchdog {
                             isHanging = false
                             AppDebugLogger.log(
                                 String(
-                                    format: "主线程卡顿恢复：持续约%.2f秒 | %@",
+                                    format: "%@：持续约%.2f秒 | %@",
+                                    currentHangIsForeground ? "主线程卡顿恢复" : "后台主线程挂起恢复",
                                     blockedDuration,
                                     DiagnosticsRuntimeState.snapshotText()
                                 )
@@ -339,6 +358,7 @@ enum MainThreadWatchdog {
             timer?.cancel()
             timer = nil
             isHanging = false
+            currentHangIsForeground = true
             hasPendingPing = false
         }
     }
@@ -401,9 +421,11 @@ enum FrameStutterMonitor {
         lastReport = now
 
         let expectedFrame = displayLink.targetTimestamp - displayLink.timestamp
+        let label = DiagnosticsRuntimeState.isForegroundActive ? "UI帧间隔异常" : "后台UI帧间隔记录"
         AppDebugLogger.log(
             String(
-                format: "UI帧间隔异常：%.0fms，预期帧间隔约%.1fms | %@ | %@",
+                format: "%@：%.0fms，预期帧间隔约%.1fms | %@ | %@",
+                label,
                 interval * 1000,
                 max(expectedFrame, 0) * 1000,
                 PerformanceDiagnosticsLogger.currentSnapshotText(),
