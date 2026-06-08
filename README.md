@@ -116,6 +116,7 @@
 
 - 原项目：[CaiWanFeng/PiP](https://github.com/CaiWanFeng/PiP)
 - 原作者：CaiWanFeng
+- 当前项目：[Yoroin/GlobalRefresh-PiP](https://github.com/Yoroin/GlobalRefresh-PiP)
 - 当前修改版维护：Yoroin
 
 如果基于本项目继续修改、分发或发布 App，请保留原作者 CaiWanFeng、当前修改版 Yoroin 以及对应项目地址。请勿将本项目或其修改版声称为完全原创作品。
