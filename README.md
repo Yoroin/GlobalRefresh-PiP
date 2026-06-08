@@ -1,4 +1,4 @@
-# 全局高刷
+# 全局高刷悬浮窗
 
 > 基于 [CaiWanFeng/PiP](https://github.com/CaiWanFeng/PiP) 修改的个人学习与测试版本。
 
