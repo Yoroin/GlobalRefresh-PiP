@@ -7,6 +7,7 @@ import UIKit
 import Darwin
 
 enum PowerUsageLogger {
+    private static let maximumStatisticsAge: TimeInterval = 24 * 60 * 60
     private static let launchDateKey = "pip.power.launchDate"
     private static let foregroundStartKey = "pip.power.foregroundStart"
     private static let foregroundTotalKey = "pip.power.foregroundTotal"
@@ -24,48 +25,64 @@ enum PowerUsageLogger {
     private static let foregroundEntryCountKey = "pip.power.foregroundEntryCount"
 
     static func markLaunch() {
+        guard AppDebugLogger.isDebugModeEnabled else { return }
         UIDevice.current.isBatteryMonitoringEnabled = true
         let defaults = UserDefaults.standard
         if defaults.object(forKey: launchDateKey) == nil {
             defaults.set(Date().timeIntervalSince1970, forKey: launchDateKey)
         }
+        rotateStatisticsIfNeeded()
         markForegroundStart()
     }
 
     static func markForegroundStart() {
+        guard AppDebugLogger.isDebugModeEnabled else { return }
         stopTimer(startKey: backgroundStartKey, totalKey: backgroundTotalKey)
         startTimerIfNeeded(foregroundStartKey)
         increment(foregroundEntryCountKey)
     }
 
     static func markBackgroundStart() {
+        guard AppDebugLogger.isDebugModeEnabled else { return }
         stopTimer(startKey: foregroundStartKey, totalKey: foregroundTotalKey)
         startTimerIfNeeded(backgroundStartKey)
         increment(backgroundEntryCountKey)
     }
 
     static func markPiPStart() {
-        startTimerIfNeeded(pipStartKey)
-        increment(pipStartCountKey)
+        guard AppDebugLogger.isDebugModeEnabled else { return }
+        if startTimerIfNeeded(pipStartKey) {
+            increment(pipStartCountKey)
+        }
     }
 
     static func markPiPStop() {
-        stopTimer(startKey: pipStartKey, totalKey: pipTotalKey)
-        increment(pipStopCountKey)
+        guard AppDebugLogger.isDebugModeEnabled else { return }
+        if stopTimer(startKey: pipStartKey, totalKey: pipTotalKey) {
+            increment(pipStopCountKey)
+        }
     }
 
     static func markKeepAliveStart() {
-        startTimerIfNeeded(keepAliveStartKey)
-        increment(keepAliveStartCountKey)
+        guard AppDebugLogger.isDebugModeEnabled else { return }
+        if startTimerIfNeeded(keepAliveStartKey) {
+            increment(keepAliveStartCountKey)
+        }
     }
 
     static func markKeepAliveStop() {
-        stopTimer(startKey: keepAliveStartKey, totalKey: keepAliveTotalKey)
-        increment(keepAliveStopCountKey)
+        guard AppDebugLogger.isDebugModeEnabled else { return }
+        if stopTimer(startKey: keepAliveStartKey, totalKey: keepAliveTotalKey) {
+            increment(keepAliveStopCountKey)
+        }
     }
 
     static func exportText() -> String {
         UIDevice.current.isBatteryMonitoringEnabled = true
+        if !AppDebugLogger.isDebugModeEnabled {
+            resetStatistics()
+        }
+        rotateStatisticsIfNeeded()
         let defaults = UserDefaults.standard
         let info = Bundle.main.infoDictionary
         let version = info?["CFBundleShortVersionString"] as? String ?? "unknown"
@@ -83,7 +100,7 @@ enum PowerUsageLogger {
         设备型号：\(deviceModelIdentifier)
         生成时间：\(beijingFormatter.string(from: Date())) 北京时间
         当前保活模式：\(KeepAliveModeText.current)
-        首次统计时间：\(launchText) 北京时间
+        本轮统计开始时间：\(launchText) 北京时间
 
         当前电量：\(batteryLevelText)
         充电状态：\(batteryStateText)
@@ -100,8 +117,8 @@ enum PowerUsageLogger {
         保活音频启动次数：\(defaults.integer(forKey: keepAliveStartCountKey))
         保活音频停止次数：\(defaults.integer(forKey: keepAliveStopCountKey))
 
-        模式说明：仅PiP保活不启动静音音频；音频强保活会累计后台保活音频时长。
-        说明：iOS 不允许普通 App 读取系统电池用量百分比，本日志用于辅助判断悬浮窗、后台保活和音频会话的运行时长。
+        模式说明：PiP保活-低功耗不启动静音音频；音频强保活会累计后台保活音频时长。
+        说明：iOS 不允许普通 App 读取系统电池用量百分比，本日志用于辅助判断悬浮窗、后台保活和音频会话的运行时长；统计周期最多保留24小时，超过后自动重新统计。
         """
     }
 
@@ -109,19 +126,35 @@ enum PowerUsageLogger {
         UIPasteboard.general.string = exportText()
     }
 
-    private static func startTimerIfNeeded(_ key: String) {
+    static func resetStatistics() {
         let defaults = UserDefaults.standard
-        guard defaults.double(forKey: key) <= 0 else { return }
-        defaults.set(Date().timeIntervalSince1970, forKey: key)
+        for key in [launchDateKey] + totalKeys + countKeys + startKeys {
+            defaults.removeObject(forKey: key)
+        }
     }
 
-    private static func stopTimer(startKey: String, totalKey: String) {
+    static func startFreshStatistics() {
+        resetStatistics()
+        UserDefaults.standard.set(Date().timeIntervalSince1970, forKey: launchDateKey)
+    }
+
+    @discardableResult
+    private static func startTimerIfNeeded(_ key: String) -> Bool {
+        let defaults = UserDefaults.standard
+        guard defaults.double(forKey: key) <= 0 else { return false }
+        defaults.set(Date().timeIntervalSince1970, forKey: key)
+        return true
+    }
+
+    @discardableResult
+    private static func stopTimer(startKey: String, totalKey: String) -> Bool {
         let defaults = UserDefaults.standard
         let start = defaults.double(forKey: startKey)
-        guard start > 0 else { return }
+        guard start > 0 else { return false }
         let elapsed = max(0, Date().timeIntervalSince1970 - start)
         defaults.set(defaults.double(forKey: totalKey) + elapsed, forKey: totalKey)
         defaults.removeObject(forKey: startKey)
+        return true
     }
 
     private static func total(for totalKey: String, startKey: String) -> TimeInterval {
@@ -135,6 +168,63 @@ enum PowerUsageLogger {
     private static func increment(_ key: String) {
         let defaults = UserDefaults.standard
         defaults.set(defaults.integer(forKey: key) + 1, forKey: key)
+    }
+
+    private static func rotateStatisticsIfNeeded() {
+        let defaults = UserDefaults.standard
+        let now = Date().timeIntervalSince1970
+        let launchTimestamp = defaults.double(forKey: launchDateKey)
+        guard launchTimestamp > 0 else {
+            defaults.set(now, forKey: launchDateKey)
+            return
+        }
+        guard now - launchTimestamp > maximumStatisticsAge else { return }
+
+        let isForegroundActive = defaults.double(forKey: foregroundStartKey) > 0
+        let isBackgroundActive = defaults.double(forKey: backgroundStartKey) > 0
+        let isPiPActive = defaults.double(forKey: pipStartKey) > 0
+        let isKeepAliveAudioActive = defaults.double(forKey: keepAliveStartKey) > 0
+
+        for key in totalKeys + countKeys + startKeys {
+            defaults.removeObject(forKey: key)
+        }
+
+        defaults.set(now, forKey: launchDateKey)
+        if isForegroundActive {
+            defaults.set(now, forKey: foregroundStartKey)
+            defaults.set(1, forKey: foregroundEntryCountKey)
+        }
+        if isBackgroundActive {
+            defaults.set(now, forKey: backgroundStartKey)
+            defaults.set(1, forKey: backgroundEntryCountKey)
+        }
+        if isPiPActive {
+            defaults.set(now, forKey: pipStartKey)
+            defaults.set(1, forKey: pipStartCountKey)
+        }
+        if isKeepAliveAudioActive {
+            defaults.set(now, forKey: keepAliveStartKey)
+            defaults.set(1, forKey: keepAliveStartCountKey)
+        }
+    }
+
+    private static var totalKeys: [String] {
+        [foregroundTotalKey, backgroundTotalKey, pipTotalKey, keepAliveTotalKey]
+    }
+
+    private static var countKeys: [String] {
+        [
+            pipStartCountKey,
+            pipStopCountKey,
+            keepAliveStartCountKey,
+            keepAliveStopCountKey,
+            backgroundEntryCountKey,
+            foregroundEntryCountKey
+        ]
+    }
+
+    private static var startKeys: [String] {
+        [foregroundStartKey, backgroundStartKey, pipStartKey, keepAliveStartKey]
     }
 
     private static func durationText(_ duration: TimeInterval) -> String {

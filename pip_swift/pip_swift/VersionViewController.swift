@@ -7,6 +7,16 @@ import UIKit
 import SwiftUI
 import SnapKit
 
+enum DiagnosticsLogExporter {
+    static func exportText() -> String {
+        [
+            AppDebugLogger.exportText(),
+            PowerUsageLogger.exportText(),
+            KeepAliveLogger.exportText()
+        ].joined(separator: "\n\n==============================\n\n")
+    }
+}
+
 final class VersionViewController: UIViewController {
     private var hostingController: UIHostingController<VersionPageView>?
     private var isDebugModeEnabled = AppDebugLogger.isDebugModeEnabled
@@ -17,7 +27,7 @@ final class VersionViewController: UIViewController {
                 if let legacyPiPOnly = UserDefaults.standard.object(forKey: ViewController.userDefaultsIOS26PiPOnlyKeepAliveKey) as? Bool {
                     UserDefaults.standard.set(!legacyPiPOnly, forKey: ViewController.userDefaultsIOS26AudioKeepAliveKey)
                 } else {
-                    UserDefaults.standard.set(true, forKey: ViewController.userDefaultsIOS26AudioKeepAliveKey)
+                    UserDefaults.standard.set(false, forKey: ViewController.userDefaultsIOS26AudioKeepAliveKey)
                 }
             }
             return UserDefaults.standard.bool(forKey: ViewController.userDefaultsIOS26AudioKeepAliveKey)
@@ -29,7 +39,13 @@ final class VersionViewController: UIViewController {
 
     override func viewDidLoad() {
         super.viewDidLoad()
+        DiagnosticsRuntimeState.updateCurrentPage("版本")
         setupSwiftUI()
+    }
+
+    override func viewDidAppear(_ animated: Bool) {
+        super.viewDidAppear(animated)
+        DiagnosticsRuntimeState.updateCurrentPage("版本")
     }
 
     private func setupSwiftUI() {
@@ -43,17 +59,11 @@ final class VersionViewController: UIViewController {
             onShowFAQ: { [weak self] in
                 self?.presentFAQ()
             },
-            onCopyDebugLog: { [weak self] in
-                self?.copyDebugLog()
+            onCopyDiagnosticsLog: { [weak self] in
+                self?.copyDiagnosticsLog()
             },
-            onCopyPowerLog: { [weak self] in
-                self?.copyPowerLog()
-            },
-            onCopyMetricLog: { [weak self] in
-                self?.copyMetricLog()
-            },
-            onCopyKeepAliveLog: { [weak self] in
-                self?.copyKeepAliveLog()
+            onToggleDebugDiagnostics: { [weak self] in
+                self?.confirmToggleDebugDiagnostics()
             },
             onSetDebugMode: { [weak self] newValue in
                 self?.setDebugMode(newValue)
@@ -83,6 +93,11 @@ final class VersionViewController: UIViewController {
         updateSwiftUI()
     }
 
+    func dismissTransientOverlays() {
+        debugPanelResetToken += 1
+        updateSwiftUI()
+    }
+
     private func updateSwiftUI() {
         hostingController?.rootView = VersionPageView(
             isDebugModeEnabled: isDebugModeEnabled,
@@ -94,17 +109,11 @@ final class VersionViewController: UIViewController {
             onShowFAQ: { [weak self] in
                 self?.presentFAQ()
             },
-            onCopyDebugLog: { [weak self] in
-                self?.copyDebugLog()
+            onCopyDiagnosticsLog: { [weak self] in
+                self?.copyDiagnosticsLog()
             },
-            onCopyPowerLog: { [weak self] in
-                self?.copyPowerLog()
-            },
-            onCopyMetricLog: { [weak self] in
-                self?.copyMetricLog()
-            },
-            onCopyKeepAliveLog: { [weak self] in
-                self?.copyKeepAliveLog()
+            onToggleDebugDiagnostics: { [weak self] in
+                self?.confirmToggleDebugDiagnostics()
             },
             onSetDebugMode: { [weak self] newValue in
                 self?.setDebugMode(newValue)
@@ -119,66 +128,104 @@ final class VersionViewController: UIViewController {
     }
 
     private func presentChangelog() {
+        DiagnosticsRuntimeState.recordUserAction("打开更新日志")
         let changelogController = ChangelogViewController()
         changelogController.configureAdaptivePageSheet(preferredHeightRatio: 0.58)
         present(changelogController, animated: true)
     }
 
     private func presentFAQ() {
+        DiagnosticsRuntimeState.recordUserAction("打开常见问题")
         let faqController = FAQViewController()
         faqController.configureAdaptivePageSheet(preferredHeightRatio: 0.68)
         present(faqController, animated: true)
     }
 
-    private func copyDebugLog() {
-        AppDebugLogger.copyToPasteboard()
-        let alert = UIAlertController(title: "调试日志已复制", message: "可以直接粘贴发送给开发者", preferredStyle: .alert)
+    private func copyDiagnosticsLog() {
+        DiagnosticsRuntimeState.recordUserAction("复制诊断日志")
+        UIPasteboard.general.string = DiagnosticsLogExporter.exportText()
+        let alert = UIAlertController(title: "诊断日志已复制", message: "可以直接粘贴发送给开发者", preferredStyle: .alert)
         alert.addAction(UIAlertAction(title: "确定", style: .default))
         present(alert, animated: true)
     }
 
-    private func copyPowerLog() {
-        PowerUsageLogger.copyToPasteboard()
-        let alert = UIAlertController(title: "耗电日志已复制", message: "可以直接粘贴发送给开发者", preferredStyle: .alert)
-        alert.addAction(UIAlertAction(title: "确定", style: .default))
-        present(alert, animated: true)
-    }
-
-    private func copyMetricLog() {
-        MetricKitLogger.shared.copyToPasteboard()
-        let alert = UIAlertController(title: "系统指标日志已复制", message: "MetricKit 通常需要约24小时生成数据，若暂无指标可稍后再试", preferredStyle: .alert)
-        alert.addAction(UIAlertAction(title: "确定", style: .default))
-        present(alert, animated: true)
-    }
-
-    private func copyKeepAliveLog() {
-        KeepAliveLogger.copyToPasteboard()
-        let alert = UIAlertController(title: "保活日志已复制", message: "可以直接粘贴发送给开发者", preferredStyle: .alert)
-        alert.addAction(UIAlertAction(title: "确定", style: .default))
+    private func confirmToggleDebugDiagnostics() {
+        DiagnosticsRuntimeState.recordUserAction(DebugDiagnosticsMonitor.isEnabled ? "准备关闭线程与性能日志" : "准备开启线程与性能日志")
+        let willEnable = !DebugDiagnosticsMonitor.isEnabled
+        let title = willEnable ? "开启线程与性能日志记录？" : "关闭线程与性能日志记录？"
+        let message = willEnable
+            ? "开启后会记录主线程卡顿、UI帧间隔异常、线程状态、CPU、内存、热状态、电量和最近操作，内容会合并到复制调试日志里。"
+            : "关闭后会停止主线程卡顿、UI帧间隔和性能采样记录，并清空本轮详细日志。"
+        let alert = UIAlertController(title: title, message: message, preferredStyle: .alert)
+        alert.addAction(UIAlertAction(title: "取消", style: .cancel))
+        alert.addAction(UIAlertAction(title: willEnable ? "确认开启" : "确认关闭", style: .default) { _ in
+            if willEnable {
+                AppDebugLogger.resetLogs()
+                DiagnosticsRuntimeState.startAppStateTracking()
+                DiagnosticsRuntimeState.refreshAppState()
+                DiagnosticsRuntimeState.updateCurrentPage("版本")
+                DebugDiagnosticsMonitor.setEnabled(true)
+                DiagnosticsRuntimeState.recordUserAction("开启线程与性能日志")
+            } else {
+                DebugDiagnosticsMonitor.setEnabled(false)
+                AppDebugLogger.resetLogs()
+                DiagnosticsRuntimeState.startAppStateTracking()
+                DiagnosticsRuntimeState.refreshAppState()
+                DiagnosticsRuntimeState.updateCurrentPage("版本")
+            }
+        })
         present(alert, animated: true)
     }
 
     private func setDebugMode(_ isEnabled: Bool) {
         isDebugModeEnabled = isEnabled
         AppDebugLogger.isDebugModeEnabled = isEnabled
+        if isEnabled {
+            DiagnosticsRuntimeState.startAppStateTracking()
+            DiagnosticsRuntimeState.refreshAppState()
+            DiagnosticsRuntimeState.updateCurrentPage("版本")
+            AppDebugLogger.resetLogs()
+            KeepAliveLogger.resetLogs()
+            MetricKitLogger.shared.resetLogs()
+            PowerUsageLogger.startFreshStatistics()
+            MetricKitLogger.shared.start()
+            AppDebugLogger.log("Debug mode enabled")
+        } else {
+            MetricKitLogger.shared.stop()
+            DebugDiagnosticsMonitor.setEnabled(false)
+            AppDebugLogger.resetLogs()
+            KeepAliveLogger.resetLogs()
+            MetricKitLogger.shared.resetLogs()
+            PowerUsageLogger.resetStatistics()
+        }
         updateSwiftUI()
     }
 
     private func confirmEnableDebugMode() {
+        DiagnosticsRuntimeState.recordUserAction("请求开启调试模式")
         let alert = UIAlertController(
             title: "打开调试模式可能引发不稳定因素，请谨慎开启",
             message: nil,
             preferredStyle: .alert
         )
-        alert.addAction(UIAlertAction(title: "取消", style: .cancel))
+        alert.addAction(UIAlertAction(title: "取消", style: .cancel) { [weak self] _ in
+            self?.debugPanelResetToken += 1
+            self?.updateSwiftUI()
+        })
         alert.addAction(UIAlertAction(title: "确认开启", style: .default) { [weak self] _ in
+            DiagnosticsRuntimeState.recordUserAction("确认开启调试模式")
             self?.setDebugMode(true)
         })
         present(alert, animated: true)
     }
 
     private func setIOS26AudioKeepAlive(_ isEnabled: Bool) {
+        DiagnosticsRuntimeState.recordUserAction(isEnabled ? "切换为音频强保活" : "切换为PiP低功耗保活")
         isIOS26AudioKeepAliveEnabled = isEnabled
+        if !isEnabled {
+            BackgroundTaskManager.shared.forceStopAndDeactivate()
+            PowerUsageLogger.markKeepAliveStop()
+        }
         NotificationCenter.default.post(name: ViewController.iOS26KeepAliveModeDidChangeNotification, object: nil)
         updateSwiftUI()
     }
@@ -197,34 +244,21 @@ private final class ChangelogViewController: UIViewController {
 
         let stackView = UIStackView(arrangedSubviews: [
             makeSection(
-                version: "1.0.0（26.5.26）",
-                items: ["在原版基础上增加后台保活功能和修改悬浮窗大小"]
-            ),
-            makeSection(
-                version: "1.0.1（26.5.27）",
+                version: "1.0.7（26.6.7）",
                 items: [
-                    "去除旋转窗口功能",
-                    "增加自定义悬浮窗高度功能，可通过滑块无级调节",
-                    "增加关闭/开启滚动功能"
+                    "为了减少耗电量，经过实测对比后APP将默认启用为更为省电的仅PiP保活新方案，后台保活效果仍为显著，且解决了小部分场景下的音频冲突问题",
+                    "可通过版本号-下方或首页查看当前保活模式",
+                    "不再推荐使用老方案，如有需求可再自行前往调试模式-自由切换",
+                    "首页新增悬浮窗状态检测，方便查看是否生效以及隐藏和是否被杀后台，点击可查看每次打开后的持续运行时间以及上次关闭时间",
+                    "首页停止滚动按钮移至二级菜单，防止误解"
                 ]
             ),
             makeSection(
-                version: "1.0.2（26.6.3）",
+                version: "1.0.6（26.6.6）",
                 items: [
-                    "调整自定义悬浮窗的最低值为0.1pt，可以做到完全隐藏悬浮窗"
-                ]
-            ),
-            makeSection(
-                version: "1.0.3（26.6.4）",
-                items: [
-                    "对“滚动悬浮窗”增加默认记忆功能；首页新增 记忆悬浮窗高度 开关",
-                    "尝试修复iOS16低版本无法打开悬浮窗的问题"
-                ]
-            ),
-            makeSection(
-                version: "1.0.4（26.6.4）",
-                items: [
-                    "修复低版本iOS设备闪退问题，已在iOS15.8设备调试通过"
+                    "调试模式新增 保活方案切换 开关，可尝试切换为更省电的仅PiP保活方案，但后台留存率可能下降可能出现低版本兼容性问题，可自行选择",
+                    "修复关闭悬浮窗后进入后台可能自动重新开启的问题",
+                    "调试模式新增复制诊断日志功能，用于辅助排查耗电变化和推断后台保活中断时间段"
                 ]
             ),
             makeSection(
@@ -236,12 +270,35 @@ private final class ChangelogViewController: UIViewController {
                 ]
             ),
             makeSection(
-                version: "1.0.6（26.6.6）",
+                version: "1.0.4（26.6.4）",
                 items: [
-                    "调试模式新增 保活方案切换 开关，可尝试切换为更省电的仅PiP保活方案，但后台留存率可能下降可能出现低版本兼容性问题，可自行选择",
-                    "修复关闭悬浮窗后进入后台可能自动重新开启的问题",
-                    "调试模式新增复制耗电日志和系统指标日志功能，用于辅助排查耗电变化；新增复制保活日志功能，用于辅助推断后台保活中断时间段"
+                    "修复低版本iOS设备闪退问题，已在iOS15.8设备调试通过"
                 ]
+            ),
+            makeSection(
+                version: "1.0.3（26.6.4）",
+                items: [
+                    "对“滚动悬浮窗”增加默认记忆功能；首页新增 记忆悬浮窗高度 开关",
+                    "尝试修复iOS16低版本无法打开悬浮窗的问题"
+                ]
+            ),
+            makeSection(
+                version: "1.0.2（26.6.3）",
+                items: [
+                    "调整自定义悬浮窗的最低值为0.1pt，可以做到完全隐藏悬浮窗"
+                ]
+            ),
+            makeSection(
+                version: "1.0.1（26.5.27）",
+                items: [
+                    "去除旋转窗口功能",
+                    "增加自定义悬浮窗高度功能，可通过滑块无级调节",
+                    "增加关闭/开启滚动功能"
+                ]
+            ),
+            makeSection(
+                version: "1.0.0（26.5.26）",
+                items: ["在原版基础上增加后台保活功能和修改悬浮窗大小"]
             )
         ])
         stackView.axis = .vertical
@@ -333,6 +390,10 @@ private final class FAQViewController: UIViewController {
             makeQuestion(
                 question: "7.怎么完全隐藏悬浮窗",
                 answer: "点击启用悬浮窗，拖至侧边吸附后将悬浮窗高度调节至0.1pt即可"
+            ),
+            makeQuestion(
+                question: "8.新旧保活模式有什么区别哪个更好",
+                answer: "经过实测后更推荐新模式仅PiP保活方案，更为省电作为默认方案，跟老方案音频强保活对比保活率一致实测没有出现杀后台，并且避免了可能出现的部分用户反馈的音频冲突问题，当然也保留了选择空间，可自行前往调试模式切换"
             )
         ])
         stackView.axis = .vertical

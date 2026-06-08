@@ -40,6 +40,10 @@ class ViewController: UIViewController, AVPictureInPictureControllerDelegate {
     private var isLoadingHomePreferences = false
     private var hasPreparedPiPInfrastructure = false
     private var wantsPiPActive = false
+    private var pipRuntimeStartedAt: Date?
+    private var pipRuntimeDuration: TimeInterval = 0
+    private var pipRuntimeStoppedAtText = "暂无"
+    private var overlayResetToken = 0
     private var isSettingsExpanded = false {
         didSet {
             guard oldValue != isSettingsExpanded else { return }
@@ -83,6 +87,10 @@ class ViewController: UIViewController, AVPictureInPictureControllerDelegate {
     private let userDefaultsScrollingEnabledKey = "pip.home.scrollingEnabled"
     private let userDefaultsRememberPiPHeightKey = "pip.home.rememberPiPHeight"
     private let userDefaultsPiPHeightKey = "pip.home.rememberedPiPHeight"
+    private let userDefaultsPiPRuntimeStartedAtKey = "pip.home.runtimeStartedAt"
+    private let userDefaultsPiPRuntimeDurationKey = "pip.home.runtimeDuration"
+    private let userDefaultsPiPRuntimeWasActiveKey = "pip.home.runtimeWasActive"
+    private let userDefaultsPiPRuntimeStoppedAtTextKey = "pip.home.runtimeStoppedAtText"
     static let userDefaultsIOS26AudioKeepAliveKey = "pip.keepAlive.iOS26AudioEnabled"
     static let userDefaultsIOS26PiPOnlyKeepAliveKey = "pip.keepAlive.iOS26PiPOnlyEnabled"
     static let iOS26KeepAliveModeDidChangeNotification = Notification.Name("pip.iOS26KeepAliveModeDidChange")
@@ -94,6 +102,24 @@ class ViewController: UIViewController, AVPictureInPictureControllerDelegate {
     }
     private var pipHeightForDisplay: String {
         formattedHeight(clampedPiPHeight)
+    }
+    private var pipStatusTitle: String {
+        guard isPiPRuntimeActive else {
+            return "待启用"
+        }
+        return clampedPiPHeight <= 0.15 ? "运行中-已隐藏" : "运行中"
+    }
+    private var pipStatusColor: UIColor {
+        isPiPRuntimeActive ? .systemBlue : .secondaryLabel
+    }
+    private var isPiPRuntimeActive: Bool {
+        pipRuntimeStartedAt != nil && ((pipController?.isPictureInPictureActive ?? false) || isPiPActiveForUI)
+    }
+    private var pipRuntimeDurationForDisplay: String {
+        if let pipRuntimeStartedAt {
+            return formattedRuntime(Date().timeIntervalSince(pipRuntimeStartedAt))
+        }
+        return formattedRuntime(pipRuntimeDuration)
     }
     private var needsLegacyPiPCompatibility: Bool {
         if #available(iOS 19.0, *) {
@@ -109,16 +135,24 @@ class ViewController: UIViewController, AVPictureInPictureControllerDelegate {
         super.viewDidLoad()
 
         print("画中画初始化前：\(UIApplication.shared.windows)")
+        DiagnosticsRuntimeState.updateCurrentPage("悬浮窗")
         AppDebugLogger.log("Home viewDidLoad")
         PowerUsageLogger.markLaunch()
         KeepAliveLogger.markAppLaunch()
 
         loadHomePreferences()
+        loadPiPRuntimeState()
         setupSwiftUI()
 
         NotificationCenter.default.addObserver(self, selector: #selector(handleEnterForeground), name: UIApplication.willEnterForegroundNotification, object: nil)
         NotificationCenter.default.addObserver(self, selector: #selector(handleEnterBackground), name: UIApplication.didEnterBackgroundNotification, object: nil)
         NotificationCenter.default.addObserver(self, selector: #selector(handleKeepAliveModeDidChange), name: Self.iOS26KeepAliveModeDidChangeNotification, object: nil)
+    }
+
+    override func viewDidAppear(_ animated: Bool) {
+        super.viewDidAppear(animated)
+        DiagnosticsRuntimeState.updateCurrentPage("悬浮窗")
+        updateDiagnosticsPiPState()
     }
 
     override func viewDidLayoutSubviews() {
@@ -156,6 +190,13 @@ class ViewController: UIViewController, AVPictureInPictureControllerDelegate {
                 set: { [weak self] newValue in self?.isPiPActiveForUI = newValue }
             ),
             pipHeight: pipHeightForDisplay,
+            keepAliveMode: KeepAliveModeText.current,
+            pipStatusTitle: pipStatusTitle,
+            pipStatusColor: pipStatusColor,
+            pipRunningDuration: pipRuntimeDurationForDisplay,
+            pipStoppedAtText: pipRuntimeStoppedAtText,
+            pipRuntimeStartedAt: pipRuntimeStartedAt,
+            overlayResetToken: overlayResetToken,
             isScrollingEnabled: isScrollingEnabled,
             remembersPiPHeight: remembersPiPHeight,
             isSettingsExpanded: isSettingsExpanded,
@@ -181,12 +222,20 @@ class ViewController: UIViewController, AVPictureInPictureControllerDelegate {
     }
 
     private func updateHomeView() {
+        syncPiPRuntimeDisplayState()
         hostingController?.rootView = PiPHomeView(
             isPiPActive: Binding(
                 get: { [weak self] in self?.isPiPActiveForUI ?? false },
                 set: { [weak self] newValue in self?.isPiPActiveForUI = newValue }
             ),
             pipHeight: pipHeightForDisplay,
+            keepAliveMode: KeepAliveModeText.current,
+            pipStatusTitle: pipStatusTitle,
+            pipStatusColor: pipStatusColor,
+            pipRunningDuration: pipRuntimeDurationForDisplay,
+            pipStoppedAtText: pipRuntimeStoppedAtText,
+            pipRuntimeStartedAt: pipRuntimeStartedAt,
+            overlayResetToken: overlayResetToken,
             isScrollingEnabled: isScrollingEnabled,
             remembersPiPHeight: remembersPiPHeight,
             isSettingsExpanded: isSettingsExpanded,
@@ -217,17 +266,62 @@ class ViewController: UIViewController, AVPictureInPictureControllerDelegate {
         }
     }
 
+    private func loadPiPRuntimeState() {
+        let defaults = UserDefaults.standard
+        pipRuntimeStoppedAtText = normalizedStoredPiPRuntimeStoppedAtText()
+        let lastDuration = defaults.double(forKey: userDefaultsPiPRuntimeDurationKey)
+        if defaults.bool(forKey: userDefaultsPiPRuntimeWasActiveKey) {
+            let timestamp = defaults.double(forKey: userDefaultsPiPRuntimeStartedAtKey)
+            if timestamp > 0 {
+                pipRuntimeDuration = max(Date().timeIntervalSince1970 - timestamp, lastDuration)
+                if pipRuntimeStoppedAtText == "暂无" {
+                    pipRuntimeStoppedAtText = formattedStopTime(Date())
+                    defaults.set(pipRuntimeStoppedAtText, forKey: userDefaultsPiPRuntimeStoppedAtTextKey)
+                }
+                defaults.set(pipRuntimeDuration, forKey: userDefaultsPiPRuntimeDurationKey)
+                defaults.set(false, forKey: userDefaultsPiPRuntimeWasActiveKey)
+                return
+            }
+        }
+        pipRuntimeDuration = lastDuration
+    }
+
+    private func syncPiPRuntimeDisplayState() {
+        if let pipRuntimeStartedAt {
+            pipRuntimeDuration = max(0, Date().timeIntervalSince(pipRuntimeStartedAt))
+        } else {
+            pipRuntimeStoppedAtText = normalizedStoredPiPRuntimeStoppedAtText()
+        }
+    }
+
+    private func normalizedStoredPiPRuntimeStoppedAtText() -> String {
+        let storedText = UserDefaults.standard.string(forKey: userDefaultsPiPRuntimeStoppedAtTextKey) ?? "暂无"
+        return storedText.isEmpty ? "暂无" : storedText
+    }
+
     private func setRememberPiPHeight(_ isEnabled: Bool) {
+        DiagnosticsRuntimeState.recordUserAction(isEnabled ? "开启记忆悬浮窗高度" : "关闭记忆悬浮窗高度")
         remembersPiPHeight = isEnabled
     }
 
     private func toggleSettingsPanel() {
+        DiagnosticsRuntimeState.recordUserAction(isSettingsExpanded ? "首页关闭二级菜单" : "首页打开二级菜单")
         isSettingsExpanded.toggle()
     }
 
     private func dismissSettingsPanel() {
         guard isSettingsExpanded else { return }
+        DiagnosticsRuntimeState.recordUserAction("首页关闭二级菜单")
         isSettingsExpanded = false
+    }
+
+    func dismissTransientOverlays() {
+        overlayResetToken += 1
+        if isSettingsExpanded {
+            isSettingsExpanded = false
+        } else {
+            updateHomeView()
+        }
     }
 
     private func saveCurrentPiPHeightPreference() {
@@ -236,6 +330,121 @@ class ViewController: UIViewController, AVPictureInPictureControllerDelegate {
 
     private func clampedHeight(_ height: CGFloat) -> CGFloat {
         min(max(height, minPiPHeight), maxPiPHeight)
+    }
+
+    private func beginPiPRuntimeSession() {
+        let start = Date()
+        pipRuntimeStartedAt = start
+        pipRuntimeDuration = 0
+        pipRuntimeStoppedAtText = normalizedStoredPiPRuntimeStoppedAtText()
+        let defaults = UserDefaults.standard
+        defaults.set(start.timeIntervalSince1970, forKey: userDefaultsPiPRuntimeStartedAtKey)
+        defaults.set(0, forKey: userDefaultsPiPRuntimeDurationKey)
+        defaults.set(true, forKey: userDefaultsPiPRuntimeWasActiveKey)
+        updateDiagnosticsPiPState()
+        updateHomeView()
+    }
+
+    private func finishPiPRuntimeSession() {
+        if let pipRuntimeStartedAt {
+            pipRuntimeDuration = max(0, Date().timeIntervalSince(pipRuntimeStartedAt))
+        }
+        pipRuntimeStartedAt = nil
+        pipRuntimeStoppedAtText = formattedStopTime(Date())
+        let defaults = UserDefaults.standard
+        defaults.set(false, forKey: userDefaultsPiPRuntimeWasActiveKey)
+        defaults.set(pipRuntimeDuration, forKey: userDefaultsPiPRuntimeDurationKey)
+        defaults.set(pipRuntimeStoppedAtText, forKey: userDefaultsPiPRuntimeStoppedAtTextKey)
+        updateDiagnosticsPiPState()
+        AppDebugLogger.log("PiP runtime stopped at \(pipRuntimeStoppedAtText)")
+        updateHomeView()
+    }
+
+    private func updateDiagnosticsPiPState() {
+        let state = [
+            "active=\(pipController?.isPictureInPictureActive ?? false)",
+            "ui=\(isPiPActiveForUI)",
+            "wants=\(wantsPiPActive)",
+            "transition=\(isPiPTransitioning)",
+            "height=\(formattedHeight(clampedPiPHeight))",
+            "scroll=\(isScrollingEnabled)",
+            "mode=\(shouldUsePiPOnlyKeepAlive ? "PiP保活-低功耗" : "音频强保活")"
+        ].joined(separator: ",")
+        DiagnosticsRuntimeState.updatePiPState(state)
+        updateDisplaySleepDiagnostics()
+    }
+
+    private func updateDisplaySleepDiagnostics(reason: String? = nil, shouldLog: Bool = false) {
+        let text = displaySleepDiagnosticsText
+        DiagnosticsRuntimeState.updateDisplaySleepState(text)
+        guard shouldLog else { return }
+        let reasonText = reason.map { "（\($0)）" } ?? ""
+        AppDebugLogger.log("熄屏检测\(reasonText)：\(text)")
+    }
+
+    private var displaySleepDiagnosticsText: String {
+        let player = playerLayer?.player
+        let item = player?.currentItem
+        let playerState = [
+            "idleDisabled=\(UIApplication.shared.isIdleTimerDisabled)",
+            "mode=\(shouldUsePiPOnlyKeepAlive ? "PiP低功耗" : "音频强保活")",
+            "keepAlive=\(shouldKeepPiPPlaybackAlive)",
+            "requiresPlayerLayer=\(requiresPlayerLayerForPiP)",
+            "shouldPlayBacking=\(shouldPlayBackingPlayerForKeepAlive)",
+            "pipActive=\(pipController?.isPictureInPictureActive ?? false)",
+            "pipPossible=\(pipController?.isPictureInPicturePossible ?? false)",
+            "wants=\(wantsPiPActive)",
+            "transition=\(isPiPTransitioning)",
+            "playerRate=\(String(format: "%.2f", player?.rate ?? 0))",
+            "playerControl=\(timeControlStatusText(player?.timeControlStatus))",
+            "playerSleepPrevent=\(player?.preventsDisplaySleepDuringVideoPlayback.description ?? "nil")",
+            "item=\(playerItemStatusText(item?.status))"
+        ]
+        return playerState.joined(separator: ",")
+    }
+
+    private func timeControlStatusText(_ status: AVPlayer.TimeControlStatus?) -> String {
+        guard let status else { return "nil" }
+        switch status {
+        case .paused:
+            return "paused"
+        case .waitingToPlayAtSpecifiedRate:
+            return "waiting"
+        case .playing:
+            return "playing"
+        @unknown default:
+            return "unknown"
+        }
+    }
+
+    private func playerItemStatusText(_ status: AVPlayerItem.Status?) -> String {
+        guard let status else { return "nil" }
+        switch status {
+        case .unknown:
+            return "unknown"
+        case .readyToPlay:
+            return "ready"
+        case .failed:
+            return "failed"
+        @unknown default:
+            return "unknown"
+        }
+    }
+
+    private func formattedRuntime(_ duration: TimeInterval) -> String {
+        let totalSeconds = max(0, Int(duration.rounded(.down)))
+        let hours = totalSeconds / 3600
+        let minutes = (totalSeconds % 3600) / 60
+        let seconds = totalSeconds % 60
+        return String(format: "%02d:%02d:%02d", hours, minutes, seconds)
+    }
+
+    private func formattedStopTime(_ date: Date) -> String {
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "zh_CN")
+        formatter.timeZone = TimeZone(identifier: "Asia/Shanghai")
+        formatter.dateFormat = "M/d HH:mm:ss"
+        return formatter.string(from: date)
     }
 
     private func preparePiPInfrastructureIfNeeded() -> Bool {
@@ -322,15 +531,19 @@ class ViewController: UIViewController, AVPictureInPictureControllerDelegate {
         playerLayer.needsDisplayOnBoundsChange = false
 
         let player = AVPlayer(playerItem: playerItem)
+        configureBackingPlayerForPiP(player)
         player.actionAtItemEnd = .none
         player.isMuted = true
-        player.allowsExternalPlayback = true
+        player.allowsExternalPlayback = false
         playerLayer.player = player
         observeLooping(for: playerItem)
         observePlaybackHealth(for: player, item: playerItem)
-        player.play()
 
         view.layer.addSublayer(playerLayer)
+    }
+
+    private func configureBackingPlayerForPiP(_ player: AVPlayer) {
+        player.preventsDisplaySleepDuringVideoPlayback = false
     }
 
     private func setupPip() {
@@ -410,6 +623,8 @@ class ViewController: UIViewController, AVPictureInPictureControllerDelegate {
     }
 
     private func togglePiP() {
+        DiagnosticsRuntimeState.recordUserAction((pipController?.isPictureInPictureActive ?? false) ? "点击关闭悬浮窗" : "点击开启悬浮窗")
+        updateDiagnosticsPiPState()
         AppDebugLogger.log("Toggle PiP tapped, active=\(pipController?.isPictureInPictureActive ?? false), prepared=\(hasPreparedPiPInfrastructure), wants=\(wantsPiPActive)")
         if pipController == nil, !preparePiPInfrastructureIfNeeded() {
             isPiPActiveForUI = false
@@ -492,24 +707,56 @@ class ViewController: UIViewController, AVPictureInPictureControllerDelegate {
     private func restartPlaybackFromBeginning() {
         guard let player = playerLayer?.player else { return }
         player.seek(to: .zero) { _ in
-            player.play()
+            guard self.shouldKeepPiPPlaybackAlive else {
+                player.pause()
+                return
+            }
+            self.updateBackingPlayerPlaybackForCurrentMode()
         }
     }
 
     private func keepPlaybackAlive() {
-        guard shouldKeepPiPPlaybackAlive else { return }
-        configurePiPAudioSession()
+        guard shouldKeepPiPPlaybackAlive else {
+            updateDisplaySleepDiagnostics(reason: "保活刷新未保活", shouldLog: true)
+            return
+        }
+        UIApplication.shared.isIdleTimerDisabled = false
         if shouldUsePiPOnlyKeepAlive {
-            BackgroundTaskManager.shared.stopPlay()
+            BackgroundTaskManager.shared.forceStopAndDeactivate()
             PowerUsageLogger.markKeepAliveStop()
             KeepAliveLogger.heartbeat()
-            AppDebugLogger.log("Skip silent keepAlive audio, PiP-only keepAlive")
+            updateBackingPlayerPlaybackForCurrentMode()
+            updateDisplaySleepDiagnostics(reason: "低功耗保活", shouldLog: true)
+            AppDebugLogger.log(shouldPlayBackingPlayerForKeepAlive ? "PiP-only keepAlive uses backing player for playerLayer compatibility" : "PiP-only keepAlive without backing player")
+            return
         } else {
+            configurePiPAudioSession()
             PowerUsageLogger.markKeepAliveStart()
             BackgroundTaskManager.shared.startPlay()
             KeepAliveLogger.heartbeat()
         }
-        playerLayer?.player?.play()
+        updateBackingPlayerPlaybackForCurrentMode()
+        updateDisplaySleepDiagnostics(reason: "音频强保活", shouldLog: true)
+    }
+
+    private func pauseBackingPlayerIfIdle() {
+        guard !shouldKeepPiPPlaybackAlive else { return }
+        playerLayer?.player?.pause()
+    }
+
+    private var shouldPlayBackingPlayerForKeepAlive: Bool {
+        !shouldUsePiPOnlyKeepAlive || requiresPlayerLayerForPiP
+    }
+
+    private func updateBackingPlayerPlaybackForCurrentMode() {
+        guard let player = playerLayer?.player else { return }
+        configureBackingPlayerForPiP(player)
+        if shouldPlayBackingPlayerForKeepAlive {
+            player.play()
+        } else {
+            player.pause()
+        }
+        updateDisplaySleepDiagnostics()
     }
 
     private func configurePiPAudioSession() {
@@ -530,7 +777,7 @@ class ViewController: UIViewController, AVPictureInPictureControllerDelegate {
             if let legacyPiPOnly = UserDefaults.standard.object(forKey: Self.userDefaultsIOS26PiPOnlyKeepAliveKey) as? Bool {
                 UserDefaults.standard.set(!legacyPiPOnly, forKey: Self.userDefaultsIOS26AudioKeepAliveKey)
             } else {
-                UserDefaults.standard.set(true, forKey: Self.userDefaultsIOS26AudioKeepAliveKey)
+                UserDefaults.standard.set(false, forKey: Self.userDefaultsIOS26AudioKeepAliveKey)
             }
         }
         return !UserDefaults.standard.bool(forKey: Self.userDefaultsIOS26AudioKeepAliveKey)
@@ -839,8 +1086,12 @@ class ViewController: UIViewController, AVPictureInPictureControllerDelegate {
         isStoppingPiP = false
         isPiPTransitioning = false
         if pipController?.isPictureInPictureActive != true {
+            finishPiPRuntimeSession()
+        }
+        if pipController?.isPictureInPictureActive != true {
             stopDisplayLinks()
             BackgroundTaskManager.shared.stopPlay()
+            pauseBackingPlayerIfIdle()
             endBackgroundTask()
         }
     }
@@ -1038,7 +1289,9 @@ class ViewController: UIViewController, AVPictureInPictureControllerDelegate {
     }
 
     private func toggleScrolling() {
+        DiagnosticsRuntimeState.recordUserAction(isScrollingEnabled ? "关闭悬浮窗内容滚动" : "开启悬浮窗内容滚动")
         isScrollingEnabled.toggle()
+        AppDebugLogger.log("PiP text scrolling changed, enabled=\(isScrollingEnabled)")
         if isScrollingEnabled {
             if pipController?.isPictureInPictureActive == true {
                 startDisplayLinks()
@@ -1049,6 +1302,7 @@ class ViewController: UIViewController, AVPictureInPictureControllerDelegate {
     }
 
     private func presentTutorial() {
+        DiagnosticsRuntimeState.recordUserAction("打开使用教程")
         let tutorialController = TutorialTabBarController()
         let navigationController = UINavigationController(rootViewController: tutorialController)
         navigationController.modalPresentationStyle = .fullScreen
@@ -1056,6 +1310,7 @@ class ViewController: UIViewController, AVPictureInPictureControllerDelegate {
     }
 
     private func presentPiPHeightEditor() {
+        DiagnosticsRuntimeState.recordUserAction("打开自定义悬浮窗高度")
         let editor = PiPHeightEditorViewController(
             height: clampedPiPHeight,
             range: minPiPHeight...maxPiPHeight,
@@ -1103,6 +1358,8 @@ class ViewController: UIViewController, AVPictureInPictureControllerDelegate {
         if textView != nil {
             configureRunningText()
         }
+        updateDiagnosticsPiPState()
+        AppDebugLogger.log("PiP height committed: \(formattedHeight(clampedPiPHeight))")
     }
 
     private func formattedHeight(_ height: CGFloat) -> String {
@@ -1119,13 +1376,19 @@ class ViewController: UIViewController, AVPictureInPictureControllerDelegate {
         guard let playerItem = makePlayerItem() else { return }
         observeLooping(for: playerItem)
         if let player = playerLayer.player {
+            configureBackingPlayerForPiP(player)
             observePlaybackHealth(for: player, item: playerItem)
         }
         playerLayer.player?.replaceCurrentItem(with: playerItem)
-        playerLayer.player?.play()
+        if shouldKeepPiPPlaybackAlive {
+            updateBackingPlayerPlaybackForCurrentMode()
+        } else {
+            playerLayer.player?.pause()
+        }
     }
 
     private func togglePiPStyle() {
+        DiagnosticsRuntimeState.recordUserAction("修改悬浮窗样式")
         let nextHeight = isCompactPiPStyle ? defaultPiPHeight : compactPiPHeight
         isCompactPiPStyle.toggle()
         commitPiPHeight(nextHeight)
@@ -1166,8 +1429,14 @@ class ViewController: UIViewController, AVPictureInPictureControllerDelegate {
 
     @objc private func handleEnterForeground() {
         print("进入前台")
+        DiagnosticsRuntimeState.updateAppState("即将回前台")
+        updateDiagnosticsPiPState()
         PowerUsageLogger.markForegroundStart()
         AppDebugLogger.log("Enter foreground, keepAlive=\(shouldKeepPiPPlaybackAlive)")
+        if shouldKeepPiPPlaybackAlive {
+            pipRuntimeDuration = pipRuntimeStartedAt.map { max(0, Date().timeIntervalSince($0)) } ?? pipRuntimeDuration
+            updateHomeView()
+        }
         if shouldKeepPiPPlaybackAlive {
             KeepAliveLogger.markEnterForeground()
         }
@@ -1177,30 +1446,43 @@ class ViewController: UIViewController, AVPictureInPictureControllerDelegate {
         } else {
             BackgroundTaskManager.shared.stopPlay()
             PowerUsageLogger.markKeepAliveStop()
-            playerLayer?.player?.play()
+            pauseBackingPlayerIfIdle()
         }
+        updateDisplaySleepDiagnostics(reason: "进入前台", shouldLog: true)
     }
 
     @objc private func handleEnterBackground() {
         print("进入后台")
+        DiagnosticsRuntimeState.updateAppState("后台")
+        updateDiagnosticsPiPState()
         PowerUsageLogger.markBackgroundStart()
         AppDebugLogger.log("Enter background, keepAlive=\(shouldKeepPiPPlaybackAlive)")
         guard shouldKeepPiPPlaybackAlive else {
             BackgroundTaskManager.shared.stopPlay()
             PowerUsageLogger.markKeepAliveStop()
+            pauseBackingPlayerIfIdle()
             endBackgroundTask()
+            updateDisplaySleepDiagnostics(reason: "进入后台未保活", shouldLog: true)
             return
         }
         beginBackgroundTaskIfNeeded()
-        KeepAliveLogger.markEnterBackground(mode: shouldUsePiPOnlyKeepAlive ? "仅PiP保活" : "PiP+静音音频保活")
+        KeepAliveLogger.markEnterBackground(mode: shouldUsePiPOnlyKeepAlive ? "PiP保活-低功耗" : "音频强保活")
         keepPlaybackAlive()
+        updateDisplaySleepDiagnostics(reason: "进入后台保活", shouldLog: true)
     }
 
     @objc private func handleKeepAliveModeDidChange() {
+        updateDiagnosticsPiPState()
         AppDebugLogger.log("KeepAlive mode changed, PiPOnly=\(shouldUsePiPOnlyKeepAlive), active=\(shouldKeepPiPPlaybackAlive)")
+        updateHomeView()
+        if shouldUsePiPOnlyKeepAlive {
+            BackgroundTaskManager.shared.forceStopAndDeactivate()
+            PowerUsageLogger.markKeepAliveStop()
+        }
         guard shouldKeepPiPPlaybackAlive else { return }
         keepPlaybackAlive()
-        KeepAliveLogger.markPiPStarted(mode: shouldUsePiPOnlyKeepAlive ? "仅PiP保活" : "PiP+静音音频保活")
+        KeepAliveLogger.markPiPStarted(mode: shouldUsePiPOnlyKeepAlive ? "PiP保活-低功耗" : "音频强保活")
+        updateDisplaySleepDiagnostics(reason: "保活方案切换", shouldLog: true)
     }
 
     @objc private func handleAudioInterruption(_ notification: Notification) {
@@ -1229,6 +1511,7 @@ class ViewController: UIViewController, AVPictureInPictureControllerDelegate {
     @objc private func handleAudioRouteChange(_ notification: Notification) {
         AppDebugLogger.log("Audio route changed: \(currentAudioRouteDescription), external=\(hasExternalAudioRoute)")
         guard shouldKeepPiPPlaybackAlive else { return }
+        guard !shouldUsePiPOnlyKeepAlive else { return }
         keepPlaybackAlive()
     }
 
@@ -1251,6 +1534,7 @@ class ViewController: UIViewController, AVPictureInPictureControllerDelegate {
 
     func pictureInPictureControllerWillStartPictureInPicture(_ pictureInPictureController: AVPictureInPictureController) {
         print("画中画初始化后：\(UIApplication.shared.windows)")
+        updateDiagnosticsPiPState()
         AppDebugLogger.log("PiP will start")
         prepareCustomViewForPiPStart()
         showPiPContentForOpening()
@@ -1269,10 +1553,13 @@ class ViewController: UIViewController, AVPictureInPictureControllerDelegate {
         showPiPContentForOpening()
         isPiPTransitioning = false
         isPiPActiveForUI = true
+        beginPiPRuntimeSession()
         startDisplayLinks()
         keepPlaybackAlive()
         PowerUsageLogger.markPiPStart()
-        KeepAliveLogger.markPiPStarted(mode: shouldUsePiPOnlyKeepAlive ? "仅PiP保活" : "PiP+静音音频保活")
+        KeepAliveLogger.markPiPStarted(mode: shouldUsePiPOnlyKeepAlive ? "PiP保活-低功耗" : "音频强保活")
+        updateDiagnosticsPiPState()
+        updateDisplaySleepDiagnostics(reason: "PiP启动完成", shouldLog: true)
         AppDebugLogger.log("PiP did start")
         print("画中画弹出后：\(UIApplication.shared.windows)")
     }
@@ -1288,6 +1575,8 @@ class ViewController: UIViewController, AVPictureInPictureControllerDelegate {
             isPiPActiveForUI = false
         }
         stopDisplayLinks()
+        updateDiagnosticsPiPState()
+        updateDisplaySleepDiagnostics(reason: "PiP即将停止", shouldLog: true)
         AppDebugLogger.log("PiP will stop")
         hidePiPContentForClosing()
         preparePiPVisualSurfacesForClosing()
@@ -1301,14 +1590,18 @@ class ViewController: UIViewController, AVPictureInPictureControllerDelegate {
         isPiPActiveForUI = false
         isStoppingPiP = false
         isPiPTransitioning = false
+        finishPiPRuntimeSession()
         didRetryLegacyPiPStart = false
         wantsPiPActive = false
         updatePiPAutomaticStartPolicy()
         BackgroundTaskManager.shared.stopPlay()
+        pauseBackingPlayerIfIdle()
         PowerUsageLogger.markPiPStop()
         PowerUsageLogger.markKeepAliveStop()
         KeepAliveLogger.markPiPStopped(reason: "PiP did stop")
         endBackgroundTask()
+        updateDisplaySleepDiagnostics(reason: "PiP停止完成", shouldLog: true)
+        updateDiagnosticsPiPState()
         AppDebugLogger.log("PiP did stop")
 
     }

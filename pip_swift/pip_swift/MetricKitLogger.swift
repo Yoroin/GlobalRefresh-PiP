@@ -12,6 +12,7 @@ final class MetricKitLogger: NSObject, MXMetricManagerSubscriber {
 
     private let storageKey = "pip.metricKit.payloads"
     private let maximumPayloads = 5
+    private let maximumPayloadBytes = 256 * 1024
     private var isStarted = false
 
     private override init() {
@@ -20,23 +21,36 @@ final class MetricKitLogger: NSObject, MXMetricManagerSubscriber {
 
     func start() {
         guard !isStarted else { return }
+        guard AppDebugLogger.isDebugModeEnabled else { return }
         isStarted = true
         MXMetricManager.shared.add(self)
         AppDebugLogger.log("MetricKit subscriber started")
     }
 
+    func stop() {
+        guard isStarted else { return }
+        isStarted = false
+        MXMetricManager.shared.remove(self)
+    }
+
     func didReceive(_ payloads: [MXMetricPayload]) {
+        guard AppDebugLogger.isDebugModeEnabled else { return }
         appendPayloads(payloads.map { $0.jsonRepresentation() })
         AppDebugLogger.log("MetricKit received metric payloads: \(payloads.count)")
     }
 
     func didReceive(_ payloads: [MXDiagnosticPayload]) {
+        guard AppDebugLogger.isDebugModeEnabled else { return }
         appendPayloads(payloads.map { $0.jsonRepresentation() })
         AppDebugLogger.log("MetricKit received diagnostic payloads: \(payloads.count)")
     }
 
     func copyToPasteboard() {
         UIPasteboard.general.string = exportText()
+    }
+
+    func resetLogs() {
+        UserDefaults.standard.removeObject(forKey: storageKey)
     }
 
     func exportText() -> String {
@@ -68,14 +82,13 @@ final class MetricKitLogger: NSObject, MXMetricManagerSubscriber {
         guard !payloadData.isEmpty else { return }
         var payloads = UserDefaults.standard.stringArray(forKey: storageKey) ?? []
         let newPayloads = payloadData.map { data -> String in
-            guard
-                let object = try? JSONSerialization.jsonObject(with: data),
-                let prettyData = try? JSONSerialization.data(withJSONObject: object, options: [.prettyPrinted, .sortedKeys]),
-                let text = String(data: prettyData, encoding: .utf8)
-            else {
-                return String(data: data, encoding: .utf8) ?? "MetricKit payload decode failed"
-            }
-            return text
+            let limitedData = data.count > maximumPayloadBytes
+                ? data.prefix(maximumPayloadBytes)
+                : data[...]
+            let text = String(decoding: limitedData, as: UTF8.self)
+            return data.count > maximumPayloadBytes
+                ? text + "\n[MetricKit 数据过长，已截断]"
+                : text
         }
         payloads.append(contentsOf: newPayloads)
         if payloads.count > maximumPayloads {

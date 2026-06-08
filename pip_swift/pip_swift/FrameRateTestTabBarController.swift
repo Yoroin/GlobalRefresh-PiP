@@ -27,6 +27,7 @@ final class FrameRateTestTabBarController: UITabBarController, UITabBarControlle
     override func viewDidLoad() {
         super.viewDidLoad()
         delegate = self
+        DiagnosticsRuntimeState.updateCurrentPage("帧率演示")
 
         viewControllers = [
             makePage(title: "测试页面1-120", contentPrefix: "测试页面一", targetFrameRate: 120, symbol: "1.circle", selectedSymbol: "1.circle.fill"),
@@ -41,6 +42,7 @@ final class FrameRateTestTabBarController: UITabBarController, UITabBarControlle
         }
 
         UIImpactFeedbackGenerator(style: .light).impactOccurred()
+        DiagnosticsRuntimeState.recordUserAction("帧率演示内切换页面")
         return true
     }
 
@@ -139,6 +141,7 @@ private struct FrameRateTestPageView: View {
     ) -> some View {
         Button {
             UIImpactFeedbackGenerator(style: .light).impactOccurred()
+            DiagnosticsRuntimeState.recordUserAction("帧率演示按钮：\(systemName)")
             action()
         } label: {
             Image(systemName: systemName)
@@ -226,6 +229,7 @@ struct RootFrameRateTestView: View {
         Binding(
             get: { isHighRefreshEnabled },
             set: { newValue in
+                DiagnosticsRuntimeState.recordUserAction(newValue ? "强制本APP120Hz开启" : "强制本APP120Hz关闭")
                 UserDefaults.standard.set(newValue, forKey: FrameRatePreference.force120HzKey)
                 isHighRefreshEnabled = newValue
                 NotificationCenter.default.post(name: FrameRatePreference.didChangeNotification, object: nil)

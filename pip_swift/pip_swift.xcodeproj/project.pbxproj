@@ -23,6 +23,7 @@
 					AA50ED31265E319E006DD1A6 /* MetricKitLogger.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA50ED30265E319E006DD1A6 /* MetricKitLogger.swift */; };
 					AA50ED33265E319E006DD1A6 /* KeepAliveLogger.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA50ED32265E319E006DD1A6 /* KeepAliveLogger.swift */; };
 					AA50ED35265E319E006DD1A6 /* KeepAliveModeText.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA50ED34265E319E006DD1A6 /* KeepAliveModeText.swift */; };
+					AA50ED37265E319E006DD1A6 /* DiagnosticsResetManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA50ED36265E319E006DD1A6 /* DiagnosticsResetManager.swift */; };
 		D950ED16265E319D006DD1A6 /* Main.storyboard in Resources */ = {isa = PBXBuildFile; fileRef = D950ED14265E319D006DD1A6 /* Main.storyboard */; };
 		D950ED18265E319E006DD1A6 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = D950ED17265E319E006DD1A6 /* Assets.xcassets */; };
 		D950ED1B265E319E006DD1A6 /* LaunchScreen.storyboard in Resources */ = {isa = PBXBuildFile; fileRef = D950ED19265E319E006DD1A6 /* LaunchScreen.storyboard */; };
@@ -49,6 +50,7 @@
 					AA50ED30265E319E006DD1A6 /* MetricKitLogger.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MetricKitLogger.swift; sourceTree = "<group>"; };
 					AA50ED32265E319E006DD1A6 /* KeepAliveLogger.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KeepAliveLogger.swift; sourceTree = "<group>"; };
 					AA50ED34265E319E006DD1A6 /* KeepAliveModeText.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KeepAliveModeText.swift; sourceTree = "<group>"; };
+					AA50ED36265E319E006DD1A6 /* DiagnosticsResetManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DiagnosticsResetManager.swift; sourceTree = "<group>"; };
 		D950ED15265E319D006DD1A6 /* Base */ = {isa = PBXFileReference; lastKnownFileType = file.storyboard; name = Base; path = Base.lproj/Main.storyboard; sourceTree = "<group>"; };
 		D950ED17265E319E006DD1A6 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		D950ED1A265E319E006DD1A6 /* Base */ = {isa = PBXFileReference; lastKnownFileType = file.storyboard; name = Base; path = Base.lproj/LaunchScreen.storyboard; sourceTree = "<group>"; };
@@ -128,6 +130,7 @@
 											AA50ED30265E319E006DD1A6 /* MetricKitLogger.swift */,
 											AA50ED32265E319E006DD1A6 /* KeepAliveLogger.swift */,
 											AA50ED34265E319E006DD1A6 /* KeepAliveModeText.swift */,
+											AA50ED36265E319E006DD1A6 /* DiagnosticsResetManager.swift */,
 											D950ED0E265E319D006DD1A6 /* AppDelegate.swift */,
 				D950ED10265E319D006DD1A6 /* SceneDelegate.swift */,
 				D950ED14265E319D006DD1A6 /* Main.storyboard */,
@@ -270,6 +273,7 @@
 									AA50ED31265E319E006DD1A6 /* MetricKitLogger.swift in Sources */,
 									AA50ED33265E319E006DD1A6 /* KeepAliveLogger.swift in Sources */,
 									AA50ED35265E319E006DD1A6 /* KeepAliveModeText.swift in Sources */,
+									AA50ED37265E319E006DD1A6 /* DiagnosticsResetManager.swift in Sources */,
 							D950ED0F265E319D006DD1A6 /* AppDelegate.swift in Sources */,
 				D950ED11265E319D006DD1A6 /* SceneDelegate.swift in Sources */,
 			);

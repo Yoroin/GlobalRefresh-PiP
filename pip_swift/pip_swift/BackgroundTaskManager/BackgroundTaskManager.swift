@@ -14,18 +14,36 @@ class BackgroundTaskManager: NSObject {
     static let shared = BackgroundTaskManager()
     
     func startPlay() {
+        guard let audioPlayer else { return }
+        guard !isKeepAliveAudioActive else {
+            if !audioPlayer.isPlaying {
+                audioPlayer.play()
+            }
+            return
+        }
         configureAudioSession()
-        audioPlayer?.prepareToPlay()
-        audioPlayer?.play()
+        audioPlayer.prepareToPlay()
+        audioPlayer.play()
+        isKeepAliveAudioActive = audioPlayer.isPlaying
     }
     
     func stopPlay() {
+        guard isKeepAliveAudioActive || audioPlayer?.isPlaying == true else { return }
         audioPlayer?.stop()
         audioPlayer?.currentTime = 0
+        isKeepAliveAudioActive = false
+        deactivateAudioSession()
+    }
+
+    func forceStopAndDeactivate() {
+        audioPlayer?.stop()
+        audioPlayer?.currentTime = 0
+        isKeepAliveAudioActive = false
         deactivateAudioSession()
     }
     
     private var audioPlayer: AVAudioPlayer?
+    private var isKeepAliveAudioActive = false
     
     private override init() {
         super.init()
