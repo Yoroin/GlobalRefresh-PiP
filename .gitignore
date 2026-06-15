@@ -17,8 +17,9 @@ build_outputs/
 *.p12
 *.cer
 
-# Local scratch files generated during UI experiments
-orig_*.png
-title_*.png
-test_records/
-公交线网优化公示_*.png
+# Private Codex notes, keep them in the private notes repository only
+CODEX_PROJECT_NOTES.md
+CODEX_CONVERSATION_LOG.md
+CHANGE_RECORD.md
+VERSION_NOTES.md
+GlobalRefresh-PiP-PrivateNotes/
