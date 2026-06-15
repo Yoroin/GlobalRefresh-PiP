@@ -20,6 +20,7 @@ enum DiagnosticsLogExporter {
 final class VersionViewController: UIViewController {
     private var hostingController: UIHostingController<VersionPageView>?
     private var isDebugModeEnabled = AppDebugLogger.isDebugModeEnabled
+    private var isDebugPanelVisible = false
     private var debugPanelResetToken = 0
     private var isIOS26AudioKeepAliveEnabled: Bool {
         get {
@@ -51,6 +52,10 @@ final class VersionViewController: UIViewController {
     private func setupSwiftUI() {
         let rootView = VersionPageView(
             isDebugModeEnabled: isDebugModeEnabled,
+            isDebugPanelVisible: Binding(
+                get: { [weak self] in self?.isDebugPanelVisible ?? false },
+                set: { [weak self] newValue in self?.setDebugPanelVisible(newValue) }
+            ),
             isIOS26AudioKeepAliveEnabled: isIOS26AudioKeepAliveEnabled,
             isDebugDiagnosticsEnabled: DebugDiagnosticsMonitor.isEnabled,
             debugPanelResetToken: debugPanelResetToken,
@@ -62,9 +67,6 @@ final class VersionViewController: UIViewController {
             },
             onCopyDiagnosticsLog: { [weak self] in
                 self?.copyDiagnosticsLog()
-            },
-            onToggleDebugDiagnostics: { [weak self] in
-                self?.confirmToggleDebugDiagnostics()
             },
             onSetDebugMode: { [weak self] newValue in
                 self?.setDebugMode(newValue)
@@ -90,11 +92,13 @@ final class VersionViewController: UIViewController {
 
     override func viewWillDisappear(_ animated: Bool) {
         super.viewWillDisappear(animated)
+        isDebugPanelVisible = false
         debugPanelResetToken += 1
         updateSwiftUI()
     }
 
     func dismissTransientOverlays() {
+        isDebugPanelVisible = false
         debugPanelResetToken += 1
         updateSwiftUI()
     }
@@ -102,6 +106,10 @@ final class VersionViewController: UIViewController {
     private func updateSwiftUI() {
         hostingController?.rootView = VersionPageView(
             isDebugModeEnabled: isDebugModeEnabled,
+            isDebugPanelVisible: Binding(
+                get: { [weak self] in self?.isDebugPanelVisible ?? false },
+                set: { [weak self] newValue in self?.setDebugPanelVisible(newValue) }
+            ),
             isIOS26AudioKeepAliveEnabled: isIOS26AudioKeepAliveEnabled,
             isDebugDiagnosticsEnabled: DebugDiagnosticsMonitor.isEnabled,
             debugPanelResetToken: debugPanelResetToken,
@@ -114,9 +122,6 @@ final class VersionViewController: UIViewController {
             onCopyDiagnosticsLog: { [weak self] in
                 self?.copyDiagnosticsLog()
             },
-            onToggleDebugDiagnostics: { [weak self] in
-                self?.confirmToggleDebugDiagnostics()
-            },
             onSetDebugMode: { [weak self] newValue in
                 self?.setDebugMode(newValue)
             },
@@ -127,6 +132,12 @@ final class VersionViewController: UIViewController {
                 self?.setIOS26AudioKeepAlive(newValue)
             }
         )
+    }
+
+    private func setDebugPanelVisible(_ isVisible: Bool) {
+        guard isDebugPanelVisible != isVisible else { return }
+        isDebugPanelVisible = isVisible
+        updateSwiftUI()
     }
 
     private func presentChangelog() {
@@ -151,35 +162,6 @@ final class VersionViewController: UIViewController {
         present(alert, animated: true)
     }
 
-    private func confirmToggleDebugDiagnostics() {
-        DiagnosticsRuntimeState.recordUserAction(DebugDiagnosticsMonitor.isEnabled ? "准备关闭线程与性能日志" : "准备开启线程与性能日志")
-        let willEnable = !DebugDiagnosticsMonitor.isEnabled
-        let title = willEnable ? "开启线程与性能日志记录？" : "关闭线程与性能日志记录？"
-        let message = willEnable
-            ? "开启后会记录主线程卡顿、UI帧间隔异常、线程状态、CPU、内存、热状态、电量和最近操作，内容会合并到复制调试日志里。"
-            : "关闭后会停止主线程卡顿、UI帧间隔和性能采样记录，并清空本轮详细日志。"
-        let alert = UIAlertController(title: title, message: message, preferredStyle: .alert)
-        alert.addAction(UIAlertAction(title: "取消", style: .cancel))
-        alert.addAction(UIAlertAction(title: willEnable ? "确认开启" : "确认关闭", style: .default) { _ in
-            if willEnable {
-                AppDebugLogger.resetLogs()
-                DiagnosticsRuntimeState.startAppStateTracking()
-                DiagnosticsRuntimeState.refreshAppState()
-                DiagnosticsRuntimeState.updateCurrentPage("版本")
-                DebugDiagnosticsMonitor.setEnabled(true)
-                DiagnosticsRuntimeState.recordUserAction("开启线程与性能日志")
-            } else {
-                DebugDiagnosticsMonitor.setEnabled(false)
-                AppDebugLogger.resetLogs()
-                DiagnosticsRuntimeState.startAppStateTracking()
-                DiagnosticsRuntimeState.refreshAppState()
-                DiagnosticsRuntimeState.updateCurrentPage("版本")
-            }
-            self.updateSwiftUI()
-        })
-        present(alert, animated: true)
-    }
-
     private func setDebugMode(_ isEnabled: Bool) {
         isDebugModeEnabled = isEnabled
         AppDebugLogger.isDebugModeEnabled = isEnabled
@@ -192,6 +174,7 @@ final class VersionViewController: UIViewController {
             MetricKitLogger.shared.resetLogs()
             PowerUsageLogger.startFreshStatistics()
             MetricKitLogger.shared.start()
+            DebugDiagnosticsMonitor.setEnabled(true)
             AppDebugLogger.log("Debug mode enabled")
         } else {
             MetricKitLogger.shared.stop()
@@ -212,6 +195,7 @@ final class VersionViewController: UIViewController {
             preferredStyle: .alert
         )
         alert.addAction(UIAlertAction(title: "取消", style: .cancel) { [weak self] _ in
+            self?.isDebugPanelVisible = false
             self?.debugPanelResetToken += 1
             self?.updateSwiftUI()
         })
@@ -246,6 +230,24 @@ private final class ChangelogViewController: UIViewController {
         titleLabel.textAlignment = .left
 
         let stackView = UIStackView(arrangedSubviews: [
+            makeSection(
+                version: "1.0.8 beta4（26.6.15）",
+                items: [
+                    "帧率检测改进：降帧率响应更快（120→80仅3帧确认），升帧至120适度延迟（10帧+0.35秒），其他升帧5帧+0.12秒",
+                    "帧率检测支持扩展档位：30/45/60/75/80/90/100/120Hz，可识别90Hz等中间帧率",
+                    "帧率检测规范化：距离标准值5Hz内吸附，否则四舍五入至5的倍数",
+                    "使用 Xcode 27 beta 重新构建，适配 iOS 15-iOS 27",
+                    "首页右上角二级菜单新增 深色模式 开关，默认关闭时跟随系统设置，开启后固定使用深色模式",
+                    "首页新增 后台中断通知 beta，默认低频30分钟检测一次，可切换为高频1分钟或超高频20秒检测",
+                    "优化主刷新驱动、悬浮窗滚动文本驱动和后台中断通知刷新计时器，滑动时避开 tracking mode",
+                    "优化后台中断通知状态机，减少控制中心、通知中心等场景的误报或漏报",
+                    "优化首页布局稳定性，修复部分状态切换后页面轻微错位",
+                    "新增系统快捷指令：开关悬浮窗、隐藏悬浮窗",
+                    "优化快捷指令冷启动路由",
+                    "优化悬浮窗停止流程",
+                    "新增PiP过渡状态兜底恢复"
+                ]
+            ),
             makeSection(
                 version: "1.0.7（26.6.8）",
                 items: [
@@ -301,7 +303,9 @@ private final class ChangelogViewController: UIViewController {
             ),
             makeSection(
                 version: "1.0.0（26.5.26）",
-                items: ["在原版基础上增加后台保活功能和修改悬浮窗大小"]
+                items: [
+                    "在原版基础上增加后台保活功能和修改悬浮窗大小"
+                ]
             )
         ])
         stackView.axis = .vertical
@@ -380,7 +384,7 @@ private final class FAQViewController: UIViewController {
             ),
             makeQuestion(
                 question: "4.帧率演示页面是干嘛的",
-                answer: "在没有打开悬浮窗的时候，可以通过该页面的开关控制，以及上下滑动，体验一下80hz和120hz的区别"
+                answer: "可通过该页面的开关控制来对比80hz和120hz的区别，本app内所有页面帧率以及悬浮窗帧率受到该开关控制"
             ),
             makeQuestion(
                 question: "5.后台能一直保活吗",

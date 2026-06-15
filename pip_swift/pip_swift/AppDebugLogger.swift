@@ -80,13 +80,13 @@ enum AppDebugLogger {
         DiagnosticsRuntimeState.reset()
     }
 
-    private static var beijingFormatter: DateFormatter {
+    private static let beijingFormatter: DateFormatter = {
         let formatter = DateFormatter()
         formatter.locale = Locale(identifier: "en_US_POSIX")
         formatter.timeZone = TimeZone(identifier: "Asia/Shanghai")
         formatter.dateFormat = "yyyy-MM-dd HH:mm:ss.SSS"
         return formatter
-    }
+    }()
 
     private static var deviceModelIdentifier: String {
         var systemInfo = utsname()
@@ -392,7 +392,8 @@ enum FrameStutterMonitor {
             lastReport = .distantPast
 
             let link = CADisplayLink(target: FrameStutterTarget.shared, selector: #selector(FrameStutterTarget.step(_:)))
-            link.add(to: .main, forMode: .common)
+            // BETA2 ANCHOR: 调试帧监控避开 tracking mode，避免监控本身影响滑动手感。
+            link.add(to: .main, forMode: .default)
             displayLink = link
             AppDebugLogger.log("Frame stutter monitor started")
         }

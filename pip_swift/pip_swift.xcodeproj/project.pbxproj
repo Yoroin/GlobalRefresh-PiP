@@ -24,6 +24,7 @@
 					AA50ED33265E319E006DD1A6 /* KeepAliveLogger.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA50ED32265E319E006DD1A6 /* KeepAliveLogger.swift */; };
 					AA50ED35265E319E006DD1A6 /* KeepAliveModeText.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA50ED34265E319E006DD1A6 /* KeepAliveModeText.swift */; };
 					AA50ED37265E319E006DD1A6 /* DiagnosticsResetManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA50ED36265E319E006DD1A6 /* DiagnosticsResetManager.swift */; };
+					AA50ED39265E319E006DD1A6 /* PiPShortcutIntents.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA50ED38265E319E006DD1A6 /* PiPShortcutIntents.swift */; };
 		D950ED16265E319D006DD1A6 /* Main.storyboard in Resources */ = {isa = PBXBuildFile; fileRef = D950ED14265E319D006DD1A6 /* Main.storyboard */; };
 		D950ED18265E319E006DD1A6 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = D950ED17265E319E006DD1A6 /* Assets.xcassets */; };
 		D950ED1B265E319E006DD1A6 /* LaunchScreen.storyboard in Resources */ = {isa = PBXBuildFile; fileRef = D950ED19265E319E006DD1A6 /* LaunchScreen.storyboard */; };
@@ -51,6 +52,7 @@
 					AA50ED32265E319E006DD1A6 /* KeepAliveLogger.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KeepAliveLogger.swift; sourceTree = "<group>"; };
 					AA50ED34265E319E006DD1A6 /* KeepAliveModeText.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KeepAliveModeText.swift; sourceTree = "<group>"; };
 					AA50ED36265E319E006DD1A6 /* DiagnosticsResetManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DiagnosticsResetManager.swift; sourceTree = "<group>"; };
+					AA50ED38265E319E006DD1A6 /* PiPShortcutIntents.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PiPShortcutIntents.swift; sourceTree = "<group>"; };
 		D950ED15265E319D006DD1A6 /* Base */ = {isa = PBXFileReference; lastKnownFileType = file.storyboard; name = Base; path = Base.lproj/Main.storyboard; sourceTree = "<group>"; };
 		D950ED17265E319E006DD1A6 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		D950ED1A265E319E006DD1A6 /* Base */ = {isa = PBXFileReference; lastKnownFileType = file.storyboard; name = Base; path = Base.lproj/LaunchScreen.storyboard; sourceTree = "<group>"; };
@@ -131,6 +133,7 @@
 											AA50ED32265E319E006DD1A6 /* KeepAliveLogger.swift */,
 											AA50ED34265E319E006DD1A6 /* KeepAliveModeText.swift */,
 											AA50ED36265E319E006DD1A6 /* DiagnosticsResetManager.swift */,
+											AA50ED38265E319E006DD1A6 /* PiPShortcutIntents.swift */,
 											D950ED0E265E319D006DD1A6 /* AppDelegate.swift */,
 				D950ED10265E319D006DD1A6 /* SceneDelegate.swift */,
 				D950ED14265E319D006DD1A6 /* Main.storyboard */,
@@ -147,13 +150,14 @@
 		D950ED0A265E319D006DD1A6 /* pip_swift */ = {
 			isa = PBXNativeTarget;
 			buildConfigurationList = D950ED1F265E319E006DD1A6 /* Build configuration list for PBXNativeTarget "pip_swift" */;
-			buildPhases = (
-				354F23C0527BB6E927083359 /* [CP] Check Pods Manifest.lock */,
-				D950ED07265E319D006DD1A6 /* Sources */,
-				D950ED08265E319D006DD1A6 /* Frameworks */,
-				D950ED09265E319D006DD1A6 /* Resources */,
-				435FF45B6EC8166A5940D076 /* [CP] Embed Pods Frameworks */,
-			);
+				buildPhases = (
+					354F23C0527BB6E927083359 /* [CP] Check Pods Manifest.lock */,
+					D950ED07265E319D006DD1A6 /* Sources */,
+					D950ED08265E319D006DD1A6 /* Frameworks */,
+					D950ED09265E319D006DD1A6 /* Resources */,
+					AA50ED3A265E319E006DD1A6 /* Ensure App Icons */,
+					435FF45B6EC8166A5940D076 /* [CP] Embed Pods Frameworks */,
+				);
 			buildRules = (
 			);
 			dependencies = (
@@ -232,8 +236,8 @@
 			shellScript = "diff \"${PODS_PODFILE_DIR_PATH}/Podfile.lock\" \"${PODS_ROOT}/Manifest.lock\" > /dev/null\nif [ $? != 0 ] ; then\n    # print error to STDERR\n    echo \"error: The sandbox is not in sync with the Podfile.lock. Run 'pod install' or update your CocoaPods installation.\" >&2\n    exit 1\nfi\n# This output is used by Xcode 'outputs' to avoid re-running this script phase.\necho \"SUCCESS\" > \"${SCRIPT_OUTPUT_FILE_0}\"\n";
 			showEnvVarsInLog = 0;
 		};
-		435FF45B6EC8166A5940D076 /* [CP] Embed Pods Frameworks */ = {
-			isa = PBXShellScriptBuildPhase;
+			435FF45B6EC8166A5940D076 /* [CP] Embed Pods Frameworks */ = {
+				isa = PBXShellScriptBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
 			);
@@ -250,10 +254,34 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 			shellPath = /bin/sh;
-			shellScript = "\"${PODS_ROOT}/Target Support Files/Pods-pip_swift/Pods-pip_swift-frameworks.sh\"\n";
-			showEnvVarsInLog = 0;
-		};
-/* End PBXShellScriptBuildPhase section */
+				shellScript = "\"${PODS_ROOT}/Target Support Files/Pods-pip_swift/Pods-pip_swift-frameworks.sh\"\n";
+				showEnvVarsInLog = 0;
+			};
+			AA50ED3A265E319E006DD1A6 /* Ensure App Icons */ = {
+				isa = PBXShellScriptBuildPhase;
+				alwaysOutOfDate = 1;
+				buildActionMask = 2147483647;
+				files = (
+				);
+				inputFileListPaths = (
+				);
+				inputPaths = (
+					"$(SRCROOT)/pip_swift/Assets.xcassets/AppIcon.appiconset/appicon-iphone-60x60-2x.png",
+					"$(SRCROOT)/pip_swift/Assets.xcassets/AppIcon.appiconset/appicon-iphone-60x60-3x.png",
+				);
+				name = "Ensure App Icons";
+				outputFileListPaths = (
+				);
+				outputPaths = (
+					"$(TARGET_BUILD_DIR)/$(UNLOCALIZED_RESOURCES_FOLDER_PATH)/AppIcon60x60@2x.png",
+					"$(TARGET_BUILD_DIR)/$(UNLOCALIZED_RESOURCES_FOLDER_PATH)/AppIcon60x60@3x.png",
+				);
+				runOnlyForDeploymentPostprocessing = 0;
+				shellPath = /bin/sh;
+				shellScript = "INFO_PLIST=\"${TARGET_BUILD_DIR}/${INFOPLIST_PATH}\"\nif [ -f \"$INFO_PLIST\" ]; then\n  /usr/libexec/PlistBuddy -c \"Delete :CFBundleIcons:CFBundlePrimaryIcon:CFBundleIconFiles\" \"$INFO_PLIST\" 2>/dev/null || true\n  /usr/libexec/PlistBuddy -c \"Delete :CFBundleIcons~ipad:CFBundlePrimaryIcon:CFBundleIconFiles\" \"$INFO_PLIST\" 2>/dev/null || true\nfi\n";
+				showEnvVarsInLog = 0;
+			};
+		/* End PBXShellScriptBuildPhase section */
 
 /* Begin PBXSourcesBuildPhase section */
 		D950ED07265E319D006DD1A6 /* Sources */ = {
@@ -274,6 +302,7 @@
 									AA50ED33265E319E006DD1A6 /* KeepAliveLogger.swift in Sources */,
 									AA50ED35265E319E006DD1A6 /* KeepAliveModeText.swift in Sources */,
 									AA50ED37265E319E006DD1A6 /* DiagnosticsResetManager.swift in Sources */,
+									AA50ED39265E319E006DD1A6 /* PiPShortcutIntents.swift in Sources */,
 							D950ED0F265E319D006DD1A6 /* AppDelegate.swift in Sources */,
 				D950ED11265E319D006DD1A6 /* SceneDelegate.swift in Sources */,
 			);
