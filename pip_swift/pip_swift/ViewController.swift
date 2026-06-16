@@ -1578,23 +1578,11 @@ class ViewController: UIViewController, AVPictureInPictureControllerDelegate {
     }
 
     private func fpsConfirmationRequirement(from currentFPS: Int, to candidateFPS: Int) -> (count: Int, duration: CFTimeInterval) {
-<<<<<<< Updated upstream
         guard candidateFPS > currentFPS else { return (3, 0) }
         if candidateFPS >= 120 {
             return (10, 0.35)
         }
         return (5, 0.12)
-=======
-        guard candidateFPS > currentFPS else {
-            return (5, 0)
-        }
-
-        if !FrameRatePreference.isHighRefreshEnabled, currentFPS <= 80, candidateFPS >= 120 {
-            return (20, 1.8)
-        }
-
-        return (12, 0.7)
->>>>>>> Stashed changes
     }
 
     private func updateClockOverlay(timestamp: CFTimeInterval, forceNetworkSample: Bool) {
@@ -1642,7 +1630,6 @@ class ViewController: UIViewController, AVPictureInPictureControllerDelegate {
 
     private func normalizedMeasuredFPS(_ rawFPS: Int) -> Int {
         let hardwareMaximum = max(60, UIScreen.main.maximumFramesPerSecond)
-<<<<<<< Updated upstream
         let clampedFPS = min(max(30, rawFPS), hardwareMaximum)
         let standardRates = [30, 45, 60, 75, 80, 90, 100, 120].filter { $0 <= hardwareMaximum }
         guard let nearest = standardRates.min(by: { abs($0 - clampedFPS) < abs($1 - clampedFPS) }) else {
@@ -1653,14 +1640,6 @@ class ViewController: UIViewController, AVPictureInPictureControllerDelegate {
             return nearest
         }
         return Int((Double(clampedFPS) / 5.0).rounded() * 5.0)
-=======
-        let clampedFPS = min(max(60, rawFPS), hardwareMaximum)
-        let standardRates = [60, 80, 120].filter { $0 <= hardwareMaximum }
-        guard let nearest = standardRates.min(by: { abs($0 - clampedFPS) < abs($1 - clampedFPS) }) else {
-            return clampedFPS
-        }
-        return nearest
->>>>>>> Stashed changes
     }
 
     private func updateNetworkSpeed(force: Bool) {
