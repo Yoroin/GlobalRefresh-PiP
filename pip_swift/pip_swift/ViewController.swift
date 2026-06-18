@@ -10,6 +10,37 @@ import CoreMedia
 import CoreVideo
 import SnapKit
 import SwiftUI
+import Darwin
+
+enum AppAppearancePreference {
+    private static let darkModeForcedKey = "pip.home.darkModeForced"
+
+    static var isDarkModeForced: Bool {
+        get { UserDefaults.standard.bool(forKey: darkModeForcedKey) }
+        set {
+            UserDefaults.standard.set(newValue, forKey: darkModeForcedKey)
+            applyCurrentPreference()
+        }
+    }
+
+    static var preferredStyle: UIUserInterfaceStyle {
+        isDarkModeForced ? .dark : .unspecified
+    }
+
+    static func apply(to window: UIWindow?) {
+        window?.overrideUserInterfaceStyle = preferredStyle
+        window?.rootViewController?.overrideUserInterfaceStyle = preferredStyle
+    }
+
+    static func applyCurrentPreference() {
+        UIView.performWithoutAnimation {
+            UIApplication.shared.connectedScenes
+                .compactMap { $0 as? UIWindowScene }
+                .flatMap(\.windows)
+                .forEach { apply(to: $0) }
+        }
+    }
+}
 
 class ViewController: UIViewController, AVPictureInPictureControllerDelegate {
 
@@ -23,28 +54,62 @@ class ViewController: UIViewController, AVPictureInPictureControllerDelegate {
     private var customView: UIView!
     private var textView: UITextView!
     private var clockLabel: UILabel!
+    private var clockOverlayView: ClockOverlayView!
     private var videoCallContentController: UIViewController?
     private var hostingController: UIHostingController<PiPHomeView>?
     private var scrollDisplayLink: CADisplayLink?
-    private var clockTimer: Timer?
+    private var clockDisplayLink: CADisplayLink?
     private var lastScrollTimestamp: CFTimeInterval?
+    private var lastClockTimestamp: CFTimeInterval?
+    private var lastClockNetworkTimestamp: CFTimeInterval?
+    private var clockFrameCount = 0
+    private var pendingMeasuredPiPFPS: Int?
+    private var pendingMeasuredPiPFPSCount = 0
+    private var pendingMeasuredPiPFPSStartedAt: CFTimeInterval?
+    private var measuredPiPFPS: Int = 0
+    private var lastNetworkSample: NetworkTrafficSample?
+    private var currentNetworkSpeedText = "↑0B ↓0B"
+    private var lastClockOverlayTimeText = ""
+    private var lastClockOverlayFPSText = ""
+    private var lastClockOverlayNetworkText = ""
+    private var lastClockRenderTick = -1
+    private var lastBackgroundClockDiagnosticsTimestamp: CFTimeInterval?
+    private var lastLoggedPiPSuspendedAtSide: Bool?
+    private var windowsBeforePiPStart: Set<ObjectIdentifier> = []
     private var playerEndObserver: NSObjectProtocol?
     private var backgroundTask: UIBackgroundTaskIdentifier = .invalid
     private var isPiPTransitioning = false
     private var isStoppingPiP = false
     private var pendingPiPStartWorkItem: DispatchWorkItem?
     private var pipStartTimeoutWorkItem: DispatchWorkItem?
+    private var pipTransitionWatchdogWorkItem: DispatchWorkItem?
+    private var pipTransitionStartedAt: Date?
+    private var pipTransitionReason = "未知"
+    private var pipTransitionExpectedActive: Bool?
+    private var didRecoverStalePiPStop = false
+    private var pendingShortcutPiPStartRetry: DispatchWorkItem?
+    private var shortcutPiPStartRetryRemaining = 0
+    private var shouldHidePiPAfterShortcutStart = false
     private var playerStallObserver: NSObjectProtocol?
     private var playerPauseObserver: NSKeyValueObservation?
     private var isPreviewingPiPHeight = false
     private var didRetryLegacyPiPStart = false
     private var isCompactPiPStyle = true
+    private let clockFPSMeasureInterval: CFTimeInterval = 0.8
+    private let clockNetworkMeasureInterval: CFTimeInterval = 1.0
     private var isLoadingHomePreferences = false
     private var hasPreparedPiPInfrastructure = false
     private var wantsPiPActive = false
+    private var isOwnPiPConfirmedActive = false
     private var pipRuntimeStartedAt: Date?
     private var pipRuntimeDuration: TimeInterval = 0
     private var pipRuntimeStoppedAtText = "暂无"
+    private var isPiPStatusInfoVisible = false {
+        didSet {
+            guard oldValue != isPiPStatusInfoVisible else { return }
+            updateHomeView()
+        }
+    }
     private var overlayResetToken = 0
     private var isSettingsExpanded = false {
         didSet {
@@ -85,6 +150,56 @@ class ViewController: UIViewController, AVPictureInPictureControllerDelegate {
             updateHomeView()
         }
     }
+    private var isDarkModeForced = AppAppearancePreference.isDarkModeForced {
+        didSet {
+            guard oldValue != isDarkModeForced else { return }
+            if !isLoadingHomePreferences {
+                AppAppearancePreference.isDarkModeForced = isDarkModeForced
+            }
+            updateHomeView()
+        }
+    }
+    private var isPiPStoppedNotificationEnabled = KeepAliveNotificationTester.isPiPStoppedNotificationEnabled {
+        didSet {
+            guard oldValue != isPiPStoppedNotificationEnabled else { return }
+            if !isLoadingHomePreferences {
+                KeepAliveNotificationTester.isPiPStoppedNotificationEnabled = isPiPStoppedNotificationEnabled
+            }
+            updateHomeView()
+        }
+    }
+    private var isBackgroundInterruptionNotificationEnabled = KeepAliveNotificationTester.isBackgroundProbeEnabled {
+        didSet {
+            guard oldValue != isBackgroundInterruptionNotificationEnabled else { return }
+            if !isLoadingHomePreferences {
+                KeepAliveNotificationTester.isBackgroundProbeEnabled = isBackgroundInterruptionNotificationEnabled
+            }
+            updateHomeView()
+        }
+    }
+    private var keepAliveNotificationFrequency = KeepAliveNotificationTester.probeFrequency {
+        didSet {
+            guard oldValue != keepAliveNotificationFrequency else { return }
+            if !isLoadingHomePreferences {
+                KeepAliveNotificationTester.probeFrequency = keepAliveNotificationFrequency
+            }
+            updateHomeView()
+        }
+    }
+    private var keepsPiPStatusInfoPersistent = false {
+        didSet {
+            guard oldValue != keepsPiPStatusInfoPersistent else { return }
+            if !isLoadingHomePreferences {
+                UserDefaults.standard.set(keepsPiPStatusInfoPersistent, forKey: userDefaultsPiPStatusInfoPersistentKey)
+            }
+            if keepsPiPStatusInfoPersistent {
+                isPiPStatusInfoVisible = true
+            } else {
+                isPiPStatusInfoVisible = false
+            }
+            updateHomeView()
+        }
+    }
     private lazy var pipHeight: CGFloat = compactPiPHeight
     private var isPiPActiveForUI = false {
         didSet {
@@ -95,13 +210,13 @@ class ViewController: UIViewController, AVPictureInPictureControllerDelegate {
     private lazy var clockFormatter: DateFormatter = {
         let formatter = DateFormatter()
         formatter.locale = Locale(identifier: "en_US_POSIX")
-        formatter.dateFormat = "HH:mm:ss"
+        formatter.dateFormat = "HH:mm:ss.S"
         return formatter
     }()
 
     private let textPiPWidth: CGFloat = 300
     private let clockPiPWidth: CGFloat = 200
-    private let isClockModeFeatureEnabled = false
+    private let isClockModeFeatureEnabled = true
     private let defaultPiPHeight: CGFloat = 120
     private let compactPiPHeight: CGFloat = 44
     private let minPiPHeight: CGFloat = 0.1
@@ -109,11 +224,13 @@ class ViewController: UIViewController, AVPictureInPictureControllerDelegate {
     private let userDefaultsScrollingEnabledKey = "pip.home.scrollingEnabled"
     private let userDefaultsRememberPiPHeightKey = "pip.home.rememberPiPHeight"
     private let userDefaultsClockModeEnabledKey = "pip.home.clockModeEnabled"
+    private let userDefaultsClockModeDefaultMigrationKey = "pip.home.clockModeDefaultMigration.v1"
     private let userDefaultsPiPHeightKey = "pip.home.rememberedPiPHeight"
     private let userDefaultsPiPRuntimeStartedAtKey = "pip.home.runtimeStartedAt"
     private let userDefaultsPiPRuntimeDurationKey = "pip.home.runtimeDuration"
     private let userDefaultsPiPRuntimeWasActiveKey = "pip.home.runtimeWasActive"
     private let userDefaultsPiPRuntimeStoppedAtTextKey = "pip.home.runtimeStoppedAtText"
+    private let userDefaultsPiPStatusInfoPersistentKey = "pip.home.pipStatusInfoPersistent"
     static let userDefaultsIOS26AudioKeepAliveKey = "pip.keepAlive.iOS26AudioEnabled"
     static let userDefaultsIOS26PiPOnlyKeepAliveKey = "pip.keepAlive.iOS26PiPOnlyEnabled"
     static let iOS26KeepAliveModeDidChangeNotification = Notification.Name("pip.iOS26KeepAliveModeDidChange")
@@ -139,6 +256,10 @@ class ViewController: UIViewController, AVPictureInPictureControllerDelegate {
     private var isPiPVisuallyHidden: Bool {
         clampedPiPHeight <= 0.15
     }
+    private var isPiPSuspendedAtSide: Bool {
+        guard pipController?.isPictureInPictureActive == true else { return false }
+        return pipController.isPictureInPictureSuspended
+    }
     private var shouldRenderClockMode: Bool {
         isClockModeFeatureEnabled && isClockModeEnabled && !isPiPVisuallyHidden
     }
@@ -146,7 +267,7 @@ class ViewController: UIViewController, AVPictureInPictureControllerDelegate {
         isPiPRuntimeActive ? .systemBlue : .secondaryLabel
     }
     private var isPiPRuntimeActive: Bool {
-        pipRuntimeStartedAt != nil && ((pipController?.isPictureInPictureActive ?? false) || isPiPActiveForUI)
+        pipRuntimeStartedAt != nil && isOwnPiPConfirmedActive && (pipController?.isPictureInPictureActive ?? false)
     }
     private var pipRuntimeDurationForDisplay: String {
         if let pipRuntimeStartedAt {
@@ -161,6 +282,9 @@ class ViewController: UIViewController, AVPictureInPictureControllerDelegate {
         return true
     }
     private var shouldUsePlayerLayerPiPCompatibility: Bool {
+        // BETA5_ANCHOR_PLAYER_LAYER_PIP_TIME_MODE:
+        // playerLayer 承载实验已验证：高度调整慢、PiP 内容挂载易黑屏、0.1pt 隐藏会触发关闭。
+        // 因此默认回到 beta4 的 VideoCall contentSource 主线，保留实验代码但不启用。
         return false
     }
 
@@ -171,15 +295,26 @@ class ViewController: UIViewController, AVPictureInPictureControllerDelegate {
         DiagnosticsRuntimeState.updateCurrentPage("悬浮窗")
         AppDebugLogger.log("Home viewDidLoad")
         PowerUsageLogger.markLaunch()
-        KeepAliveLogger.markAppLaunch()
+        KeepAliveNotificationTester.sanitizeOnLaunch()
+        let keepAliveInterruptionNotice = KeepAliveLogger.markAppLaunch()
 
         loadHomePreferences()
         loadPiPRuntimeState()
         setupSwiftUI()
+        if let keepAliveInterruptionNotice {
+            KeepAliveNotificationTester.presentLaunchInterruptionAlert(keepAliveInterruptionNotice, from: self)
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) { [weak self] in
+                guard let self else { return }
+                KeepAliveNotificationTester.presentPendingLocalNotificationAlertIfNeeded(from: self)
+            }
+        } else {
+            KeepAliveNotificationTester.presentPendingLocalNotificationAlertIfNeeded(from: self)
+        }
 
         NotificationCenter.default.addObserver(self, selector: #selector(handleEnterForeground), name: UIApplication.willEnterForegroundNotification, object: nil)
         NotificationCenter.default.addObserver(self, selector: #selector(handleEnterBackground), name: UIApplication.didEnterBackgroundNotification, object: nil)
         NotificationCenter.default.addObserver(self, selector: #selector(handleKeepAliveModeDidChange), name: Self.iOS26KeepAliveModeDidChangeNotification, object: nil)
+        NotificationCenter.default.addObserver(self, selector: #selector(handleClockDisplayLinkPreferenceDidChange), name: ClockDisplayLinkPreference.didChangeNotification, object: nil)
     }
 
     override func viewDidAppear(_ animated: Bool) {
@@ -212,6 +347,8 @@ class ViewController: UIViewController, AVPictureInPictureControllerDelegate {
         NotificationCenter.default.removeObserver(self)
         pendingPiPStartWorkItem?.cancel()
         pipStartTimeoutWorkItem?.cancel()
+        pipTransitionWatchdogWorkItem?.cancel()
+        pendingShortcutPiPStartRetry?.cancel()
         stopDisplayLinks()
         stopClockTimer()
         endBackgroundTask()
@@ -223,6 +360,10 @@ class ViewController: UIViewController, AVPictureInPictureControllerDelegate {
                 get: { [weak self] in self?.isPiPActiveForUI ?? false },
                 set: { [weak self] newValue in self?.isPiPActiveForUI = newValue }
             ),
+            isPiPStatusInfoVisible: Binding(
+                get: { [weak self] in self?.isPiPStatusInfoVisible ?? false },
+                set: { [weak self] newValue in self?.isPiPStatusInfoVisible = newValue }
+            ),
             pipHeight: pipHeightForDisplay,
             keepAliveMode: KeepAliveModeText.current,
             pipStatusTitle: pipStatusTitle,
@@ -233,6 +374,11 @@ class ViewController: UIViewController, AVPictureInPictureControllerDelegate {
             overlayResetToken: overlayResetToken,
             isScrollingEnabled: isScrollingEnabled,
             isClockModeEnabled: isClockModeEnabled,
+            isDarkModeForced: isDarkModeForced,
+            isPiPStoppedNotificationEnabled: isPiPStoppedNotificationEnabled,
+            isBackgroundInterruptionNotificationEnabled: isBackgroundInterruptionNotificationEnabled,
+            keepAliveNotificationFrequency: keepAliveNotificationFrequency,
+            keepsPiPStatusInfoPersistent: keepsPiPStatusInfoPersistent,
             remembersPiPHeight: remembersPiPHeight,
             isSettingsExpanded: isSettingsExpanded,
             onTogglePiP: { [weak self] in self?.togglePiP() },
@@ -241,6 +387,11 @@ class ViewController: UIViewController, AVPictureInPictureControllerDelegate {
             onCustomizeHeight: { [weak self] in self?.presentPiPHeightEditor() },
             onToggleScrolling: { [weak self] in self?.toggleScrolling() },
             onSetClockMode: { [weak self] newValue in self?.setClockMode(newValue) },
+            onSetDarkModeForced: { [weak self] newValue in self?.setDarkModeForced(newValue) },
+            onSetPiPStoppedNotificationEnabled: { [weak self] newValue in self?.setPiPStoppedNotificationEnabled(newValue) },
+            onSetBackgroundInterruptionNotificationEnabled: { [weak self] newValue in self?.setBackgroundInterruptionNotificationEnabled(newValue) },
+            onSetKeepAliveNotificationFrequency: { [weak self] frequency in self?.setKeepAliveNotificationFrequency(frequency) },
+            onSetPiPStatusInfoPersistent: { [weak self] newValue in self?.setPiPStatusInfoPersistent(newValue) },
             onToggleSettings: { [weak self] in self?.toggleSettingsPanel() },
             onDismissSettings: { [weak self] in self?.dismissSettingsPanel() },
             onSetRememberPiPHeight: { [weak self] newValue in self?.setRememberPiPHeight(newValue) }
@@ -258,11 +409,16 @@ class ViewController: UIViewController, AVPictureInPictureControllerDelegate {
     }
 
     private func updateHomeView() {
+        recoverStalePiPStopTransitionIfNeeded(reason: "刷新首页")
         syncPiPRuntimeDisplayState()
         hostingController?.rootView = PiPHomeView(
             isPiPActive: Binding(
                 get: { [weak self] in self?.isPiPActiveForUI ?? false },
                 set: { [weak self] newValue in self?.isPiPActiveForUI = newValue }
+            ),
+            isPiPStatusInfoVisible: Binding(
+                get: { [weak self] in self?.isPiPStatusInfoVisible ?? false },
+                set: { [weak self] newValue in self?.isPiPStatusInfoVisible = newValue }
             ),
             pipHeight: pipHeightForDisplay,
             keepAliveMode: KeepAliveModeText.current,
@@ -274,6 +430,11 @@ class ViewController: UIViewController, AVPictureInPictureControllerDelegate {
             overlayResetToken: overlayResetToken,
             isScrollingEnabled: isScrollingEnabled,
             isClockModeEnabled: isClockModeEnabled,
+            isDarkModeForced: isDarkModeForced,
+            isPiPStoppedNotificationEnabled: isPiPStoppedNotificationEnabled,
+            isBackgroundInterruptionNotificationEnabled: isBackgroundInterruptionNotificationEnabled,
+            keepAliveNotificationFrequency: keepAliveNotificationFrequency,
+            keepsPiPStatusInfoPersistent: keepsPiPStatusInfoPersistent,
             remembersPiPHeight: remembersPiPHeight,
             isSettingsExpanded: isSettingsExpanded,
             onTogglePiP: { [weak self] in self?.togglePiP() },
@@ -282,6 +443,11 @@ class ViewController: UIViewController, AVPictureInPictureControllerDelegate {
             onCustomizeHeight: { [weak self] in self?.presentPiPHeightEditor() },
             onToggleScrolling: { [weak self] in self?.toggleScrolling() },
             onSetClockMode: { [weak self] newValue in self?.setClockMode(newValue) },
+            onSetDarkModeForced: { [weak self] newValue in self?.setDarkModeForced(newValue) },
+            onSetPiPStoppedNotificationEnabled: { [weak self] newValue in self?.setPiPStoppedNotificationEnabled(newValue) },
+            onSetBackgroundInterruptionNotificationEnabled: { [weak self] newValue in self?.setBackgroundInterruptionNotificationEnabled(newValue) },
+            onSetKeepAliveNotificationFrequency: { [weak self] frequency in self?.setKeepAliveNotificationFrequency(frequency) },
+            onSetPiPStatusInfoPersistent: { [weak self] newValue in self?.setPiPStatusInfoPersistent(newValue) },
             onToggleSettings: { [weak self] in self?.toggleSettingsPanel() },
             onDismissSettings: { [weak self] in self?.dismissSettingsPanel() },
             onSetRememberPiPHeight: { [weak self] newValue in self?.setRememberPiPHeight(newValue) }
@@ -297,14 +463,26 @@ class ViewController: UIViewController, AVPictureInPictureControllerDelegate {
         }
 
         if isClockModeFeatureEnabled {
-            isClockModeEnabled = UserDefaults.standard.object(forKey: userDefaultsClockModeEnabledKey) == nil
-                ? true
-                : UserDefaults.standard.bool(forKey: userDefaultsClockModeEnabledKey)
+            if !UserDefaults.standard.bool(forKey: userDefaultsClockModeDefaultMigrationKey) {
+                UserDefaults.standard.set(true, forKey: userDefaultsClockModeDefaultMigrationKey)
+                UserDefaults.standard.set(true, forKey: userDefaultsClockModeEnabledKey)
+                isClockModeEnabled = true
+            } else {
+                isClockModeEnabled = UserDefaults.standard.object(forKey: userDefaultsClockModeEnabledKey) == nil
+                    ? true
+                    : UserDefaults.standard.bool(forKey: userDefaultsClockModeEnabledKey)
+            }
         } else {
             isClockModeEnabled = false
             UserDefaults.standard.set(false, forKey: userDefaultsClockModeEnabledKey)
         }
         isScrollingEnabled = isClockModeEnabled ? false : prefersTextScrolling
+        isDarkModeForced = AppAppearancePreference.isDarkModeForced
+        isPiPStoppedNotificationEnabled = KeepAliveNotificationTester.isPiPStoppedNotificationEnabled
+        isBackgroundInterruptionNotificationEnabled = KeepAliveNotificationTester.isBackgroundProbeEnabled
+        keepAliveNotificationFrequency = KeepAliveNotificationTester.probeFrequency
+        keepsPiPStatusInfoPersistent = UserDefaults.standard.bool(forKey: userDefaultsPiPStatusInfoPersistentKey)
+        isPiPStatusInfoVisible = keepsPiPStatusInfoPersistent
 
         remembersPiPHeight = UserDefaults.standard.bool(forKey: userDefaultsRememberPiPHeightKey)
         if remembersPiPHeight,
@@ -350,6 +528,50 @@ class ViewController: UIViewController, AVPictureInPictureControllerDelegate {
     private func setRememberPiPHeight(_ isEnabled: Bool) {
         DiagnosticsRuntimeState.recordUserAction(isEnabled ? "开启记忆悬浮窗高度" : "关闭记忆悬浮窗高度")
         remembersPiPHeight = isEnabled
+    }
+
+    private func setDarkModeForced(_ isEnabled: Bool) {
+        DiagnosticsRuntimeState.recordUserAction(isEnabled ? "开启深色模式" : "关闭深色模式")
+        UIView.performWithoutAnimation {
+            isDarkModeForced = isEnabled
+            view.layoutIfNeeded()
+        }
+    }
+
+    private func setPiPStoppedNotificationEnabled(_ isEnabled: Bool) {
+        DiagnosticsRuntimeState.recordUserAction(isEnabled ? "开启悬浮窗被挤通知" : "关闭悬浮窗被挤通知")
+        if isEnabled {
+            KeepAliveNotificationTester.prepareForPiPStoppedToggle(from: self) { [weak self] granted in
+                guard let self else { return }
+                self.isPiPStoppedNotificationEnabled = granted
+            }
+        } else {
+            isPiPStoppedNotificationEnabled = false
+            KeepAliveNotificationTester.cancelPiPStoppedNotifications(reason: "首页关闭悬浮窗被挤通知")
+        }
+    }
+
+    private func setBackgroundInterruptionNotificationEnabled(_ isEnabled: Bool) {
+        DiagnosticsRuntimeState.recordUserAction(isEnabled ? "开启后台中断提醒beta" : "关闭后台中断提醒beta")
+        if isEnabled {
+            KeepAliveNotificationTester.prepareForBackgroundProbeToggle(from: self) { [weak self] granted in
+                guard let self else { return }
+                self.isBackgroundInterruptionNotificationEnabled = granted
+            }
+        } else {
+            isBackgroundInterruptionNotificationEnabled = false
+            KeepAliveNotificationTester.cancelBackgroundProbeNotifications(reason: "首页关闭后台中断提醒beta")
+        }
+    }
+
+    private func setKeepAliveNotificationFrequency(_ frequency: KeepAliveNotificationProbeFrequency) {
+        DiagnosticsRuntimeState.recordUserAction("切换后台中断提醒频率：\(frequency.title)")
+        keepAliveNotificationFrequency = frequency
+    }
+
+    private func setPiPStatusInfoPersistent(_ isEnabled: Bool) {
+        DiagnosticsRuntimeState.recordUserAction(isEnabled ? "开启悬浮窗状态常驻" : "关闭悬浮窗状态常驻")
+        keepsPiPStatusInfoPersistent = isEnabled
     }
 
     private func toggleSettingsPanel() {
@@ -411,6 +633,8 @@ class ViewController: UIViewController, AVPictureInPictureControllerDelegate {
     private func updateDiagnosticsPiPState() {
         let state = [
             "active=\(pipController?.isPictureInPictureActive ?? false)",
+            "suspended=\(isPiPSuspendedAtSide)",
+            "own=\(isOwnPiPConfirmedActive)",
             "ui=\(isPiPActiveForUI)",
             "wants=\(wantsPiPActive)",
             "transition=\(isPiPTransitioning)",
@@ -460,6 +684,7 @@ class ViewController: UIViewController, AVPictureInPictureControllerDelegate {
             "mode=\(shouldUsePiPOnlyKeepAlive ? "PiP低功耗" : "音频强保活")",
             "keepAlive=\(shouldKeepPiPPlaybackAlive)",
             "requiresPlayerLayer=\(requiresPlayerLayerForPiP)",
+            "backingPlayer=\(shouldPrepareBackingPlayerForPlayback)",
             "shouldPlayBacking=\(shouldPlayBackingPlayerForKeepAlive)",
             "pipActive=\(pipController?.isPictureInPictureActive ?? false)",
             "pipPossible=\(pipController?.isPictureInPicturePossible ?? false)",
@@ -580,7 +805,8 @@ class ViewController: UIViewController, AVPictureInPictureControllerDelegate {
         AppDebugLogger.log("Prepare PiP infrastructure begin")
         setupPiPSourceView()
         setupCustomView()
-        if requiresPlayerLayerForPiP {
+        configurePiPAudioSession()
+        if shouldPrepareBackingPlayerForPlayback {
             setupPlayer()
             guard playerLayer != nil else {
                 AppDebugLogger.log("Prepare PiP failed: playerLayer nil")
@@ -655,6 +881,7 @@ class ViewController: UIViewController, AVPictureInPictureControllerDelegate {
         configureBackingPlayerForPiP(player)
         player.actionAtItemEnd = .none
         player.isMuted = true
+        player.volume = 0
         player.allowsExternalPlayback = false
         playerLayer.player = player
         observeLooping(for: playerItem)
@@ -665,6 +892,9 @@ class ViewController: UIViewController, AVPictureInPictureControllerDelegate {
 
     private func configureBackingPlayerForPiP(_ player: AVPlayer) {
         player.preventsDisplaySleepDuringVideoPlayback = false
+        if #available(iOS 14.0, *) {
+            player.audiovisualBackgroundPlaybackPolicy = .continuesIfPossible
+        }
     }
 
     private func setupPip() {
@@ -677,6 +907,7 @@ class ViewController: UIViewController, AVPictureInPictureControllerDelegate {
             contentController.view.backgroundColor = .clear
             contentController.view.isOpaque = false
             contentController.view.layer.backgroundColor = UIColor.clear.cgColor
+            contentController.view.layer.isOpaque = false
             contentController.view.clipsToBounds = true
             videoCallContentController = contentController
             attachCustomViewToPiPContent()
@@ -718,12 +949,23 @@ class ViewController: UIViewController, AVPictureInPictureControllerDelegate {
         clockLabel.textAlignment = .center
         clockLabel.textColor = .black
         clockLabel.backgroundColor = .white
+        clockLabel.isOpaque = false
+        clockLabel.layer.backgroundColor = UIColor.white.cgColor
+        clockLabel.layer.isOpaque = false
         clockLabel.adjustsFontSizeToFitWidth = true
         clockLabel.minimumScaleFactor = 0.45
         clockLabel.baselineAdjustment = .alignCenters
         clockLabel.isHidden = true
         customView.addSubview(clockLabel)
         clockLabel.snp.makeConstraints { make in
+            make.edges.equalToSuperview()
+        }
+
+        clockOverlayView = ClockOverlayView()
+        clockOverlayView.isHidden = true
+        clockOverlayView.alpha = 0
+        customView.addSubview(clockOverlayView)
+        clockOverlayView.snp.makeConstraints { make in
             make.edges.equalToSuperview()
         }
 
@@ -774,6 +1016,8 @@ class ViewController: UIViewController, AVPictureInPictureControllerDelegate {
             return
         }
 
+        recoverStalePiPTransitionIfNeeded(reason: "用户点击悬浮窗按钮")
+
         if needsLegacyPiPCompatibility {
             guard !isPiPTransitioning else { return }
         }
@@ -797,6 +1041,141 @@ class ViewController: UIViewController, AVPictureInPictureControllerDelegate {
         }
     }
 
+    @discardableResult
+    func performPendingShortcutActionIfNeeded(reason: String) -> Bool {
+        guard let action = PiPShortcutActionCenter.consumePendingAction() else { return false }
+        DiagnosticsRuntimeState.recordUserAction("快捷方式：\(shortcutActionTitle(action))")
+        AppDebugLogger.log("Shortcut action requested: \(action.rawValue), reason=\(reason)")
+
+        switch action {
+        case .startFloatingWindow:
+            startPiPFromShortcut(shouldHideAfterStart: false)
+        case .hideFloatingWindow:
+            hidePiPFromShortcut()
+        case .startAndHideFloatingWindow:
+            startPiPFromShortcut(shouldHideAfterStart: true)
+        }
+        return true
+    }
+
+    private func startPiPFromShortcut(shouldHideAfterStart: Bool) {
+        // BETA5_ANCHOR_SHORTCUT_START_AND_HIDE:
+        // 快捷指令“打开悬浮窗”只负责打开；“打开并隐藏悬浮窗”在 PiP 真正启动后缩小到 0.1pt。
+        if pipController == nil, !preparePiPInfrastructureIfNeeded() {
+            isPiPActiveForUI = false
+            shouldHidePiPAfterShortcutStart = false
+            showMessage("当前环境不支持悬浮窗")
+            return
+        }
+
+        guard let pipController else {
+            isPiPActiveForUI = false
+            shouldHidePiPAfterShortcutStart = false
+            showMessage("当前环境不支持悬浮窗")
+            return
+        }
+
+        recoverStalePiPTransitionIfNeeded(reason: "快捷方式打开悬浮窗")
+
+        guard !isPiPTransitioning else {
+            shouldHidePiPAfterShortcutStart = shouldHidePiPAfterShortcutStart || shouldHideAfterStart
+            AppDebugLogger.log("Shortcut start ignored: PiP transitioning")
+            return
+        }
+
+        if pipController.isPictureInPictureActive {
+            shouldHidePiPAfterShortcutStart = false
+            if shouldHideAfterStart {
+                hidePiPFromShortcut()
+            } else {
+                showMessage("悬浮窗已开启")
+            }
+            return
+        }
+
+        shouldHidePiPAfterShortcutStart = shouldHideAfterStart
+        AppDebugLogger.log("Shortcut start: inactive PiP -> start, hideAfterStart=\(shouldHideAfterStart)")
+        prepareShortcutPiPStartRetryIfNeeded()
+        AppDebugLogger.log("Start PiP requested by shortcut")
+        wantsPiPActive = true
+        updatePiPAutomaticStartPolicy()
+        didRetryLegacyPiPStart = false
+        isPiPActiveForUI = true
+        configureRunningText()
+        startPiPSmoothly()
+    }
+
+    private func prepareShortcutPiPStartRetryIfNeeded() {
+        guard pipController?.isPictureInPictureActive != true else {
+            cancelShortcutPiPStartRetry()
+            return
+        }
+        shortcutPiPStartRetryRemaining = 2
+        pendingShortcutPiPStartRetry?.cancel()
+    }
+
+    private func cancelShortcutPiPStartRetry() {
+        pendingShortcutPiPStartRetry?.cancel()
+        pendingShortcutPiPStartRetry = nil
+        shortcutPiPStartRetryRemaining = 0
+    }
+
+    private func scheduleShortcutPiPStartRetry(reason: String) -> Bool {
+        guard shortcutPiPStartRetryRemaining > 0 else { return false }
+        shortcutPiPStartRetryRemaining -= 1
+        pendingShortcutPiPStartRetry?.cancel()
+
+        let delay: TimeInterval = shortcutPiPStartRetryRemaining == 1 ? 1.2 : 2.5
+        AppDebugLogger.log("Shortcut PiP start retry scheduled: \(reason), delay=\(delay)s, remaining=\(shortcutPiPStartRetryRemaining)")
+        let workItem = DispatchWorkItem { [weak self] in
+            guard
+                let self,
+                self.pipController?.isPictureInPictureActive != true,
+                !self.isPiPTransitioning
+            else {
+                return
+            }
+            AppDebugLogger.log("Shortcut PiP start retry fired: \(reason)")
+            self.wantsPiPActive = true
+            self.updatePiPAutomaticStartPolicy()
+            self.isPiPActiveForUI = true
+            self.configureRunningText()
+            self.startPiPSmoothly()
+        }
+        pendingShortcutPiPStartRetry = workItem
+        DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: workItem)
+        return true
+    }
+
+    private func hidePiPFromShortcut() {
+        guard let pipController, pipController.isPictureInPictureActive else {
+            shouldHidePiPAfterShortcutStart = false
+            showMessage("请先开启悬浮窗并吸附到侧边")
+            return
+        }
+
+        commitPiPHeight(minPiPHeight)
+        showMessage("已隐藏悬浮窗")
+    }
+
+    private func hidePiPAfterShortcutStartIfNeeded() {
+        guard shouldHidePiPAfterShortcutStart else { return }
+        shouldHidePiPAfterShortcutStart = false
+        commitPiPHeight(minPiPHeight)
+        showMessage("已打开并隐藏悬浮窗")
+    }
+
+    private func shortcutActionTitle(_ action: PiPShortcutAction) -> String {
+        switch action {
+        case .startFloatingWindow:
+            return "打开悬浮窗"
+        case .hideFloatingWindow:
+            return "隐藏悬浮窗"
+        case .startAndHideFloatingWindow:
+            return "打开并隐藏悬浮窗"
+        }
+    }
+
     private func observeLooping(for playerItem: AVPlayerItem) {
         if let playerEndObserver = playerEndObserver {
             NotificationCenter.default.removeObserver(playerEndObserver)
@@ -811,7 +1190,7 @@ class ViewController: UIViewController, AVPictureInPictureControllerDelegate {
     }
 
     private func observePlaybackHealth(for player: AVPlayer, item: AVPlayerItem) {
-        guard needsLegacyPiPCompatibility else { return }
+        guard shouldPrepareBackingPlayerForPlayback else { return }
 
         if let playerStallObserver = playerStallObserver {
             NotificationCenter.default.removeObserver(playerStallObserver)
@@ -881,7 +1260,7 @@ class ViewController: UIViewController, AVPictureInPictureControllerDelegate {
     }
 
     private var shouldPlayBackingPlayerForKeepAlive: Bool {
-        !shouldUsePiPOnlyKeepAlive || requiresPlayerLayerForPiP
+        !shouldUsePiPOnlyKeepAlive || shouldPrepareBackingPlayerForPlayback
     }
 
     private func updateBackingPlayerPlaybackForCurrentMode() {
@@ -905,7 +1284,7 @@ class ViewController: UIViewController, AVPictureInPictureControllerDelegate {
     }
 
     private var shouldKeepPiPPlaybackAlive: Bool {
-        wantsPiPActive && ((pipController?.isPictureInPictureActive ?? false) || isPiPTransitioning || isPiPActiveForUI)
+        wantsPiPActive && (isOwnPiPConfirmedActive || isPiPTransitioning)
     }
 
     private var shouldUsePiPOnlyKeepAlive: Bool {
@@ -925,8 +1304,144 @@ class ViewController: UIViewController, AVPictureInPictureControllerDelegate {
         }
     }
 
+    private func beginPiPTransition(expectedActive: Bool, reason: String) {
+        didRecoverStalePiPStop = false
+        isPiPTransitioning = true
+        pipTransitionStartedAt = Date()
+        pipTransitionReason = reason
+        pipTransitionExpectedActive = expectedActive
+        schedulePiPTransitionWatchdog(reason: reason)
+    }
+
+    private func finishPiPTransition() {
+        pipTransitionWatchdogWorkItem?.cancel()
+        pipTransitionWatchdogWorkItem = nil
+        pipTransitionStartedAt = nil
+        pipTransitionReason = "未知"
+        pipTransitionExpectedActive = nil
+        isPiPTransitioning = false
+    }
+
+    private func schedulePiPTransitionWatchdog(reason: String) {
+        pipTransitionWatchdogWorkItem?.cancel()
+        let workItem = DispatchWorkItem { [weak self] in
+            self?.recoverStalePiPTransition(reason: "watchdog: \(reason)")
+        }
+        pipTransitionWatchdogWorkItem = workItem
+        DispatchQueue.main.asyncAfter(deadline: .now() + piPTransitionWatchdogDelay, execute: workItem)
+    }
+
+    private var piPTransitionWatchdogDelay: TimeInterval {
+        pipTransitionExpectedActive == false ? 6.0 : 4.0
+    }
+
+    private var piPStopTransitionGraceDelay: TimeInterval {
+        1.5
+    }
+
+    private func recoverStalePiPTransition(reason: String) {
+        guard isPiPTransitioning else { return }
+
+        let active = pipController?.isPictureInPictureActive ?? false
+        let elapsed = pipTransitionStartedAt.map { Date().timeIntervalSince($0) } ?? 0
+        let expectedText = pipTransitionExpectedActive.map(String.init(describing:)) ?? "nil"
+        AppDebugLogger.log(
+            "PiP transition watchdog recovered: reason=\(reason), startedReason=\(pipTransitionReason), elapsed=\(String(format: "%.1f", elapsed))s, active=\(active), wants=\(wantsPiPActive), ui=\(isPiPActiveForUI), stopping=\(isStoppingPiP), expectedActive=\(expectedText)"
+        )
+
+        pendingPiPStartWorkItem?.cancel()
+        pipStartTimeoutWorkItem?.cancel()
+        pipTransitionWatchdogWorkItem?.cancel()
+        pendingPiPStartWorkItem = nil
+        pipStartTimeoutWorkItem = nil
+        let recoveredExpectedStop = pipTransitionExpectedActive == false
+        finishPiPTransition()
+        isStoppingPiP = false
+        didRetryLegacyPiPStart = false
+        didRecoverStalePiPStop = recoveredExpectedStop
+
+        if active {
+            wantsPiPActive = true
+            isOwnPiPConfirmedActive = true
+            isPiPActiveForUI = true
+            updatePiPAutomaticStartPolicy()
+            prepareCustomViewForPiPStart()
+            configureRunningText()
+            showPiPContentForOpening()
+            if pipRuntimeStartedAt == nil {
+                beginPiPRuntimeSession()
+            }
+            if isScrollingEnabled, !shouldRenderClockMode, !isPiPVisuallyHidden {
+                startDisplayLinks()
+            }
+            keepPlaybackAlive()
+            KeepAliveLogger.heartbeat()
+        } else {
+            handleOwnPiPInvalidated(reason: "PiP过渡状态恢复：\(reason)")
+        }
+
+        updateDiagnosticsPiPState()
+        updateDisplaySleepDiagnostics(reason: "PiP过渡状态恢复", shouldLog: true)
+        updateHomeView()
+    }
+
+    @discardableResult
+    private func recoverStalePiPTransitionIfNeeded(reason: String) -> Bool {
+        if recoverStalePiPStopTransitionIfNeeded(reason: reason) {
+            return true
+        }
+        guard isPiPTransitioning, let pipTransitionStartedAt else { return false }
+        guard Date().timeIntervalSince(pipTransitionStartedAt) >= piPTransitionWatchdogDelay else { return false }
+        recoverStalePiPTransition(reason: reason)
+        return true
+    }
+
+    @discardableResult
+    private func recoverStalePiPStopTransitionIfNeeded(reason: String) -> Bool {
+        guard isPiPTransitioning, !wantsPiPActive else { return false }
+        guard let pipTransitionStartedAt else {
+            recoverStalePiPTransition(reason: "\(reason)：停止转场缺少开始时间")
+            return true
+        }
+        guard Date().timeIntervalSince(pipTransitionStartedAt) >= piPStopTransitionGraceDelay else { return false }
+        recoverStalePiPTransition(reason: "\(reason)：停止转场超时")
+        return true
+    }
+
     private var shouldPreviewPiPHeightLive: Bool {
-        (pipController?.isPictureInPictureActive ?? false) || isPiPTransitioning || isPiPActiveForUI
+        isOwnPiPConfirmedActive || isPiPTransitioning
+    }
+
+    private func handleOwnPiPInvalidated(reason: String) {
+        let hadOwnSession = isOwnPiPConfirmedActive || pipRuntimeStartedAt != nil
+        wantsPiPActive = false
+        isOwnPiPConfirmedActive = false
+        isPiPActiveForUI = false
+        isStoppingPiP = false
+        didRetryLegacyPiPStart = false
+        didRecoverStalePiPStop = false
+        updatePiPAutomaticStartPolicy()
+        detachLegacyCustomViewIfNeeded()
+        stopDisplayLinks()
+        stopClockTimer()
+        BackgroundTaskManager.shared.stopPlay()
+        PowerUsageLogger.markKeepAliveStop()
+        pauseBackingPlayerIfIdle()
+        endBackgroundTask()
+        if pipRuntimeStartedAt != nil || pipRuntimeDuration > 0 {
+            finishPiPRuntimeSession()
+        }
+        if hadOwnSession {
+            KeepAliveLogger.markPiPStopped(reason: reason)
+        }
+        AppDebugLogger.log("Own PiP invalidated: \(reason)")
+    }
+
+    private func validateOwnPiPState(reason: String) {
+        guard isOwnPiPConfirmedActive, pipController?.isPictureInPictureActive != true else { return }
+        handleOwnPiPInvalidated(reason: "\(reason)：本App悬浮窗已失效，可能被其他PiP挤掉")
+        updateDiagnosticsPiPState()
+        updateHomeView()
     }
 
     private var isPlayerReadyForPiP: Bool {
@@ -953,13 +1468,19 @@ class ViewController: UIViewController, AVPictureInPictureControllerDelegate {
         return true
     }
 
+    private var shouldPrepareBackingPlayerForPlayback: Bool {
+        // BETA4_ANCHOR_BILIBILI_DANMAKU_FIX:
+        // 回归 beta3：iOS 15+ VideoCall contentSource 不额外准备 PlayerLayer backing player。
+        requiresPlayerLayerForPiP
+    }
+
     private func makePlayerItem() -> AVPlayerItem? {
         let backingVideoSize = CGSize(
             width: max(currentPiPSize.width, 1),
             height: max(currentPiPSize.height, 1)
         )
         let url = FileManager.default.temporaryDirectory
-            .appendingPathComponent("pip-transparent-alpha-v5-\(Int(backingVideoSize.width))x\(Int(backingVideoSize.height)).mov")
+            .appendingPathComponent("pip-transparent-alpha-60fps-v1-\(Int(backingVideoSize.width))x\(Int(backingVideoSize.height)).mov")
         if !FileManager.default.fileExists(atPath: url.path) {
             do {
                 try PlaceholderVideoFactory.makeBackingVideo(at: url, size: backingVideoSize)
@@ -990,8 +1511,8 @@ class ViewController: UIViewController, AVPictureInPictureControllerDelegate {
         guard scrollDisplayLink == nil else { return }
 
         let scrollDisplayLink = CADisplayLink(target: self, selector: #selector(updateScrollingText(_:)))
-        configureForScrollingTextRefreshRate(scrollDisplayLink)
-        scrollDisplayLink.add(to: .main, forMode: .common)
+        // BETA2 ANCHOR: 滚动文本驱动避开 tracking mode，降低桌面/列表滑动时的额外调度。
+        scrollDisplayLink.add(to: .main, forMode: .default)
         lastScrollTimestamp = nil
         self.scrollDisplayLink = scrollDisplayLink
     }
@@ -1005,29 +1526,46 @@ class ViewController: UIViewController, AVPictureInPictureControllerDelegate {
     private func startClockTimerIfNeeded() {
         guard isClockModeEnabled else { return }
         stopClockTimer()
-        updateClockLabel()
-        let timer = Timer(timeInterval: 1, target: self, selector: #selector(updateClockLabel), userInfo: nil, repeats: true)
-        RunLoop.main.add(timer, forMode: .common)
-        clockTimer = timer
+        resetClockMetrics()
+        updateClockOverlay(timestamp: CACurrentMediaTime(), forceNetworkSample: true)
+        let displayLink = CADisplayLink(target: self, selector: #selector(updateClockDisplay(_:)))
+        configureForClockRefreshRate(displayLink)
+        // Avoid tracking mode so the PiP clock does not compete with scroll gestures.
+        displayLink.add(to: .main, forMode: .default)
+        clockDisplayLink = displayLink
     }
 
     private func stopClockTimer() {
-        clockTimer?.invalidate()
-        clockTimer = nil
+        clockDisplayLink?.invalidate()
+        clockDisplayLink = nil
+        lastClockTimestamp = nil
+        lastClockNetworkTimestamp = nil
+        clockFrameCount = 0
+        pendingMeasuredPiPFPS = nil
+        pendingMeasuredPiPFPSCount = 0
+        pendingMeasuredPiPFPSStartedAt = nil
+        lastClockOverlayTimeText = ""
+        lastClockOverlayFPSText = ""
+        lastClockOverlayNetworkText = ""
+        lastClockRenderTick = -1
+        lastBackgroundClockDiagnosticsTimestamp = nil
     }
 
-    private func configureForScrollingTextRefreshRate(_ displayLink: CADisplayLink) {
-        let targetFramesPerSecond = 30
-        if #available(iOS 15.0, *) {
-            let target = Float(targetFramesPerSecond)
-            displayLink.preferredFrameRateRange = CAFrameRateRange(
-                minimum: target,
-                maximum: target,
-                preferred: target
-            )
-        } else {
-            displayLink.preferredFramesPerSecond = targetFramesPerSecond
-        }
+    private func resetClockMetrics() {
+        lastClockTimestamp = nil
+        lastClockNetworkTimestamp = nil
+        clockFrameCount = 0
+        pendingMeasuredPiPFPS = nil
+        pendingMeasuredPiPFPSCount = 0
+        pendingMeasuredPiPFPSStartedAt = nil
+        measuredPiPFPS = 0
+        lastNetworkSample = NetworkTrafficSample.current()
+        currentNetworkSpeedText = "↑0B ↓0B"
+        lastClockOverlayTimeText = ""
+        lastClockOverlayFPSText = ""
+        lastClockOverlayNetworkText = ""
+        lastClockRenderTick = -1
+        lastBackgroundClockDiagnosticsTimestamp = nil
     }
 
     @objc private func updateScrollingText(_ displayLink: CADisplayLink) {
@@ -1044,9 +1582,212 @@ class ViewController: UIViewController, AVPictureInPictureControllerDelegate {
         }
     }
 
+    private func configureForClockRefreshRate(_ displayLink: CADisplayLink) {
+        let maximumFramesPerSecond = UIScreen.main.maximumFramesPerSecond
+        let targetFramesPerSecond = max(60, maximumFramesPerSecond)
+
+        if #available(iOS 15.0, *) {
+            let target = Float(targetFramesPerSecond)
+            displayLink.preferredFrameRateRange = CAFrameRateRange(
+                minimum: 30,
+                maximum: target,
+                preferred: ClockDisplayLinkPreference.preferredFrameRateValue(target: target)
+            )
+        } else {
+            displayLink.preferredFramesPerSecond = targetFramesPerSecond
+        }
+    }
+
+    @objc private func handleClockDisplayLinkPreferenceDidChange() {
+        if let clockDisplayLink {
+            configureForClockRefreshRate(clockDisplayLink)
+        }
+        AppDebugLogger.log("时间悬浮窗强拉120调试开关：\(ClockDisplayLinkPreference.forcesTargetFrameRate ? "开启" : "关闭")")
+    }
+
     @objc private func updateClockLabel() {
-        guard let clockLabel else { return }
-        clockLabel.text = clockFormatter.string(from: Date())
+        updateClockOverlay(timestamp: CACurrentMediaTime(), forceNetworkSample: false)
+    }
+
+    @objc private func updateClockDisplay(_ displayLink: CADisplayLink) {
+        guard shouldRenderClockMode, !isPiPVisuallyHidden else {
+            stopClockTimer()
+            return
+        }
+        logBackgroundClockDiagnosticsIfNeeded(displayLink)
+        updateMeasuredFPS(from: displayLink)
+        updateClockOverlay(timestamp: displayLink.timestamp, forceNetworkSample: false)
+    }
+
+    private func logBackgroundClockDiagnosticsIfNeeded(_ displayLink: CADisplayLink) {
+        let isSuspended = isPiPSuspendedAtSide
+        if lastLoggedPiPSuspendedAtSide != isSuspended {
+            lastLoggedPiPSuspendedAtSide = isSuspended
+            if let clockDisplayLink {
+                configureForClockRefreshRate(clockDisplayLink)
+            }
+            AppDebugLogger.log("PiP suspended state changed: \(isSuspended)")
+        }
+        guard UIApplication.shared.applicationState == .background else {
+            lastBackgroundClockDiagnosticsTimestamp = nil
+            return
+        }
+        if let lastBackgroundClockDiagnosticsTimestamp,
+           displayLink.timestamp - lastBackgroundClockDiagnosticsTimestamp < 5.0 {
+            return
+        }
+        lastBackgroundClockDiagnosticsTimestamp = displayLink.timestamp
+        let interval = displayLink.targetTimestamp - displayLink.timestamp
+        let instantFPS = interval > 0.001 ? Int((1.0 / interval).rounded()) : 0
+        AppDebugLogger.log(
+            "后台时间悬浮窗采样：suspended=\(isSuspended),height=\(formattedHeight(clampedPiPHeight)),instantFPS=\(instantFPS),measuredFPS=\(measuredPiPFPS),timestamp=\(String(format: "%.3f", displayLink.timestamp))"
+        )
+    }
+
+    private func updateMeasuredFPS(from displayLink: CADisplayLink) {
+        let frameInterval = displayLink.targetTimestamp - displayLink.timestamp
+        guard frameInterval > 0.001 else { return }
+
+        let instantFPS = Int((1.0 / frameInterval).rounded())
+        let normalizedFPS = normalizedMeasuredFPS(instantFPS)
+
+        if measuredPiPFPS == 0 {
+            measuredPiPFPS = normalizedFPS
+            pendingMeasuredPiPFPS = nil
+            pendingMeasuredPiPFPSCount = 0
+            pendingMeasuredPiPFPSStartedAt = nil
+            return
+        }
+
+        guard normalizedFPS != measuredPiPFPS else {
+            pendingMeasuredPiPFPS = nil
+            pendingMeasuredPiPFPSCount = 0
+            pendingMeasuredPiPFPSStartedAt = nil
+            return
+        }
+
+        if pendingMeasuredPiPFPS == normalizedFPS {
+            pendingMeasuredPiPFPSCount += 1
+        } else {
+            pendingMeasuredPiPFPS = normalizedFPS
+            pendingMeasuredPiPFPSCount = 1
+            pendingMeasuredPiPFPSStartedAt = displayLink.timestamp
+        }
+
+        let confirmation = fpsConfirmationRequirement(from: measuredPiPFPS, to: normalizedFPS)
+        let pendingDuration = displayLink.timestamp - (pendingMeasuredPiPFPSStartedAt ?? displayLink.timestamp)
+        if pendingMeasuredPiPFPSCount >= confirmation.count && pendingDuration >= confirmation.duration {
+            measuredPiPFPS = normalizedFPS
+            pendingMeasuredPiPFPS = nil
+            pendingMeasuredPiPFPSCount = 0
+            pendingMeasuredPiPFPSStartedAt = nil
+        }
+    }
+
+    private func fpsConfirmationRequirement(from currentFPS: Int, to candidateFPS: Int) -> (count: Int, duration: CFTimeInterval) {
+        guard candidateFPS > currentFPS else { return (3, 0) }
+        if candidateFPS >= 120 {
+            if currentFPS <= 60 {
+                return (8, 0.18)
+            }
+            return (24, 0.9)
+        }
+        return (5, 0.12)
+    }
+
+    private func updateClockOverlay(timestamp: CFTimeInterval, forceNetworkSample: Bool) {
+        guard let clockOverlayView else { return }
+        updateClockMetrics(timestamp: timestamp, forceNetworkSample: forceNetworkSample)
+        let now = Date()
+        let renderTick = Int((now.timeIntervalSince1970 * 10).rounded(.down))
+        let fpsText = "\(measuredPiPFPS)Hz"
+        let networkText = currentNetworkSpeedText
+        guard forceNetworkSample
+            || renderTick != lastClockRenderTick
+            || fpsText != lastClockOverlayFPSText
+            || networkText != lastClockOverlayNetworkText else {
+            return
+        }
+
+        let timeText = clockFormatter.string(from: now)
+        guard timeText != lastClockOverlayTimeText
+            || fpsText != lastClockOverlayFPSText
+            || networkText != lastClockOverlayNetworkText else {
+            return
+        }
+        lastClockRenderTick = renderTick
+        lastClockOverlayTimeText = timeText
+        lastClockOverlayFPSText = fpsText
+        lastClockOverlayNetworkText = networkText
+        clockLabel?.text = timeText
+        clockOverlayView.update(time: timeText, fps: fpsText, network: networkText)
+    }
+
+    private func updateClockMetrics(timestamp: CFTimeInterval, forceNetworkSample: Bool) {
+        if forceNetworkSample {
+            updateNetworkSpeed(force: true)
+            lastClockNetworkTimestamp = timestamp
+        } else if let lastClockNetworkTimestamp {
+            let networkElapsed = timestamp - lastClockNetworkTimestamp
+            if networkElapsed >= clockNetworkMeasureInterval {
+                updateNetworkSpeed(force: true)
+                self.lastClockNetworkTimestamp = timestamp
+            }
+        } else {
+            lastClockNetworkTimestamp = timestamp
+        }
+    }
+
+    private func normalizedMeasuredFPS(_ rawFPS: Int) -> Int {
+        let hardwareMaximum = max(60, UIScreen.main.maximumFramesPerSecond)
+        let clampedFPS = min(max(30, rawFPS), hardwareMaximum)
+        let standardRates = [30, 45, 60, 75, 80, 90, 100, 120].filter { $0 <= hardwareMaximum }
+        guard let nearest = standardRates.min(by: { abs($0 - clampedFPS) < abs($1 - clampedFPS) }) else {
+            return clampedFPS
+        }
+        let distance = abs(nearest - clampedFPS)
+        if distance <= 5 {
+            return nearest
+        }
+        return Int((Double(clampedFPS) / 5.0).rounded() * 5.0)
+    }
+
+    private func updateNetworkSpeed(force: Bool) {
+        guard let sample = NetworkTrafficSample.current() else { return }
+        guard let lastNetworkSample else {
+            self.lastNetworkSample = sample
+            return
+        }
+        let elapsed = sample.timestamp.timeIntervalSince(lastNetworkSample.timestamp)
+        guard force || elapsed >= 1 else { return }
+        guard elapsed > 0 else {
+            self.lastNetworkSample = sample
+            return
+        }
+        let upload = Double(sample.sentBytes.subtractingReportingOverflow(lastNetworkSample.sentBytes).partialValue) / elapsed
+        let download = Double(sample.receivedBytes.subtractingReportingOverflow(lastNetworkSample.receivedBytes).partialValue) / elapsed
+        guard upload < 100 * 1024 * 1024, download < 100 * 1024 * 1024 else {
+            self.lastNetworkSample = sample
+            return
+        }
+        currentNetworkSpeedText = "↑\(formatNetworkSpeed(max(0, upload))) ↓\(formatNetworkSpeed(max(0, download)))"
+        self.lastNetworkSample = sample
+    }
+
+    private func formatNetworkSpeed(_ bytesPerSecond: Double) -> String {
+        if bytesPerSecond >= 100 * 1024 * 1024 {
+            return "\(Int((bytesPerSecond / 1024 / 1024).rounded()))MB"
+        }
+        if bytesPerSecond >= 1024 * 1024 {
+            return String(format: "%.1fMB", bytesPerSecond / 1024 / 1024)
+        }
+        if bytesPerSecond >= 100 * 1024 {
+            return "\(Int((bytesPerSecond / 1024).rounded()))KB"
+        }
+        if bytesPerSecond >= 1024 {
+            return String(format: "%.0fKB", bytesPerSecond / 1024)
+        }
+        return "\(Int(bytesPerSecond.rounded()))B"
     }
 
     private func startPiPSmoothly() {
@@ -1064,7 +1805,7 @@ class ViewController: UIViewController, AVPictureInPictureControllerDelegate {
             return
         }
         restoreMinimumRememberedHeightIfNeeded()
-        isPiPTransitioning = true
+        beginPiPTransition(expectedActive: true, reason: "start smooth")
         isStoppingPiP = false
         AppDebugLogger.log("Start PiP smoothly, legacy=\(needsLegacyPiPCompatibility), size=\(Int(currentPiPSize.width))x\(Int(currentPiPSize.height))")
         prepareCustomViewForPiPStart()
@@ -1088,11 +1829,17 @@ class ViewController: UIViewController, AVPictureInPictureControllerDelegate {
             return
         }
         restoreMinimumRememberedHeightIfNeeded()
-        isPiPTransitioning = true
+        captureWindowsBeforePiPStart()
+        beginPiPTransition(expectedActive: true, reason: "start legacy")
         isStoppingPiP = false
         keepPlaybackAlive()
         schedulePiPStartTimeout()
-        DispatchQueue.main.async { [weak self] in
+        requestLegacyPlayerLayerPiPStartWhenReady()
+    }
+
+    private func requestLegacyPlayerLayerPiPStartWhenReady(attempt: Int = 0) {
+        pendingPiPStartWorkItem?.cancel()
+        let workItem = DispatchWorkItem { [weak self] in
             guard
                 let self,
                 self.isPiPTransitioning,
@@ -1101,8 +1848,22 @@ class ViewController: UIViewController, AVPictureInPictureControllerDelegate {
             else {
                 return
             }
+            self.keepPlaybackAlive()
+            guard self.isPlayerReadyForPiP && pipController.isPictureInPicturePossible else {
+                if attempt < self.maximumPiPStartAttempts {
+                    self.requestLegacyPlayerLayerPiPStartWhenReady(attempt: attempt + 1)
+                } else {
+                    self.resetPiPStartStateAfterFailure()
+                    let message = "PlayerLayer PiP暂时不可启动：possible=\(pipController.isPictureInPicturePossible), playerReady=\(self.isPlayerReadyForPiP)"
+                    AppDebugLogger.log(message)
+                    print(message)
+                }
+                return
+            }
             pipController.startPictureInPicture()
         }
+        pendingPiPStartWorkItem = workItem
+        DispatchQueue.main.asyncAfter(deadline: .now() + piPStartRetryDelay(for: attempt), execute: workItem)
     }
 
     private func restoreMinimumRememberedHeightIfNeeded() {
@@ -1126,11 +1887,11 @@ class ViewController: UIViewController, AVPictureInPictureControllerDelegate {
         }
         guard !isPiPTransitioning else {
             pendingPiPStartWorkItem?.cancel()
-            isPiPTransitioning = false
+            finishPiPTransition()
             isPiPActiveForUI = pipController.isPictureInPictureActive
             return
         }
-        isPiPTransitioning = true
+        beginPiPTransition(expectedActive: false, reason: "stop smooth")
         isStoppingPiP = true
         pendingPiPStartWorkItem?.cancel()
         pipStartTimeoutWorkItem?.cancel()
@@ -1144,7 +1905,6 @@ class ViewController: UIViewController, AVPictureInPictureControllerDelegate {
 
     private func requestPiPStartWhenReady(attempt: Int = 0) {
         pendingPiPStartWorkItem?.cancel()
-
         let workItem = DispatchWorkItem { [weak self] in
             guard let self else { return }
 
@@ -1186,6 +1946,9 @@ class ViewController: UIViewController, AVPictureInPictureControllerDelegate {
     }
 
     private var maximumPiPStartAttempts: Int {
+        if shouldUsePlayerLayerPiPCompatibility {
+            return 36
+        }
         guard needsLegacyPiPCompatibility else {
             return 8
         }
@@ -1231,16 +1994,16 @@ class ViewController: UIViewController, AVPictureInPictureControllerDelegate {
     private func resetPiPStartStateAfterFailure() {
         pendingPiPStartWorkItem?.cancel()
         pipStartTimeoutWorkItem?.cancel()
+        pipTransitionWatchdogWorkItem?.cancel()
         pendingPiPStartWorkItem = nil
         pipStartTimeoutWorkItem = nil
         wantsPiPActive = false
+        isOwnPiPConfirmedActive = pipController?.isPictureInPictureActive ?? false
         updatePiPAutomaticStartPolicy()
-        hidePiPContentForClosing()
         detachLegacyCustomViewIfNeeded()
-        restorePiPVisualSurfaces()
         isPiPActiveForUI = pipController?.isPictureInPictureActive ?? false
         isStoppingPiP = false
-        isPiPTransitioning = false
+        finishPiPTransition()
         if pipController?.isPictureInPictureActive != true {
             finishPiPRuntimeSession()
         }
@@ -1272,7 +2035,7 @@ class ViewController: UIViewController, AVPictureInPictureControllerDelegate {
         configureRunningText()
         updateHomeView()
 
-        isPiPTransitioning = false
+        finishPiPTransition()
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) { [weak self] in
             guard
                 let self,
@@ -1289,26 +2052,127 @@ class ViewController: UIViewController, AVPictureInPictureControllerDelegate {
 
     private func prepareCustomViewForPiPStart() {
         if shouldUsePlayerLayerPiPCompatibility {
-            attachCustomViewToKeyWindow()
+            attachCustomViewToPiPWindowIfAvailable(reason: "prepare start")
         } else {
             attachCustomViewToPiPContent()
         }
     }
 
     private func attachCustomViewToKeyWindow() {
-        guard let window = UIApplication.shared.windows.first, let customView else { return }
-        if customView.superview !== window {
-            customView.removeFromSuperview()
-            window.addSubview(customView)
-            customView.snp.remakeConstraints { make in
-                make.center.equalToSuperview()
-                legacyCustomViewWidthConstraint = make.width.equalTo(currentPiPSize.width).constraint
-                legacyCustomViewHeightConstraint = make.height.equalTo(currentPiPSize.height).constraint
-            }
-        } else {
-            updateLegacyCustomViewGeometry()
+        attachCustomViewToPiPWindowIfAvailable(reason: "legacy fallback")
+    }
+
+    private func captureWindowsBeforePiPStart() {
+        windowsBeforePiPStart = Set(allApplicationWindows().map { ObjectIdentifier($0) })
+    }
+
+    @discardableResult
+    private func attachCustomViewToPiPWindowIfAvailable(reason: String) -> Bool {
+        guard shouldUsePlayerLayerPiPCompatibility, let customView else { return false }
+        guard let hostView = candidatePiPHostViewForCustomView() else {
+            AppDebugLogger.log("Skip attach custom view: PiP host unavailable, reason=\(reason), windows=\(windowDiagnosticsForPiPAttach())")
+            return false
         }
-        window.layoutIfNeeded()
+        if customView.superview !== hostView {
+            customView.removeFromSuperview()
+            hostView.addSubview(customView)
+            AppDebugLogger.log("Attach custom view to PiP host, reason=\(reason), host=\(type(of: hostView)), bounds=\(hostView.bounds), window=\(type(of: hostView.window))")
+        }
+        updateLegacyCustomViewGeometry()
+        hostView.layoutIfNeeded()
+        return true
+    }
+
+    private func allApplicationWindows() -> [UIWindow] {
+        var windows = UIApplication.shared.connectedScenes
+            .compactMap { $0 as? UIWindowScene }
+            .flatMap(\.windows)
+        for window in UIApplication.shared.windows where !windows.contains(where: { $0 === window }) {
+            windows.append(window)
+        }
+        return windows
+    }
+
+    private func candidatePiPHostViewForCustomView() -> UIView? {
+        let windows = allApplicationWindows()
+        let visibleWindows = windows.filter {
+            !$0.isHidden
+                && $0.alpha > 0
+                && $0.bounds.width > 1
+                && $0.bounds.height > 1
+        }
+
+        if let currentHost = customView?.superview,
+           currentHost !== view,
+           currentHost.window !== view.window,
+           isSafePiPHostView(currentHost) {
+            return currentHost
+        }
+
+        let newWindows = visibleWindows.filter { window in
+            window !== view.window && !windowsBeforePiPStart.contains(ObjectIdentifier(window))
+        }
+        if let host = newWindows.compactMap({ safePiPHostView(in: $0) }).first {
+            return host
+        }
+
+        if pipController?.isPictureInPictureActive == true {
+            let nonMainWindows = visibleWindows.filter { $0 !== view.window }
+            if let host = nonMainWindows.compactMap({ safePiPHostView(in: $0) }).first {
+                return host
+            }
+        }
+
+        return nil
+    }
+
+    private func safePiPHostView(in window: UIWindow) -> UIView? {
+        if isSafePiPHostView(window) {
+            return window
+        }
+        return safePiPSubviewCandidates(in: window).first
+    }
+
+    private func safePiPSubviewCandidates(in rootView: UIView) -> [UIView] {
+        var candidates: [UIView] = []
+        func visit(_ candidate: UIView) {
+            if isSafePiPHostView(candidate) {
+                candidates.append(candidate)
+            }
+            candidate.subviews.forEach(visit)
+        }
+        rootView.subviews.forEach(visit)
+        return candidates.sorted { lhs, rhs in
+            let lhsArea = lhs.bounds.width * lhs.bounds.height
+            let rhsArea = rhs.bounds.width * rhs.bounds.height
+            return lhsArea > rhsArea
+        }
+    }
+
+    private func isSafePiPHostView(_ candidate: UIView) -> Bool {
+        guard !candidate.isHidden, candidate.alpha > 0 else { return false }
+        let bounds = candidate.bounds
+        guard bounds.width >= currentPiPSize.width * 0.5,
+              bounds.height >= currentPiPSize.height * 0.5 else {
+            return false
+        }
+
+        let screenBounds = candidate.window?.screen.bounds ?? UIScreen.main.bounds
+        let screenWidth = max(screenBounds.width, screenBounds.height)
+        let screenHeight = min(screenBounds.width, screenBounds.height)
+        let candidateWidth = max(bounds.width, bounds.height)
+        let candidateHeight = min(bounds.width, bounds.height)
+        let isFullscreenLike = candidateWidth >= screenWidth * 0.92
+            && candidateHeight >= screenHeight * 0.92
+        return !isFullscreenLike
+    }
+
+    private func windowDiagnosticsForPiPAttach() -> String {
+        allApplicationWindows().enumerated().map { index, window in
+            let marker = windowsBeforePiPStart.contains(ObjectIdentifier(window)) ? "old" : "new"
+            let isMain = window === view.window ? "main" : "other"
+            return "#\(index){\(marker),\(isMain),hidden=\(window.isHidden),alpha=\(String(format: "%.2f", window.alpha)),bounds=\(formatRect(window.bounds)),type=\(type(of: window))}"
+        }.joined(separator: ";")
     }
 
     private func detachLegacyCustomViewIfNeeded() {
@@ -1318,19 +2182,18 @@ class ViewController: UIViewController, AVPictureInPictureControllerDelegate {
         legacyCustomViewHeightConstraint = nil
     }
 
-    private func removeCustomViewWithoutFlash() {
-        guard let customView else { return }
-        customView.layer.removeAllAnimations()
-        customView.alpha = 0
-    }
-
     private func hidePiPContentForClosing() {
         guard let customView, let textView else { return }
         UIView.performWithoutAnimation {
             customView.layer.removeAllAnimations()
             customView.alpha = 0
+            customView.layer.opacity = 0
             textView.alpha = 0
+            textView.layer.opacity = 0
             clockLabel?.alpha = 0
+            clockLabel?.layer.opacity = 0
+            clockOverlayView?.alpha = 0
+            clockOverlayView?.layer.opacity = 0
             customView.superview?.layoutIfNeeded()
         }
     }
@@ -1339,8 +2202,13 @@ class ViewController: UIViewController, AVPictureInPictureControllerDelegate {
         guard let customView, let textView else { return }
         UIView.performWithoutAnimation {
             textView.alpha = 1
-            clockLabel?.alpha = 1
+            clockLabel?.alpha = shouldRenderClockMode ? 1 : 0
             customView.alpha = 1
+            customView.layer.opacity = 1
+            textView.layer.opacity = textView.isHidden ? 0 : 1
+            clockLabel?.layer.opacity = (shouldRenderClockMode && !isPiPVisuallyHidden) ? 1 : 0
+            clockOverlayView?.layer.opacity = (shouldRenderClockMode && !isPiPVisuallyHidden) ? 1 : 0
+            clockOverlayView?.alpha = (shouldRenderClockMode && !isPiPVisuallyHidden) ? 1 : 0
             customView.superview?.layoutIfNeeded()
         }
     }
@@ -1370,10 +2238,14 @@ class ViewController: UIViewController, AVPictureInPictureControllerDelegate {
             pipSourceView.alpha = 1
             pipSourceView.backgroundColor = .clear
             pipSourceView.layer.backgroundColor = UIColor.clear.cgColor
+            pipSourceView.isOpaque = false
+            pipSourceView.layer.isOpaque = false
             videoCallContentController?.preferredContentSize = currentPiPSize
             videoCallContentController?.view.alpha = 1
             videoCallContentController?.view.backgroundColor = .clear
             videoCallContentController?.view.layer.backgroundColor = UIColor.clear.cgColor
+            videoCallContentController?.view.isOpaque = false
+            videoCallContentController?.view.layer.isOpaque = false
             playerLayer?.opacity = 0
             playerLayer?.backgroundColor = UIColor.clear.cgColor
             view.layoutIfNeeded()
@@ -1382,6 +2254,11 @@ class ViewController: UIViewController, AVPictureInPictureControllerDelegate {
 
     private func movePiPSourceViewOffscreenForClosing() {
         guard let pipSourceView else { return }
+        guard !needsLegacyPiPCompatibility else {
+            view.layoutIfNeeded()
+            CATransaction.flush()
+            return
+        }
         UIView.performWithoutAnimation {
             pipSourceWidthConstraint = nil
             pipSourceHeightConstraint = nil
@@ -1423,16 +2300,11 @@ class ViewController: UIViewController, AVPictureInPictureControllerDelegate {
 
     private func updateLegacyCustomViewGeometry() {
         guard shouldUsePlayerLayerPiPCompatibility, let customView, customView.superview != nil else { return }
-        if let legacyCustomViewWidthConstraint, let legacyCustomViewHeightConstraint {
-            legacyCustomViewWidthConstraint.update(offset: currentPiPSize.width)
-            legacyCustomViewHeightConstraint.update(offset: currentPiPSize.height)
-        } else {
-            customView.snp.remakeConstraints { make in
-                make.center.equalToSuperview()
-                legacyCustomViewWidthConstraint = make.width.equalTo(currentPiPSize.width).constraint
-                legacyCustomViewHeightConstraint = make.height.equalTo(currentPiPSize.height).constraint
-            }
+        customView.snp.remakeConstraints { make in
+            make.edges.equalToSuperview()
         }
+        legacyCustomViewWidthConstraint = nil
+        legacyCustomViewHeightConstraint = nil
         customView.superview?.layoutIfNeeded()
     }
 
@@ -1441,8 +2313,23 @@ class ViewController: UIViewController, AVPictureInPictureControllerDelegate {
         if shouldRenderClockMode {
             stopDisplayLinks()
             customView?.backgroundColor = .white
+            customView?.layer.backgroundColor = UIColor.white.cgColor
+            customView?.layer.opacity = 1
+            customView?.layer.isOpaque = true
+            customView?.isOpaque = true
+            pipSourceView?.backgroundColor = .clear
+            pipSourceView?.layer.backgroundColor = UIColor.clear.cgColor
+            pipSourceView?.isOpaque = false
+            pipSourceView?.layer.isOpaque = false
+            videoCallContentController?.view.backgroundColor = .clear
+            videoCallContentController?.view.layer.backgroundColor = UIColor.clear.cgColor
+            videoCallContentController?.view.isOpaque = false
+            videoCallContentController?.view.layer.isOpaque = false
             textView.isHidden = true
+            textView.alpha = 0
+            textView.layer.opacity = 0
             clockLabel?.isHidden = false
+            clockOverlayView?.isHidden = false
             updateClockAppearance()
             if shouldPreviewPiPHeightLive {
                 startClockTimerIfNeeded()
@@ -1459,7 +2346,23 @@ class ViewController: UIViewController, AVPictureInPictureControllerDelegate {
         customView?.layer.isOpaque = true
         customView?.isOpaque = true
         clockLabel?.isHidden = true
-        clockLabel?.alpha = 1
+        clockLabel?.alpha = 0
+        clockLabel?.layer.opacity = 0
+        clockOverlayView?.isHidden = true
+        clockOverlayView?.alpha = 0
+        clockOverlayView?.layer.opacity = 0
+        clockLabel?.backgroundColor = .clear
+        clockLabel?.layer.backgroundColor = UIColor.clear.cgColor
+        clockLabel?.isOpaque = false
+        clockLabel?.layer.isOpaque = false
+        pipSourceView?.backgroundColor = .clear
+        pipSourceView?.layer.backgroundColor = UIColor.clear.cgColor
+        pipSourceView?.isOpaque = false
+        pipSourceView?.layer.isOpaque = false
+        videoCallContentController?.view.backgroundColor = .clear
+        videoCallContentController?.view.layer.backgroundColor = UIColor.clear.cgColor
+        videoCallContentController?.view.isOpaque = false
+        videoCallContentController?.view.layer.isOpaque = false
         textView.isHidden = false
         textView.alpha = 1
         textView.text = originalPiPText
@@ -1486,22 +2389,32 @@ class ViewController: UIViewController, AVPictureInPictureControllerDelegate {
         clockLabel.textColor = shouldHideClockSurface ? .clear : .black
         clockLabel.backgroundColor = shouldHideClockSurface ? .clear : .white
         clockLabel.layer.backgroundColor = (shouldHideClockSurface ? UIColor.clear : UIColor.white).cgColor
-        clockLabel.alpha = shouldHideClockSurface ? 0 : 1
-        clockLabel.layer.opacity = shouldHideClockSurface ? 0 : 1
-        clockLabel.layer.isOpaque = !shouldHideClockSurface
-        clockLabel.isOpaque = !shouldHideClockSurface
+        clockLabel.alpha = 0
+        clockLabel.layer.opacity = 0
+        clockLabel.layer.isOpaque = false
+        clockLabel.isOpaque = false
+        clockOverlayView?.configure(height: clampedPiPHeight, hidden: shouldHideClockSurface)
         customView?.backgroundColor = shouldHideClockSurface ? .clear : .white
         customView?.layer.backgroundColor = (shouldHideClockSurface ? UIColor.clear : UIColor.white).cgColor
         customView?.layer.opacity = shouldHideClockSurface ? 0 : 1
         customView?.layer.isOpaque = !shouldHideClockSurface
         customView?.isOpaque = !shouldHideClockSurface
-        textView?.backgroundColor = shouldHideClockSurface ? .clear : .black
-        textView?.layer.backgroundColor = (shouldHideClockSurface ? UIColor.clear : UIColor.black).cgColor
-        textView?.alpha = shouldHideClockSurface ? 0 : 1
-        textView?.layer.opacity = shouldHideClockSurface ? 0 : 1
-        textView?.layer.isOpaque = !shouldHideClockSurface
-        textView?.textColor = shouldHideClockSurface ? .clear : .white
-        textView?.isOpaque = !shouldHideClockSurface
+        pipSourceView?.backgroundColor = .clear
+        pipSourceView?.layer.backgroundColor = UIColor.clear.cgColor
+        pipSourceView?.isOpaque = false
+        pipSourceView?.layer.isOpaque = false
+        videoCallContentController?.view.backgroundColor = .clear
+        videoCallContentController?.view.layer.backgroundColor = UIColor.clear.cgColor
+        videoCallContentController?.view.isOpaque = false
+        videoCallContentController?.view.layer.isOpaque = false
+        textView?.isHidden = true
+        textView?.backgroundColor = .clear
+        textView?.layer.backgroundColor = UIColor.clear.cgColor
+        textView?.alpha = 0
+        textView?.layer.opacity = 0
+        textView?.layer.isOpaque = false
+        textView?.textColor = .clear
+        textView?.isOpaque = false
         updateClockLabel()
     }
 
@@ -1582,10 +2495,15 @@ class ViewController: UIViewController, AVPictureInPictureControllerDelegate {
         guard shouldPreviewPiPHeightLive else {
             return
         }
-        videoCallContentController?.preferredContentSize = currentPiPSize
-        updatePiPSourceGeometry()
-        if textView != nil {
-            configureRunningText()
+        UIView.performWithoutAnimation {
+            videoCallContentController?.preferredContentSize = currentPiPSize
+            updatePiPSourceGeometry()
+            if textView != nil, shouldRenderClockMode {
+                updateClockAppearance()
+            } else if isPiPVisuallyHidden {
+                stopDisplayLinks()
+                stopClockTimer()
+            }
         }
     }
 
@@ -1623,7 +2541,7 @@ class ViewController: UIViewController, AVPictureInPictureControllerDelegate {
     }
 
     private func reloadPlayerItemIfNeededForCurrentSize() {
-        guard requiresPlayerLayerForPiP else { return }
+        guard shouldPrepareBackingPlayerForPlayback else { return }
         guard let playerLayer else { return }
         guard let playerItem = makePlayerItem() else { return }
         observeLooping(for: playerItem)
@@ -1682,6 +2600,8 @@ class ViewController: UIViewController, AVPictureInPictureControllerDelegate {
     @objc private func handleEnterForeground() {
         print("进入前台")
         DiagnosticsRuntimeState.updateAppState("即将回前台")
+        recoverStalePiPTransitionIfNeeded(reason: "进入前台")
+        validateOwnPiPState(reason: "进入前台")
         updateDiagnosticsPiPState()
         PowerUsageLogger.markForegroundStart()
         AppDebugLogger.log("Enter foreground, keepAlive=\(shouldKeepPiPPlaybackAlive)")
@@ -1701,11 +2621,13 @@ class ViewController: UIViewController, AVPictureInPictureControllerDelegate {
             pauseBackingPlayerIfIdle()
         }
         updateDisplaySleepDiagnostics(reason: "进入前台", shouldLog: true)
+        KeepAliveNotificationTester.presentPendingLocalNotificationAlertIfNeeded(from: self)
     }
 
     @objc private func handleEnterBackground() {
         print("进入后台")
         DiagnosticsRuntimeState.updateAppState("后台")
+        recoverStalePiPTransitionIfNeeded(reason: "进入后台")
         updateDiagnosticsPiPState()
         PowerUsageLogger.markBackgroundStart()
         AppDebugLogger.log("Enter background, keepAlive=\(shouldKeepPiPPlaybackAlive)")
@@ -1714,6 +2636,7 @@ class ViewController: UIViewController, AVPictureInPictureControllerDelegate {
             PowerUsageLogger.markKeepAliveStop()
             pauseBackingPlayerIfIdle()
             endBackgroundTask()
+            KeepAliveNotificationTester.cancelBackgroundInterruptionProbe(reason: "进入后台未保活")
             updateDisplaySleepDiagnostics(reason: "进入后台未保活", shouldLog: true)
             return
         }
@@ -1749,9 +2672,11 @@ class ViewController: UIViewController, AVPictureInPictureControllerDelegate {
         switch type {
         case .began:
             AppDebugLogger.log("Audio interruption began")
+            KeepAliveNotificationTester.markAudioInterruptionBegan()
             BackgroundTaskManager.shared.stopPlay()
             PowerUsageLogger.markKeepAliveStop()
         case .ended:
+            KeepAliveNotificationTester.markAudioInterruptionEnded()
             guard shouldKeepPiPPlaybackAlive else { return }
             AppDebugLogger.log("Audio interruption ended, resume keepAlive")
             keepPlaybackAlive()
@@ -1790,6 +2715,7 @@ class ViewController: UIViewController, AVPictureInPictureControllerDelegate {
         AppDebugLogger.log("PiP will start")
         prepareCustomViewForPiPStart()
         showPiPContentForOpening()
+        scheduleLegacyCustomViewAttachRetries()
     }
 
     func pictureInPictureControllerDidStartPictureInPicture(_ pictureInPictureController: AVPictureInPictureController) {
@@ -1798,12 +2724,15 @@ class ViewController: UIViewController, AVPictureInPictureControllerDelegate {
         pendingPiPStartWorkItem = nil
         pipStartTimeoutWorkItem = nil
         didRetryLegacyPiPStart = false
+        cancelShortcutPiPStartRetry()
         wantsPiPActive = true
         updatePiPAutomaticStartPolicy()
         prepareCustomViewForPiPStart()
         configureRunningText()
         showPiPContentForOpening()
-        isPiPTransitioning = false
+        scheduleLegacyCustomViewAttachRetries()
+        finishPiPTransition()
+        isOwnPiPConfirmedActive = true
         isPiPActiveForUI = true
         beginPiPRuntimeSession()
         startDisplayLinks()
@@ -1812,15 +2741,38 @@ class ViewController: UIViewController, AVPictureInPictureControllerDelegate {
         KeepAliveLogger.markPiPStarted(mode: shouldUsePiPOnlyKeepAlive ? "PiP保活-低功耗" : "音频强保活")
         updateDiagnosticsPiPState()
         updateDisplaySleepDiagnostics(reason: "PiP启动完成", shouldLog: true)
+        hidePiPAfterShortcutStartIfNeeded()
         AppDebugLogger.log("PiP did start")
         print("画中画弹出后：\(UIApplication.shared.windows)")
+    }
+
+    private func scheduleLegacyCustomViewAttachRetries() {
+        guard shouldUsePlayerLayerPiPCompatibility else { return }
+        let delays: [TimeInterval] = [0, 0.08, 0.2, 0.5, 1.0]
+        for delay in delays {
+            DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
+                guard
+                    let self,
+                    self.shouldUsePlayerLayerPiPCompatibility,
+                    self.pipController?.isPictureInPictureActive == true
+                else {
+                    return
+                }
+                _ = self.attachCustomViewToPiPWindowIfAvailable(reason: "did start retry \(String(format: "%.2f", delay))")
+                self.showPiPContentForOpening()
+            }
+        }
     }
 
     func pictureInPictureControllerWillStopPictureInPicture(_ pictureInPictureController: AVPictureInPictureController) {
         pendingPiPStartWorkItem?.cancel()
         pipStartTimeoutWorkItem?.cancel()
+        pipTransitionWatchdogWorkItem?.cancel()
+        cancelShortcutPiPStartRetry()
         pendingPiPStartWorkItem = nil
         pipStartTimeoutWorkItem = nil
+        shouldHidePiPAfterShortcutStart = false
+        beginPiPTransition(expectedActive: false, reason: "will stop")
         if needsLegacyPiPCompatibility {
             isStoppingPiP = true
         } else {
@@ -1838,13 +2790,19 @@ class ViewController: UIViewController, AVPictureInPictureControllerDelegate {
 
     func pictureInPictureControllerDidStopPictureInPicture(_ pictureInPictureController: AVPictureInPictureController) {
         hidePiPContentForClosing()
+        let wasExpectedStop = !wantsPiPActive || isStoppingPiP || didRecoverStalePiPStop
+        let stoppedMode = shouldUsePiPOnlyKeepAlive ? "PiP保活-低功耗" : "音频强保活"
         detachLegacyCustomViewIfNeeded()
         restorePiPVisualSurfaces()
+        isOwnPiPConfirmedActive = false
         isPiPActiveForUI = false
         isStoppingPiP = false
-        isPiPTransitioning = false
+        let shouldSuppressStopNotification = !wasExpectedStop
+            && KeepAliveNotificationTester.shouldSuppressPiPStoppedNotification(reason: "悬浮窗异常停止")
+        finishPiPTransition()
         finishPiPRuntimeSession()
         didRetryLegacyPiPStart = false
+        didRecoverStalePiPStop = false
         wantsPiPActive = false
         updatePiPAutomaticStartPolicy()
         BackgroundTaskManager.shared.stopPlay()
@@ -1852,6 +2810,9 @@ class ViewController: UIViewController, AVPictureInPictureControllerDelegate {
         PowerUsageLogger.markPiPStop()
         PowerUsageLogger.markKeepAliveStop()
         KeepAliveLogger.markPiPStopped(reason: "PiP did stop")
+        if !wasExpectedStop, !shouldSuppressStopNotification {
+            KeepAliveNotificationTester.schedulePiPStoppedNotification(mode: stoppedMode, reason: "悬浮窗异常停止")
+        }
         endBackgroundTask()
         updateDisplaySleepDiagnostics(reason: "PiP停止完成", shouldLog: true)
         updateDiagnosticsPiPState()
@@ -1862,6 +2823,10 @@ class ViewController: UIViewController, AVPictureInPictureControllerDelegate {
     func pictureInPictureController(_ pictureInPictureController: AVPictureInPictureController, failedToStartPictureInPictureWithError error: Error) {
         AppDebugLogger.log("PiP failed to start: \(error.localizedDescription)")
         if retryLegacyPiPStartIfNeeded(reason: "画中画启动失败：\(error.localizedDescription)") {
+            return
+        }
+        if scheduleShortcutPiPStartRetry(reason: "画中画启动失败：\(error.localizedDescription)") {
+            resetPiPStartStateAfterFailure()
             return
         }
         resetPiPStartStateAfterFailure()
@@ -1977,7 +2942,7 @@ private final class PiPHeightEditorViewController: UIViewController {
         contentView.addSubview(stackView)
         stackView.snp.makeConstraints { make in
             make.leading.trailing.equalTo(contentView.safeAreaLayoutGuide).inset(24)
-            make.top.equalTo(contentView.safeAreaLayoutGuide).offset(28)
+            make.top.equalTo(contentView.snp.top).offset(28)
         }
 
         updateValueLabel()
@@ -2055,6 +3020,139 @@ private final class PiPHeightEditorViewController: UIViewController {
     }
 }
 
+private final class ClockOverlayView: UIView {
+    private let timeLabel = UILabel()
+    private let fpsLabel = UILabel()
+    private let networkLabel = UILabel()
+
+    override init(frame: CGRect) {
+        super.init(frame: frame)
+        setup()
+    }
+
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
+
+    func update(time: String, fps: String, network: String) {
+        timeLabel.text = time
+        fpsLabel.text = fps
+        networkLabel.text = network
+    }
+
+    func configure(height: CGFloat, hidden: Bool) {
+        isHidden = hidden
+        alpha = hidden ? 0 : 1
+        layer.opacity = hidden ? 0 : 1
+        backgroundColor = hidden ? .clear : .white
+        layer.backgroundColor = (hidden ? UIColor.clear : UIColor.white).cgColor
+        isOpaque = !hidden
+        layer.isOpaque = !hidden
+
+        let isCompactHeight = height < 40
+        let shouldShowMetrics = !hidden && height >= 28
+        let timeSize = isCompactHeight
+            ? min(max(height * 0.56, 10), 22)
+            : min(max(height * 0.58, 18), 40)
+        let metricSize = isCompactHeight
+            ? min(max(height * 0.22, 7), 11)
+            : min(max(height * 0.3, 12), 18)
+        timeLabel.font = .monospacedDigitSystemFont(ofSize: timeSize, weight: .black)
+        fpsLabel.font = .monospacedDigitSystemFont(ofSize: metricSize, weight: .bold)
+        networkLabel.font = .monospacedDigitSystemFont(ofSize: metricSize, weight: .bold)
+
+        let textColor: UIColor = hidden ? .clear : .black
+        timeLabel.textColor = textColor
+        fpsLabel.textColor = shouldShowMetrics ? .darkGray : .clear
+        networkLabel.textColor = shouldShowMetrics ? .darkGray : .clear
+        fpsLabel.isHidden = !shouldShowMetrics
+        networkLabel.isHidden = !shouldShowMetrics
+    }
+
+    private func setup() {
+        backgroundColor = .white
+        layer.backgroundColor = UIColor.white.cgColor
+        isOpaque = true
+        layer.isOpaque = true
+        isUserInteractionEnabled = false
+        clipsToBounds = true
+
+        timeLabel.textAlignment = .center
+        timeLabel.adjustsFontSizeToFitWidth = true
+        timeLabel.minimumScaleFactor = 0.45
+        timeLabel.baselineAdjustment = .alignCenters
+        timeLabel.textColor = .black
+
+        fpsLabel.textAlignment = .left
+        fpsLabel.adjustsFontSizeToFitWidth = true
+        fpsLabel.minimumScaleFactor = 0.55
+        fpsLabel.textColor = .darkGray
+
+        networkLabel.textAlignment = .right
+        networkLabel.adjustsFontSizeToFitWidth = true
+        networkLabel.minimumScaleFactor = 0.45
+        networkLabel.lineBreakMode = .byClipping
+        networkLabel.textColor = .darkGray
+
+        addSubview(timeLabel)
+        addSubview(fpsLabel)
+        addSubview(networkLabel)
+
+        timeLabel.snp.makeConstraints { make in
+            make.leading.trailing.equalToSuperview().inset(2)
+            make.centerY.equalToSuperview()
+            make.height.equalToSuperview().multipliedBy(0.74)
+        }
+        fpsLabel.snp.makeConstraints { make in
+            make.leading.equalToSuperview().inset(8)
+            make.bottom.equalToSuperview().inset(2)
+            make.width.equalToSuperview().multipliedBy(0.34)
+        }
+        networkLabel.snp.makeConstraints { make in
+            make.trailing.equalToSuperview().inset(8)
+            make.bottom.equalToSuperview().inset(2)
+            make.leading.greaterThanOrEqualTo(fpsLabel.snp.trailing).offset(3)
+        }
+    }
+}
+
+private struct NetworkTrafficSample {
+    let timestamp: Date
+    let sentBytes: UInt64
+    let receivedBytes: UInt64
+
+    static func current() -> NetworkTrafficSample? {
+        var interfaces: UnsafeMutablePointer<ifaddrs>?
+        guard getifaddrs(&interfaces) == 0, let firstInterface = interfaces else { return nil }
+        defer { freeifaddrs(interfaces) }
+
+        var sentBytes: UInt64 = 0
+        var receivedBytes: UInt64 = 0
+        var pointer: UnsafeMutablePointer<ifaddrs>? = firstInterface
+
+        while let currentPointer = pointer {
+            let interface = currentPointer.pointee
+            let flags = Int32(interface.ifa_flags)
+            let isUp = (flags & IFF_UP) == IFF_UP
+            let isLoopback = (flags & IFF_LOOPBACK) == IFF_LOOPBACK
+
+            if isUp,
+               !isLoopback,
+               let address = interface.ifa_addr,
+               address.pointee.sa_family == UInt8(AF_LINK),
+               let data = interface.ifa_data {
+                let networkData = data.assumingMemoryBound(to: if_data.self).pointee
+                sentBytes += UInt64(networkData.ifi_obytes)
+                receivedBytes += UInt64(networkData.ifi_ibytes)
+            }
+
+            pointer = interface.ifa_next
+        }
+
+        return NetworkTrafficSample(timestamp: Date(), sentBytes: sentBytes, receivedBytes: receivedBytes)
+    }
+}
+
 private enum PlaceholderVideoFactory {
     static func makeBackingVideo(at url: URL, size: CGSize) throws {
         try? FileManager.default.removeItem(at: url)
@@ -2100,17 +3198,16 @@ private enum PlaceholderVideoFactory {
         writer.startWriting()
         writer.startSession(atSourceTime: .zero)
 
-        let frameTimes = [
-            CMTime(value: 0, timescale: 1),
-            CMTime(value: 60, timescale: 1)
-        ]
-        for frameTime in frameTimes {
+        let frameRate = 60
+        let timescale = Int32(frameRate)
+        for frameIndex in 0..<frameRate {
             while !input.isReadyForMoreMediaData {
                 Thread.sleep(forTimeInterval: 0.01)
             }
             guard let pixelBuffer = makePixelBuffer(size: size, alpha: alpha) else {
                 throw NSError(domain: "PlaceholderVideoFactory", code: 2)
             }
+            let frameTime = CMTime(value: CMTimeValue(frameIndex), timescale: timescale)
             adaptor.append(pixelBuffer, withPresentationTime: frameTime)
         }
 

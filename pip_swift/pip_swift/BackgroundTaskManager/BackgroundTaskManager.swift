@@ -36,6 +36,7 @@ class BackgroundTaskManager: NSObject {
     }
 
     func forceStopAndDeactivate() {
+        guard isKeepAliveAudioActive || audioPlayer?.isPlaying == true else { return }
         audioPlayer?.stop()
         audioPlayer?.currentTime = 0
         isKeepAliveAudioActive = false
