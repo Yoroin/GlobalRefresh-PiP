@@ -26,6 +26,26 @@ enum FrameRatePreference {
     }
 }
 
+enum ClockDisplayLinkPreference {
+    // BETA5_ANCHOR_CLOCK_DISPLAYLINK_FORCE_TARGET_DEBUG:
+    // 临时调试开关：用于验证时间悬浮窗自身 preferred=target 是否能改善游戏侧边掉帧。
+    // 正式版不保留此开关，默认主线应维持时间悬浮窗 preferred=0，避免弹幕/缩放/隐藏抖动。
+    private static let forceTargetKey = "pip.debug.clockDisplayLinkForceTarget"
+    static let didChangeNotification = Notification.Name("ClockDisplayLinkPreferenceDidChange")
+
+    static var forcesTargetFrameRate: Bool {
+        get { false }
+        set {
+            UserDefaults.standard.set(false, forKey: forceTargetKey)
+            NotificationCenter.default.post(name: didChangeNotification, object: nil)
+        }
+    }
+
+    static func preferredFrameRateValue(target: Float) -> Float {
+        0
+    }
+}
+
 final class FrameRateTestTabBarController: UITabBarController, UITabBarControllerDelegate {
 
     override func viewDidLoad() {

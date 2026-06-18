@@ -22,9 +22,9 @@ enum KeepAliveNotificationProbeFrequency: String, CaseIterable {
 
     var detail: String {
         switch self {
-        case .low: return "30分钟检测一次，更适合日常使用"
-        case .high: return "1分钟检测一次，更及时小幅增加耗电"
-        case .ultra: return "20秒检测一次，适合极客用户"
+        case .low: return "30分钟检测一次，通知延后触发，后台干扰最低"
+        case .high: return "1分钟检测一次，带短缓冲，更快发现异常"
+        case .ultra: return "20秒检测一次，主要用于测试，误报风险更高"
         }
     }
 
@@ -41,6 +41,22 @@ enum KeepAliveNotificationProbeFrequency: String, CaseIterable {
         case .low: return "30分钟"
         case .high: return "1分钟"
         case .ultra: return "20秒"
+        }
+    }
+
+    var notificationDelay: TimeInterval {
+        switch self {
+        case .low: return 45 * 60
+        case .high: return 90
+        case .ultra: return 30
+        }
+    }
+
+    var notificationDelayText: String {
+        switch self {
+        case .low: return "45分钟"
+        case .high: return "1分30秒"
+        case .ultra: return "30秒"
         }
     }
 
@@ -114,6 +130,7 @@ enum KeepAliveLogger {
         UserDefaults.standard.set(Date().timeIntervalSince1970, forKey: sessionStartKey)
         UserDefaults.standard.set(mode, forKey: lastModeKey)
         heartbeat()
+        KeepAliveNotificationTester.markPiPStartedForBackgroundProbe()
         appendIfDebug("悬浮窗开始保活，模式=\(mode)")
     }
 
@@ -239,7 +256,7 @@ enum KeepAliveLogger {
     }
 
     private static var shouldTrackState: Bool {
-        AppDebugLogger.isDebugModeEnabled || KeepAliveNotificationTester.isEnabled
+        AppDebugLogger.isDebugModeEnabled || KeepAliveNotificationTester.isAnyNotificationEnabled
     }
 
     private static func storedDateText(_ key: String) -> String {
@@ -313,7 +330,10 @@ enum KeepAliveLogger {
 
 // TEST ANCHOR: 后台中断/悬浮窗停止提醒测试。撤回时删除本 enum，并移除 KeepAliveLogger/ViewController/VersionViewController 中的调用。
 enum KeepAliveNotificationTester {
-    private static let enabledKey = "pip.keepAlive.notificationTesterEnabled"
+    private static let legacyEnabledKey = "pip.keepAlive.notificationTesterEnabled"
+    private static let backgroundProbeEnabledKey = "pip.keepAlive.backgroundProbeNotificationEnabled"
+    private static let pipStoppedEnabledKey = "pip.keepAlive.pipStoppedNotificationEnabled"
+    private static let splitNotificationMigrationKey = "pip.keepAlive.notificationSplit.v1"
     private static let frequencyKey = "pip.keepAlive.notificationProbeFrequency"
     private static let frequencyMigrationKey = "pip.keepAlive.notificationProbeFrequency.v6"
     private static let defaultProbeFrequency = KeepAliveNotificationProbeFrequency.low
@@ -324,8 +344,11 @@ enum KeepAliveNotificationTester {
     private static let backgroundProbeSafetyWindow: TimeInterval = 60
     private static let heartbeatStaleGrace: TimeInterval = 90
     private static let foregroundTakeoverGrace: TimeInterval = 5 * 60
-    private static let systemOverlayProtectionThreshold: TimeInterval = 1.2
+    private static let foregroundTakeoverBounceWindow: TimeInterval = 8
+    private static let foregroundTakeoverEndRecoveryWindow: TimeInterval = 12
+    private static let systemOverlayProtectionThreshold: TimeInterval = 0.6
     private static let cameraInterruptionWindow: TimeInterval = 2
+    private static let pipStartBackgroundGrace: TimeInterval = 6
     private static let backgroundProbeQueue = DispatchQueue(label: "pip.keepAlive.backgroundProbeRefresh")
     private static var backgroundProbeRefreshTimer: DispatchSourceTimer?
     private static let backgroundProbeGenerationLock = NSLock()
@@ -338,17 +361,56 @@ enum KeepAliveNotificationTester {
     private static var foregroundLockStartedAt: Date?
     private static var foregroundSystemOverlayStartedAt: Date?
     private static var foregroundTakeoverSuppressedUntil: Date?
+    private static var foregroundTakeoverBounceSuppressedUntil: Date?
+    private static var foregroundTakeoverRecentlyEndedUntil: Date?
+    private static var foregroundTakeoverSessionActive = false
+    private static var lastPiPStartedAt: Date?
     private static var lastAudioInterruptionBeganAt: Date?
+    private static var audioInterruptionSessionActive = false
     private static var suppressBackgroundProbeUntilUnlock = false
 
+    private static func migrateSplitNotificationPreferencesIfNeeded() {
+        guard !UserDefaults.standard.bool(forKey: splitNotificationMigrationKey) else { return }
+        UserDefaults.standard.set(true, forKey: splitNotificationMigrationKey)
+        UserDefaults.standard.set(false, forKey: backgroundProbeEnabledKey)
+        UserDefaults.standard.set(false, forKey: pipStoppedEnabledKey)
+        if UserDefaults.standard.bool(forKey: legacyEnabledKey) {
+            AppDebugLogger.log("后台通知开关已拆分，旧开关不自动迁移，两个新开关默认关闭")
+        }
+    }
+
     static var isEnabled: Bool {
+        isBackgroundProbeEnabled
+    }
+
+    static var isAnyNotificationEnabled: Bool {
+        isBackgroundProbeEnabled || isPiPStoppedNotificationEnabled
+    }
+
+    static var isBackgroundProbeEnabled: Bool {
         get {
-            UserDefaults.standard.bool(forKey: enabledKey)
+            migrateSplitNotificationPreferencesIfNeeded()
+            return UserDefaults.standard.bool(forKey: backgroundProbeEnabledKey)
         }
         set {
-            UserDefaults.standard.set(newValue, forKey: enabledKey)
+            migrateSplitNotificationPreferencesIfNeeded()
+            UserDefaults.standard.set(newValue, forKey: backgroundProbeEnabledKey)
             if !newValue {
-                cancelAllTestingNotifications(reason: "关闭后台中断提醒beta")
+                cancelBackgroundProbeNotifications(reason: "关闭后台中断提醒beta")
+            }
+        }
+    }
+
+    static var isPiPStoppedNotificationEnabled: Bool {
+        get {
+            migrateSplitNotificationPreferencesIfNeeded()
+            return UserDefaults.standard.bool(forKey: pipStoppedEnabledKey)
+        }
+        set {
+            migrateSplitNotificationPreferencesIfNeeded()
+            UserDefaults.standard.set(newValue, forKey: pipStoppedEnabledKey)
+            if !newValue {
+                cancelPiPStoppedNotifications(reason: "关闭悬浮窗被挤通知")
             }
         }
     }
@@ -372,15 +434,27 @@ enum KeepAliveNotificationTester {
         }
     }
 
-    static func prepareForHomeToggle(from controller: UIViewController?, completion: @escaping (Bool) -> Void) {
+    static func prepareForBackgroundProbeToggle(from controller: UIViewController?, completion: @escaping (Bool) -> Void) {
         ensureAuthorizationForHomeToggle(from: controller) { granted in
             guard granted else {
-                isEnabled = false
+                isBackgroundProbeEnabled = false
                 completion(false)
                 return
             }
-            isEnabled = true
+            isBackgroundProbeEnabled = true
             sanitizeScheduledNotifications(reason: "首页开启后台中断通知")
+            completion(true)
+        }
+    }
+
+    static func prepareForPiPStoppedToggle(from controller: UIViewController?, completion: @escaping (Bool) -> Void) {
+        ensureAuthorizationForHomeToggle(from: controller) { granted in
+            guard granted else {
+                isPiPStoppedNotificationEnabled = false
+                completion(false)
+                return
+            }
+            isPiPStoppedNotificationEnabled = true
             completion(true)
         }
     }
@@ -391,7 +465,7 @@ enum KeepAliveNotificationTester {
     }
 
     static func presentLaunchInterruptionAlert(_ notice: KeepAliveInterruptionNotice, from controller: UIViewController) {
-        guard isEnabled else { return }
+        guard isBackgroundProbeEnabled else { return }
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) { [weak controller] in
             guard let controller, controller.presentedViewController == nil else { return }
             let alert = UIAlertController(
@@ -405,7 +479,7 @@ enum KeepAliveNotificationTester {
     }
 
     static func presentPendingLocalNotificationAlertIfNeeded(from controller: UIViewController) {
-        guard isEnabled, let notice = pendingLocalNotificationNoticeIfReady() else { return }
+        guard isPiPStoppedNotificationEnabled, let notice = pendingLocalNotificationNoticeIfReady() else { return }
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) { [weak controller] in
             guard let controller, controller.presentedViewController == nil else { return }
             let alert = UIAlertController(
@@ -466,7 +540,39 @@ enum KeepAliveNotificationTester {
     static func markAudioInterruptionBegan() {
         DispatchQueue.main.async {
             lastAudioInterruptionBeganAt = Date()
+            audioInterruptionSessionActive = true
             KeepAliveLogger.appendIfDebug("音频中断开始，已记录用于相机/系统界面保护判断")
+        }
+    }
+
+    static func markAudioInterruptionEnded() {
+        DispatchQueue.main.async {
+            lastAudioInterruptionBeganAt = nil
+            audioInterruptionSessionActive = false
+            guard foregroundTakeoverSessionActive || foregroundTakeoverSuppressedUntil != nil else {
+                KeepAliveLogger.appendIfDebug("音频中断结束，当前未处于系统界面/相机保护会话")
+                return
+            }
+
+            markForegroundTakeoverEndedIfNeeded(reason: "音频中断结束")
+            guard isEnabled else { return }
+            guard let mode = activeBackgroundProbeMode else {
+                KeepAliveLogger.appendIfDebug("音频中断结束后无活动后台探测，跳过通知恢复")
+                return
+            }
+            guard isAppInBackground else {
+                sanitizeScheduledNotifications(reason: "音频中断结束后已回前台")
+                return
+            }
+
+            requestAuthorizationIfNeeded()
+            restartActiveBackgroundProbeIfNeeded(reason: "音频中断结束：疑似相机退出")
+        }
+    }
+
+    static func markPiPStartedForBackgroundProbe() {
+        DispatchQueue.main.async {
+            lastPiPStartedAt = Date()
         }
     }
 
@@ -474,13 +580,24 @@ enum KeepAliveNotificationTester {
     static func notifyDidEnterBackground(mode: String) {
         DispatchQueue.main.async {
             let overlayElapsed = foregroundSystemOverlayElapsed
-            let shouldProtectSystemOverlay = overlayElapsed.map { $0 >= systemOverlayProtectionThreshold } ?? false
             let resignElapsed = lastActiveResignElapsed
-            let shouldProtectCameraLikeTakeover = wasRecentlyAudioInterrupted
+            let isOverlayLongEnoughToProtect = overlayElapsed.map { $0 >= systemOverlayProtectionThreshold } ?? false
+            let shouldTreatAsFreshPiPStartBackground = isFreshPiPStartBackground && !isOverlayLongEnoughToProtect
+            let shouldSkipOverlayProtectionAfterEndedTakeover = isForegroundTakeoverRecentlyEnded
+            let shouldProtectCameraLikeTakeover = !shouldSkipOverlayProtectionAfterEndedTakeover
+                && !shouldTreatAsFreshPiPStartBackground
+                && wasRecentlyAudioInterrupted
                 && (resignElapsed.map { $0 < cameraInterruptionWindow } ?? false)
+            let shouldProtectSystemOverlay = !shouldSkipOverlayProtectionAfterEndedTakeover
+                && !shouldTreatAsFreshPiPStartBackground
+                && isOverlayLongEnoughToProtect
             foregroundSystemOverlayStartedAt = nil
             if isForegroundLockProbeSuppressed {
                 foregroundTakeoverSuppressedUntil = nil
+                foregroundTakeoverBounceSuppressedUntil = nil
+                foregroundTakeoverRecentlyEndedUntil = nil
+                foregroundTakeoverSessionActive = false
+                audioInterruptionSessionActive = false
                 activeBackgroundProbeMode = mode
                 pauseBackgroundProbeForDeviceLockOnMain(reason: "前台锁屏后进入后台，解锁前不安排通知")
                 return
@@ -498,8 +615,14 @@ enum KeepAliveNotificationTester {
                 )
             } else {
                 foregroundTakeoverSuppressedUntil = nil
+                foregroundTakeoverBounceSuppressedUntil = nil
+                foregroundTakeoverRecentlyEndedUntil = nil
+                foregroundTakeoverSessionActive = false
+                audioInterruptionSessionActive = false
                 if let overlayElapsed {
-                    KeepAliveLogger.appendIfDebug(String(format: "普通退后台，未启用系统界面/相机保护，前台非活跃%.1f秒", overlayElapsed))
+                    let endedText = shouldSkipOverlayProtectionAfterEndedTakeover ? "，刚结束系统界面/相机保护，本次恢复正常预排" : ""
+                    let pipStartText = shouldTreatAsFreshPiPStartBackground ? "，刚启动悬浮窗，本次按普通后台预排" : ""
+                    KeepAliveLogger.appendIfDebug(String(format: "普通退后台，未启用系统界面/相机保护，前台非活跃%.1f秒%@%@", overlayElapsed, endedText, pipStartText))
                 }
             }
             startBackgroundInterruptionProbe(mode: mode)
@@ -508,7 +631,10 @@ enum KeepAliveNotificationTester {
 
     static func cancelBackgroundInterruptionProbe(reason: String) {
         DispatchQueue.main.async {
-            clearBackgroundProbeStateOnMain(reason: reason)
+            clearBackgroundProbeStateOnMain(
+                reason: reason,
+                preserveForegroundTakeoverBounce: reason == "回到前台"
+            )
         }
     }
 
@@ -527,9 +653,26 @@ enum KeepAliveNotificationTester {
         }
     }
 
+    static func cancelBackgroundProbeNotifications(reason: String) {
+        DispatchQueue.main.async {
+            clearBackgroundProbeStateOnMain(reason: reason)
+        }
+    }
+
+    static func cancelPiPStoppedNotifications(reason: String) {
+        DispatchQueue.main.async {
+            UNUserNotificationCenter.current().removePendingNotificationRequests(withIdentifiers: [pipStoppedIdentifier])
+            UNUserNotificationCenter.current().removeDeliveredNotifications(withIdentifiers: [pipStoppedIdentifier])
+            clearPendingLocalNotificationNotice()
+            KeepAliveLogger.markNotificationCancelled(reason: reason)
+            AppDebugLogger.log("悬浮窗停止通知已取消，原因=\(reason)")
+        }
+    }
+
     private static func restartActiveBackgroundProbeIfNeeded(reason: String) {
         DispatchQueue.main.async {
             guard isEnabled, let mode = activeBackgroundProbeMode else { return }
+            endExpiredForegroundTakeoverIfNeeded(reason: reason)
             guard isAppInBackground else {
                 clearBackgroundProbeStateOnMain(reason: "\(reason)：当前不在后台")
                 return
@@ -560,14 +703,20 @@ enum KeepAliveNotificationTester {
         }
     }
 
-    private static func scheduleBackgroundProbeNotification(mode: String, reason: String, delay: TimeInterval? = nil) {
-        guard isEnabled, isAppInBackground, !isDeviceLocked, !isForegroundLockProbeSuppressed, !isForegroundSystemOverlayTransition, !isForegroundLockTransition else {
+    private static func scheduleBackgroundProbeNotification(
+        mode: String,
+        reason: String,
+        delay: TimeInterval? = nil,
+        allowDuringForegroundTakeover: Bool = false
+    ) {
+        let blocksForegroundTakeover = foregroundTakeoverSessionActive && !allowDuringForegroundTakeover
+        guard isEnabled, isAppInBackground, !isDeviceLocked, !isForegroundLockProbeSuppressed, !isForegroundSystemOverlayTransition, !isForegroundLockTransition, !blocksForegroundTakeover else {
             clearBackgroundProbeNotifications()
-            AppDebugLogger.log("跳过后台中断本地通知安排，原因=\(reason)，当前不在后台、设备锁定、前台锁屏保护、前台系统界面覆盖或前台锁屏")
+            AppDebugLogger.log("跳过后台中断本地通知安排，原因=\(reason)，当前不在后台、设备锁定、前台锁屏保护、前台系统界面覆盖、前台锁屏或系统界面/相机保护会话")
             return
         }
         let frequency = probeFrequency
-        let notificationDelay = max(1, delay ?? frequency.interval)
+        let notificationDelay = max(1, delay ?? frequency.notificationDelay)
         let expectedAt = Date().addingTimeInterval(notificationDelay)
         let expectedText = notificationDateText(expectedAt)
         let notificationBody = """
@@ -589,26 +738,44 @@ enum KeepAliveNotificationTester {
                 AppDebugLogger.log("后台中断本地通知安排失败：\(error.localizedDescription)")
             } else {
                 KeepAliveLogger.markNotificationScheduled(reason: reason, fireAt: expectedAt)
-                AppDebugLogger.log("后台中断本地通知已安排，原因=\(reason)，频率=\(frequency.title)，延迟=\(notificationDelayText(notificationDelay))，预计=\(notificationDateText(expectedAt))，模式=\(mode)")
+                AppDebugLogger.log("后台中断本地通知已安排，原因=\(reason)，频率=\(frequency.title)，检测间隔=\(frequency.intervalText)，通知延迟=\(notificationDelayText(notificationDelay))，预计=\(notificationDateText(expectedAt))，模式=\(mode)")
             }
         }
     }
 
     private static func startBackgroundProbeSafetyWindow(mode: String, reason: String, detail: String? = nil) {
         stopBackgroundProbeRefreshTimer()
-        let fallbackDelay = backgroundProbeSafetyWindow + probeFrequency.interval
-        scheduleBackgroundProbeNotification(
-            mode: mode,
-            reason: "\(reason)：安全窗口兜底预排",
-            delay: fallbackDelay
-        )
+        let fallbackDelay: TimeInterval
+        if foregroundTakeoverSessionActive, !audioInterruptionSessionActive {
+            fallbackDelay = backgroundProbeSafetyWindow + probeFrequency.notificationDelay
+        } else {
+            fallbackDelay = max(backgroundProbeSafetyWindow + probeFrequency.notificationDelay, foregroundTakeoverRemaining + probeFrequency.notificationDelay)
+        }
+        if foregroundTakeoverSessionActive {
+            clearBackgroundProbeNotifications()
+            AppDebugLogger.log("后台中断通知系统界面/相机保护会话中不安排兜底通知，原兜底延迟=\(notificationDelayText(fallbackDelay))，模式=\(mode)")
+        } else {
+            scheduleBackgroundProbeNotification(
+                mode: mode,
+                reason: "\(reason)：安全窗口兜底预排",
+                delay: fallbackDelay
+            )
+        }
         KeepAliveLogger.markNotificationPaused(reason: "\(reason)：进入\(Int(backgroundProbeSafetyWindow))秒安全窗口，暂不启动正式刷新")
         let detailText = detail.map { "，\($0)" } ?? ""
-        AppDebugLogger.log("后台中断通知进入安全窗口，原因=\(reason)\(detailText)，安全窗口=\(Int(backgroundProbeSafetyWindow))秒，兜底延迟=\(notificationDelayText(fallbackDelay))，模式=\(mode)")
+        let fallbackText = foregroundTakeoverSessionActive
+            ? "不安排兜底通知"
+            : "兜底延迟=\(notificationDelayText(fallbackDelay))"
+        AppDebugLogger.log("后台中断通知进入安全窗口，原因=\(reason)\(detailText)，安全窗口=\(Int(backgroundProbeSafetyWindow))秒，\(fallbackText)，模式=\(mode)")
 
+        scheduleBackgroundProbeSafetyWindowResume(mode: mode, reason: reason, delay: backgroundProbeSafetyWindow)
+    }
+
+    private static func scheduleBackgroundProbeSafetyWindowResume(mode: String, reason: String, delay: TimeInterval) {
         let workItem = DispatchWorkItem {
             pendingBackgroundProbeStartWorkItem = nil
             guard isEnabled else { return }
+            endExpiredForegroundTakeoverIfNeeded(reason: "\(reason)：安全窗口结束")
             guard isAppInBackground else {
                 clearBackgroundProbeStateOnMain(reason: "\(reason)：安全窗口结束时已回前台")
                 return
@@ -630,9 +797,16 @@ enum KeepAliveNotificationTester {
                 return
             }
 
-            if isForegroundTakeoverSuppressed {
-                foregroundTakeoverSuppressedUntil = nil
-                KeepAliveLogger.appendIfDebug("\(reason)：安全窗口结束，已清理系统界面/相机保护并恢复正式检测")
+            if foregroundTakeoverSessionActive {
+                KeepAliveLogger.markNotificationPaused(reason: "\(reason)：系统界面/相机保护仍在，继续暂停正式检测")
+                clearBackgroundProbeNotifications()
+                AppDebugLogger.log("后台中断通知安全窗口结束但系统界面/相机保护仍在，继续清空预排通知，剩余=\(notificationDelayText(foregroundTakeoverRemaining))")
+                scheduleBackgroundProbeSafetyWindowResume(
+                    mode: mode,
+                    reason: reason,
+                    delay: backgroundProbeSafetyWindow
+                )
+                return
             }
 
             activeBackgroundProbeMode = mode
@@ -645,7 +819,7 @@ enum KeepAliveNotificationTester {
             startBackgroundProbeRefreshTimer(mode: mode)
         }
         pendingBackgroundProbeStartWorkItem = workItem
-        DispatchQueue.main.asyncAfter(deadline: .now() + backgroundProbeSafetyWindow, execute: workItem)
+        DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: workItem)
     }
 
     private static func startBackgroundProbeRefreshTimer(mode: String) {
@@ -675,6 +849,11 @@ enum KeepAliveNotificationTester {
             return
         }
         KeepAliveLogger.heartbeat()
+        guard !foregroundTakeoverSessionActive else {
+            clearBackgroundProbeNotifications()
+            AppDebugLogger.log("后台中断本地通知暂不刷新，原因=系统界面/相机保护会话中")
+            return
+        }
         guard !isForegroundTakeoverSuppressed else {
             AppDebugLogger.log("后台中断本地通知暂不刷新，原因=前台切到外部App保护，剩余=\(notificationDelayText(foregroundTakeoverRemaining))")
             return
@@ -697,7 +876,8 @@ enum KeepAliveNotificationTester {
             return
         }
         let frequency = probeFrequency
-        let expectedAt = Date().addingTimeInterval(frequency.interval)
+        let notificationDelay = frequency.notificationDelay
+        let expectedAt = Date().addingTimeInterval(notificationDelay)
         let expectedText = notificationDateText(expectedAt)
         let notificationBody = """
         可能中断时间：\(expectedText)
@@ -708,7 +888,7 @@ enum KeepAliveNotificationTester {
         content.body = notificationBody
         content.sound = .default
 
-        let trigger = UNTimeIntervalNotificationTrigger(timeInterval: frequency.interval, repeats: false)
+        let trigger = UNTimeIntervalNotificationTrigger(timeInterval: notificationDelay, repeats: false)
         let request = UNNotificationRequest(identifier: backgroundProbeIdentifier, content: content, trigger: trigger)
         let center = UNUserNotificationCenter.current()
         center.removePendingNotificationRequests(withIdentifiers: [backgroundProbeIdentifier])
@@ -719,7 +899,7 @@ enum KeepAliveNotificationTester {
                 AppDebugLogger.log("后台中断本地通知刷新失败：\(error.localizedDescription)")
             } else {
                 KeepAliveLogger.markNotificationScheduled(reason: reason, fireAt: expectedAt)
-                AppDebugLogger.log("后台中断本地通知已刷新，原因=\(reason)，频率=\(frequency.title)，延迟=\(frequency.intervalText)，预计=\(notificationDateText(expectedAt))，模式=\(mode)")
+                AppDebugLogger.log("后台中断本地通知已刷新，原因=\(reason)，频率=\(frequency.title)，检测间隔=\(frequency.intervalText)，通知延迟=\(notificationDelayText(notificationDelay))，预计=\(notificationDateText(expectedAt))，模式=\(mode)")
             }
         }
     }
@@ -727,11 +907,15 @@ enum KeepAliveNotificationTester {
     private static func sanitizeScheduledNotifications(reason: String) {
         DispatchQueue.main.async {
             guard isEnabled else {
-                cancelAllTestingNotifications(reason: "\(reason)：通知关闭")
+                cancelBackgroundProbeNotifications(reason: "\(reason)：后台中断通知关闭")
                 return
             }
+            endExpiredForegroundTakeoverIfNeeded(reason: reason)
             guard isAppInBackground else {
-                clearBackgroundProbeStateOnMain(reason: "\(reason)：前台清理残留")
+                clearBackgroundProbeStateOnMain(
+                    reason: "\(reason)：前台清理残留",
+                    preserveForegroundTakeoverBounce: reason.hasPrefix("回到前台")
+                )
                 requestAuthorizationIfNeeded()
                 return
             }
@@ -753,6 +937,13 @@ enum KeepAliveNotificationTester {
             guard !isForegroundLockTransition else {
                 clearBackgroundProbeStateOnMain(reason: "\(reason)：前台锁屏")
                 requestAuthorizationIfNeeded()
+                return
+            }
+            if foregroundTakeoverSessionActive {
+                requestAuthorizationIfNeeded()
+                clearBackgroundProbeNotifications()
+                KeepAliveLogger.markNotificationPaused(reason: "\(reason)：系统界面/相机保护会话中，暂不预排后台定时通知")
+                AppDebugLogger.log("后台中断本地通知暂不安排，原因=\(reason)：系统界面/相机保护会话中")
                 return
             }
             if isForegroundTakeoverSuppressed {
@@ -804,6 +995,11 @@ enum KeepAliveNotificationTester {
         return Date().timeIntervalSince(lastActiveResignAt)
     }
 
+    private static var isFreshPiPStartBackground: Bool {
+        guard let lastPiPStartedAt else { return false }
+        return Date().timeIntervalSince(lastPiPStartedAt) < pipStartBackgroundGrace
+    }
+
     private static var wasRecentlyAudioInterrupted: Bool {
         guard let lastAudioInterruptionBeganAt else { return false }
         return Date().timeIntervalSince(lastAudioInterruptionBeganAt) < cameraInterruptionWindow
@@ -818,6 +1014,24 @@ enum KeepAliveNotificationTester {
         return false
     }
 
+    private static var isForegroundTakeoverBounceSuppressed: Bool {
+        guard let foregroundTakeoverBounceSuppressedUntil else { return false }
+        if Date() < foregroundTakeoverBounceSuppressedUntil {
+            return true
+        }
+        self.foregroundTakeoverBounceSuppressedUntil = nil
+        return false
+    }
+
+    private static var isForegroundTakeoverRecentlyEnded: Bool {
+        guard let foregroundTakeoverRecentlyEndedUntil else { return false }
+        if Date() < foregroundTakeoverRecentlyEndedUntil {
+            return true
+        }
+        self.foregroundTakeoverRecentlyEndedUntil = nil
+        return false
+    }
+
     private static var foregroundTakeoverRemaining: TimeInterval {
         guard let foregroundTakeoverSuppressedUntil else { return 0 }
         return max(0, foregroundTakeoverSuppressedUntil.timeIntervalSinceNow)
@@ -829,8 +1043,44 @@ enum KeepAliveNotificationTester {
             return
         }
         foregroundTakeoverSuppressedUntil = until
+        foregroundTakeoverBounceSuppressedUntil = nil
+        foregroundTakeoverSessionActive = true
         let detailText = detail.map { "，\($0)" } ?? ""
         KeepAliveLogger.appendIfDebug("\(reason)已开启\(detailText)，\(Int(foregroundTakeoverGrace))秒内延后后台定时通知")
+    }
+
+    private static func rememberForegroundTakeoverBounceIfNeeded(reason: String) {
+        guard isForegroundTakeoverSuppressed else { return }
+        let until = Date().addingTimeInterval(foregroundTakeoverBounceWindow)
+        if let currentUntil = foregroundTakeoverBounceSuppressedUntil, currentUntil > until {
+            return
+        }
+        foregroundTakeoverBounceSuppressedUntil = until
+        KeepAliveLogger.appendIfDebug("\(reason)：系统界面/相机保护进入短暂回前台缓冲，\(Int(foregroundTakeoverBounceWindow))秒内再次进入后台仍延后通知")
+    }
+
+    private static func markForegroundTakeoverEndedIfNeeded(reason: String) {
+        guard foregroundTakeoverSessionActive || isForegroundTakeoverSuppressed else { return }
+        pendingBackgroundProbeStartWorkItem?.cancel()
+        pendingBackgroundProbeStartWorkItem = nil
+        foregroundTakeoverSuppressedUntil = nil
+        foregroundTakeoverBounceSuppressedUntil = nil
+        foregroundTakeoverSessionActive = false
+        audioInterruptionSessionActive = false
+        foregroundTakeoverRecentlyEndedUntil = Date().addingTimeInterval(foregroundTakeoverEndRecoveryWindow)
+        clearBackgroundProbeNotifications()
+        KeepAliveLogger.appendIfDebug("\(reason)：系统界面/相机保护已结束，\(Int(foregroundTakeoverEndRecoveryWindow))秒内再次进入后台将恢复正常预排")
+    }
+
+    private static func endExpiredForegroundTakeoverIfNeeded(reason: String) {
+        guard foregroundTakeoverSessionActive else { return }
+        guard !audioInterruptionSessionActive else { return }
+        guard !isForegroundTakeoverSuppressed else { return }
+        foregroundTakeoverSessionActive = false
+        foregroundTakeoverBounceSuppressedUntil = nil
+        foregroundTakeoverRecentlyEndedUntil = Date().addingTimeInterval(foregroundTakeoverEndRecoveryWindow)
+        clearBackgroundProbeNotifications()
+        KeepAliveLogger.appendIfDebug("\(reason)：系统界面/通知中心保护自然到期，恢复后台中断预排能力")
     }
 
     private static func installLockStateObserverIfNeeded() {
@@ -853,8 +1103,8 @@ enum KeepAliveNotificationTester {
             object: nil,
             queue: .main
         ) { _ in
+            markForegroundTakeoverEndedIfNeeded(reason: "App回到前台活跃")
             foregroundSystemOverlayStartedAt = nil
-            foregroundTakeoverSuppressedUntil = nil
             if suppressBackgroundProbeUntilUnlock {
                 KeepAliveLogger.appendIfDebug("App回到前台活跃，但仍处于前台锁屏保护，等待设备解锁")
                 clearBackgroundProbeStateOnMain(reason: "回到前台活跃：前台锁屏保护")
@@ -873,6 +1123,9 @@ enum KeepAliveNotificationTester {
             if didRecentlyLeaveForeground || UIApplication.shared.applicationState != .background {
                 foregroundLockStartedAt = Date()
                 foregroundTakeoverSuppressedUntil = nil
+                foregroundTakeoverBounceSuppressedUntil = nil
+                foregroundTakeoverSessionActive = false
+                audioInterruptionSessionActive = false
                 suppressBackgroundProbeUntilUnlock = true
                 clearBackgroundProbeStateOnMain(reason: "前台锁屏")
             } else {
@@ -885,11 +1138,17 @@ enum KeepAliveNotificationTester {
             queue: .main
         ) { _ in
             foregroundLockStartedAt = nil
-            foregroundTakeoverSuppressedUntil = nil
             suppressBackgroundProbeUntilUnlock = false
             clearBackgroundProbeNotifications()
             KeepAliveLogger.markNotificationCancelled(reason: "设备解锁：等待前后台状态稳定")
             KeepAliveLogger.appendIfDebug("设备解锁，已清理前台锁屏标记，延迟确认后台状态后再恢复通知")
+            if foregroundTakeoverSessionActive {
+                KeepAliveLogger.markNotificationPaused(reason: "设备解锁后仍处于系统界面/相机保护会话")
+                AppDebugLogger.log("设备解锁后仍处于系统界面/相机保护会话，继续不安排后台中断通知")
+                return
+            }
+            foregroundTakeoverSuppressedUntil = nil
+            foregroundTakeoverBounceSuppressedUntil = nil
             pendingUnlockResumeWorkItem?.cancel()
             let workItem = DispatchWorkItem {
                 guard isEnabled else { return }
@@ -918,7 +1177,10 @@ enum KeepAliveNotificationTester {
         }
     }
 
-    private static func clearBackgroundProbeStateOnMain(reason: String) {
+    private static func clearBackgroundProbeStateOnMain(reason: String, preserveForegroundTakeoverBounce: Bool = false) {
+        if preserveForegroundTakeoverBounce {
+            markForegroundTakeoverEndedIfNeeded(reason: reason)
+        }
         pendingBackgroundProbeStartWorkItem?.cancel()
         pendingBackgroundProbeStartWorkItem = nil
         pendingUnlockResumeWorkItem?.cancel()
@@ -926,6 +1188,12 @@ enum KeepAliveNotificationTester {
         stopBackgroundProbeRefreshTimer()
         activeBackgroundProbeMode = nil
         foregroundTakeoverSuppressedUntil = nil
+        foregroundTakeoverSessionActive = false
+        audioInterruptionSessionActive = false
+        if !preserveForegroundTakeoverBounce {
+            foregroundTakeoverBounceSuppressedUntil = nil
+            foregroundTakeoverRecentlyEndedUntil = nil
+        }
         clearBackgroundProbeNotifications()
         KeepAliveLogger.markNotificationCancelled(reason: reason)
         AppDebugLogger.log("后台中断本地通知测试已取消，原因=\(reason)")
@@ -937,7 +1205,10 @@ enum KeepAliveNotificationTester {
         pendingUnlockResumeWorkItem?.cancel()
         pendingUnlockResumeWorkItem = nil
         stopBackgroundProbeRefreshTimer()
-        foregroundTakeoverSuppressedUntil = nil
+        if !foregroundTakeoverSessionActive {
+            foregroundTakeoverSuppressedUntil = nil
+            foregroundTakeoverBounceSuppressedUntil = nil
+        }
         clearBackgroundProbeNotifications()
         KeepAliveLogger.markNotificationPaused(reason: reason)
         AppDebugLogger.log("后台中断本地通知已暂停，原因=\(reason)，解锁后若仍在后台会继续检测")
@@ -981,7 +1252,7 @@ enum KeepAliveNotificationTester {
     }
 
     static func schedulePiPStoppedNotification(mode: String, reason: String) {
-        guard isEnabled else { return }
+        guard isPiPStoppedNotificationEnabled else { return }
         DispatchQueue.main.async {
             requestAuthorizationIfNeeded()
             let stoppedAt = Date()
@@ -1018,7 +1289,7 @@ enum KeepAliveNotificationTester {
     }
 
     static func shouldSuppressPiPStoppedNotification(reason: String) -> Bool {
-        guard isEnabled else { return false }
+        guard isPiPStoppedNotificationEnabled else { return false }
         let protectedByLock = isDeviceLocked || isForegroundLockProbeSuppressed || isForegroundLockTransition
         guard protectedByLock else { return false }
         let protectionReason = "锁屏保护"

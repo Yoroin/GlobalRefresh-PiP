@@ -257,7 +257,7 @@ enum PowerUsageLogger {
     }
 
     private static var shouldTrackState: Bool {
-        AppDebugLogger.isDebugModeEnabled || KeepAliveNotificationTester.isEnabled
+        AppDebugLogger.isDebugModeEnabled || KeepAliveNotificationTester.isAnyNotificationEnabled
     }
 
     private static let beijingFormatter: DateFormatter = {

@@ -83,6 +83,7 @@ struct PiPHomeView: View {
     @State private var isSettingsVisible = false
     @State private var isKeepAliveInfoVisible = false
     @State private var isNotificationFrequencyInfoVisible = false
+    @State private var isPiPStoppedNotificationInfoVisible = false
 
     let pipHeight: String
     let keepAliveMode: String
@@ -95,7 +96,8 @@ struct PiPHomeView: View {
     let isScrollingEnabled: Bool
     let isClockModeEnabled: Bool
     let isDarkModeForced: Bool
-    let isKeepAliveNotificationEnabled: Bool
+    let isPiPStoppedNotificationEnabled: Bool
+    let isBackgroundInterruptionNotificationEnabled: Bool
     let keepAliveNotificationFrequency: KeepAliveNotificationProbeFrequency
     let keepsPiPStatusInfoPersistent: Bool
     let remembersPiPHeight: Bool
@@ -107,7 +109,8 @@ struct PiPHomeView: View {
     let onToggleScrolling: () -> Void
     let onSetClockMode: (Bool) -> Void
     let onSetDarkModeForced: (Bool) -> Void
-    let onSetKeepAliveNotificationEnabled: (Bool) -> Void
+    let onSetPiPStoppedNotificationEnabled: (Bool) -> Void
+    let onSetBackgroundInterruptionNotificationEnabled: (Bool) -> Void
     let onSetKeepAliveNotificationFrequency: (KeepAliveNotificationProbeFrequency) -> Void
     let onSetPiPStatusInfoPersistent: (Bool) -> Void
     let onToggleSettings: () -> Void
@@ -123,6 +126,7 @@ struct PiPHomeView: View {
                     dismissKeepAliveInfoIfNeeded()
                     dismissPiPStatusInfoIfNeededRespectingPersistence()
                     dismissNotificationFrequencyInfoIfNeeded()
+                    dismissPiPStoppedNotificationInfoIfNeeded()
                     dismissSettingsIfNeeded()
                 }
 
@@ -160,6 +164,7 @@ struct PiPHomeView: View {
                 dismissKeepAliveInfoIfNeeded()
                 dismissPiPStatusInfoIfNeededRespectingPersistence()
                 dismissNotificationFrequencyInfoIfNeeded()
+                dismissPiPStoppedNotificationInfoIfNeeded()
                 dismissSettingsIfNeeded()
             }
 
@@ -190,6 +195,14 @@ struct PiPHomeView: View {
                     .zIndex(9)
             }
 
+            if isPiPStoppedNotificationInfoVisible {
+                pipStoppedNotificationPopover
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
+                    .padding(.horizontal, layout.headerHorizontalPadding)
+                    .transition(.opacity)
+                    .zIndex(9)
+            }
+
             settingsPopover
                 .padding(.top, layout.homeSettingsTop)
                 .padding(.trailing, layout.homeSettingsTrailing)
@@ -210,6 +223,7 @@ struct PiPHomeView: View {
             dismissKeepAliveInfoIfNeeded()
             dismissPiPStatusInfoIfNeededRespectingPersistence()
             dismissNotificationFrequencyInfoIfNeeded()
+            dismissPiPStoppedNotificationInfoIfNeeded()
             dismissSettingsIfNeeded()
         }
     }
@@ -304,14 +318,18 @@ struct PiPHomeView: View {
         return shape
             .fill(Color(UIColor.secondarySystemGroupedBackground).opacity(0.62))
             .overlay(
-                shape.strokeBorder(notificationBadgeColor.opacity(isKeepAliveNotificationEnabled ? 0.24 : 0.18), lineWidth: 1)
+                shape.strokeBorder(notificationBadgeColor.opacity(isAnyNotificationEnabled ? 0.24 : 0.18), lineWidth: 1)
             )
     }
 
     private var notificationBadgeColor: Color {
-        isKeepAliveNotificationEnabled
+        isAnyNotificationEnabled
             ? Color(UIColor.systemGreen)
             : Color(UIColor.secondaryLabel)
+    }
+
+    private var isAnyNotificationEnabled: Bool {
+        isPiPStoppedNotificationEnabled || isBackgroundInterruptionNotificationEnabled
     }
 
     private var keepAliveInfoPopover: some View {
@@ -374,12 +392,19 @@ struct PiPHomeView: View {
                 dismissKeepAliveInfoIfNeeded()
                 dismissPiPStatusInfoIfNeededRespectingPersistence()
                 dismissSettingsIfNeeded()
-                if isKeepAliveNotificationEnabled {
+                if isBackgroundInterruptionNotificationEnabled {
+                    dismissPiPStoppedNotificationInfoIfNeeded()
                     withAnimation(.easeOut(duration: 0.16)) {
                         isNotificationFrequencyInfoVisible.toggle()
                     }
+                } else if isPiPStoppedNotificationEnabled {
+                    dismissNotificationFrequencyInfoIfNeeded()
+                    withAnimation(.easeOut(duration: 0.16)) {
+                        isPiPStoppedNotificationInfoVisible.toggle()
+                    }
                 } else {
                     dismissNotificationFrequencyInfoIfNeeded()
+                    dismissPiPStoppedNotificationInfoIfNeeded()
                 }
             } label: {
                 keepAliveNotificationBadge
@@ -396,7 +421,7 @@ struct PiPHomeView: View {
         HStack(spacing: 3) {
             Text("通知")
                 .font(.system(size: 11, weight: .bold))
-            Image(systemName: isKeepAliveNotificationEnabled ? "checkmark" : "xmark")
+            Image(systemName: isAnyNotificationEnabled ? "checkmark" : "xmark")
                 .font(.system(size: 10, weight: .bold))
         }
         .foregroundColor(notificationBadgeColor)
@@ -430,6 +455,28 @@ struct PiPHomeView: View {
         .padding(.horizontal, 14)
         .padding(.vertical, 12)
         .frame(width: layout.infoPanelWidth282, alignment: .leading)
+        .background(settingsPopoverBackground)
+        .overlay(
+            RoundedRectangle(cornerRadius: 20, style: .continuous)
+                .stroke(adaptiveGlassStrokeColor, lineWidth: 1)
+        )
+        .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
+        .shadow(color: Color.black.opacity(0.14), radius: 16, x: 0, y: 10)
+    }
+
+    private var pipStoppedNotificationPopover: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 6) {
+                Image(systemName: "rectangle.on.rectangle.slash.fill")
+                    .font(.system(size: 15, weight: .bold))
+                Text("被挤通知已开启")
+                    .font(.system(size: 15, weight: .bold))
+            }
+            .foregroundColor(Color(UIColor.systemGreen))
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 12)
+        .frame(width: layout.infoPanelWidth254, alignment: .leading)
         .background(settingsPopoverBackground)
         .overlay(
             RoundedRectangle(cornerRadius: 20, style: .continuous)
@@ -574,14 +621,24 @@ struct PiPHomeView: View {
                         .opacity(0.42)
 
                     SettingsToggleRow(
+                        title: "悬浮窗被挤通知",
+                        systemImage: "rectangle.on.rectangle.slash.fill",
+                        isOn: pipStoppedNotificationBinding,
+                        statusText: { _ in
+                            "被其他画中画应用挤掉时发送通知"
+                        }
+                    )
+
+                    Divider()
+                        .opacity(0.42)
+
+                    SettingsToggleRow(
                         title: "后台中断通知",
                         titleSuffix: "beta",
                         systemImage: "bell.badge.fill",
-                        isOn: keepAliveNotificationBinding,
-                        statusText: { isOn in
-                            isOn
-                                ? "可在检测到悬浮窗失效时推送通知消息，可自行选择检测频率"
-                                : "开启后请求通知权限，可在检测到悬浮窗失效时推送通知消息，可自行选择检测频率"
+                        isOn: backgroundInterruptionNotificationBinding,
+                        statusText: { _ in
+                            "轮询检测后台中断，可能晚报或者误报，用于检测后台被杀的场景"
                         }
                     )
 
@@ -707,14 +764,26 @@ struct PiPHomeView: View {
         )
     }
 
-    private var keepAliveNotificationBinding: Binding<Bool> {
+    private var pipStoppedNotificationBinding: Binding<Bool> {
         Binding(
-            get: { isKeepAliveNotificationEnabled },
+            get: { isPiPStoppedNotificationEnabled },
             set: { newValue in
-                guard newValue != isKeepAliveNotificationEnabled else { return }
+                guard newValue != isPiPStoppedNotificationEnabled else { return }
                 UIImpactFeedbackGenerator(style: .light).impactOccurred()
                 dismissPiPStatusInfoIfNeededRespectingPersistence()
-                onSetKeepAliveNotificationEnabled(newValue)
+                onSetPiPStoppedNotificationEnabled(newValue)
+            }
+        )
+    }
+
+    private var backgroundInterruptionNotificationBinding: Binding<Bool> {
+        Binding(
+            get: { isBackgroundInterruptionNotificationEnabled },
+            set: { newValue in
+                guard newValue != isBackgroundInterruptionNotificationEnabled else { return }
+                UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                dismissPiPStatusInfoIfNeededRespectingPersistence()
+                onSetBackgroundInterruptionNotificationEnabled(newValue)
             }
         )
     }
@@ -784,10 +853,18 @@ struct PiPHomeView: View {
         }
     }
 
+    private func dismissPiPStoppedNotificationInfoIfNeeded() {
+        guard isPiPStoppedNotificationInfoVisible else { return }
+        withAnimation(.easeOut(duration: 0.12)) {
+            isPiPStoppedNotificationInfoVisible = false
+        }
+    }
+
     private func runAfterDismissingSettings(_ action: @escaping () -> Void) {
         dismissKeepAliveInfoIfNeeded()
         dismissPiPStatusInfoIfNeededRespectingPersistence()
         dismissNotificationFrequencyInfoIfNeeded()
+        dismissPiPStoppedNotificationInfoIfNeeded()
         guard isSettingsVisible || isSettingsExpanded else {
             action()
             return
@@ -999,32 +1076,9 @@ struct VersionPageView: View {
 
                     VStack(spacing: 7) {
                         HStack(spacing: 8) {
-                            Text("1.0.8 beta4")
+                            Text("1.0.8")
                                 .font(.system(size: layout.versionNumberSize, weight: .bold, design: .rounded))
                                 .foregroundColor(Color(UIColor.label))
-
-                            Button {
-                                UIImpactFeedbackGenerator(style: .light).impactOccurred()
-                                dismissDebugPanel()
-                                dismissKeepAliveInfoPanel()
-                                dismissDebugDiagnosticsInfoPanel()
-                                withAnimation(.interpolatingSpring(mass: 0.45, stiffness: 420, damping: 36, initialVelocity: 0.12)) {
-                                    isBetaInfoVisible.toggle()
-                                }
-                            } label: {
-                                HStack(spacing: 4) {
-                                    Text("测试版")
-                                        .font(.system(size: 12, weight: .black))
-                                    Image(systemName: "questionmark.circle.fill")
-                                        .font(.system(size: 11, weight: .bold))
-                                }
-                                .foregroundColor(Color(UIColor.systemRed))
-                                .padding(.leading, 8)
-                                .padding(.trailing, 7)
-                                .frame(height: 23)
-                                .background(betaVersionBadgeBackground)
-                            }
-                            .buttonStyle(.plain)
                         }
                         .lineLimit(1)
                         .minimumScaleFactor(0.72)
@@ -1533,7 +1587,8 @@ struct VersionPageView: View {
                     .overlay(shape.strokeBorder(Color(UIColor.systemRed).opacity(0.36), lineWidth: 1))
             } else if #available(iOS 15.0, *) {
                 shape
-                    .fill(Color(UIColor.systemRed).opacity(0.12))
+                    .fill(.ultraThinMaterial)
+                    .overlay(shape.fill(Color(UIColor.systemRed).opacity(0.12)))
                     .overlay(shape.strokeBorder(Color(UIColor.systemRed).opacity(0.36), lineWidth: 1))
             } else {
                 shape
@@ -1754,6 +1809,7 @@ private struct DebugModePanel: View {
                 .font(.system(size: 12, weight: .semibold))
                 .foregroundColor(Color(UIColor.secondaryLabel))
                 .fixedSize(horizontal: false, vertical: true)
+
             }
         }
         .foregroundColor(Color(UIColor.label))

@@ -7,8 +7,9 @@ import Foundation
 import AppIntents
 
 enum PiPShortcutAction: String {
-    case toggleFloatingWindow
+    case startFloatingWindow
     case hideFloatingWindow
+    case startAndHideFloatingWindow
 }
 
 enum PiPShortcutActionCenter {
@@ -49,9 +50,9 @@ enum PiPShortcutActionCenter {
 }
 
 @available(iOS 16.0, *)
-struct ToggleFloatingWindowIntent: AppIntent {
-    static var title: LocalizedStringResource = "开关悬浮窗"
-    static var description = IntentDescription("打开或关闭全局高刷悬浮窗")
+struct StartFloatingWindowIntent: AppIntent {
+    static var title: LocalizedStringResource = "打开悬浮窗"
+    static var description = IntentDescription("打开全局高刷悬浮窗")
     static var openAppWhenRun: Bool = true
     static var isDiscoverable: Bool = true
     static var authenticationPolicy: IntentAuthenticationPolicy = .alwaysAllowed
@@ -62,7 +63,7 @@ struct ToggleFloatingWindowIntent: AppIntent {
     }
 
     func perform() async throws -> some IntentResult {
-        PiPShortcutActionCenter.request(.toggleFloatingWindow)
+        PiPShortcutActionCenter.request(.startFloatingWindow)
         return .result()
     }
 }
@@ -87,16 +88,44 @@ struct HideFloatingWindowIntent: AppIntent {
 }
 
 @available(iOS 16.0, *)
+struct StartAndHideFloatingWindowIntent: AppIntent {
+    static var title: LocalizedStringResource = "打开并隐藏悬浮窗"
+    static var description = IntentDescription("打开全局高刷悬浮窗后自动缩小到0.1pt")
+    static var openAppWhenRun: Bool = true
+    static var isDiscoverable: Bool = true
+    static var authenticationPolicy: IntentAuthenticationPolicy = .alwaysAllowed
+
+    @available(iOS 26.0, *)
+    static var supportedModes: IntentModes {
+        .foreground(.immediate)
+    }
+
+    func perform() async throws -> some IntentResult {
+        PiPShortcutActionCenter.request(.startAndHideFloatingWindow)
+        return .result()
+    }
+}
+
+@available(iOS 16.0, *)
 struct GlobalRefreshShortcutsProvider: AppShortcutsProvider {
     static var appShortcuts: [AppShortcut] {
         AppShortcut(
-            intent: ToggleFloatingWindowIntent(),
+            intent: StartAndHideFloatingWindowIntent(),
             phrases: [
-                "\(.applicationName)开关悬浮窗",
-                "\(.applicationName)开启悬浮窗",
-                "\(.applicationName)关闭悬浮窗"
+                "\(.applicationName)打开并隐藏悬浮窗",
+                "\(.applicationName)打开隐藏悬浮窗"
             ],
-            shortTitle: "开关悬浮窗",
+            shortTitle: "打开并隐藏",
+            systemImageName: "pip.remove"
+        )
+
+        AppShortcut(
+            intent: StartFloatingWindowIntent(),
+            phrases: [
+                "\(.applicationName)打开悬浮窗",
+                "\(.applicationName)开启悬浮窗"
+            ],
+            shortTitle: "打开悬浮窗",
             systemImageName: "pip"
         )
 

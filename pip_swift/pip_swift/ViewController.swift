@@ -73,6 +73,9 @@ class ViewController: UIViewController, AVPictureInPictureControllerDelegate {
     private var lastClockOverlayFPSText = ""
     private var lastClockOverlayNetworkText = ""
     private var lastClockRenderTick = -1
+    private var lastBackgroundClockDiagnosticsTimestamp: CFTimeInterval?
+    private var lastLoggedPiPSuspendedAtSide: Bool?
+    private var windowsBeforePiPStart: Set<ObjectIdentifier> = []
     private var playerEndObserver: NSObjectProtocol?
     private var backgroundTask: UIBackgroundTaskIdentifier = .invalid
     private var isPiPTransitioning = false
@@ -86,6 +89,7 @@ class ViewController: UIViewController, AVPictureInPictureControllerDelegate {
     private var didRecoverStalePiPStop = false
     private var pendingShortcutPiPStartRetry: DispatchWorkItem?
     private var shortcutPiPStartRetryRemaining = 0
+    private var shouldHidePiPAfterShortcutStart = false
     private var playerStallObserver: NSObjectProtocol?
     private var playerPauseObserver: NSKeyValueObservation?
     private var isPreviewingPiPHeight = false
@@ -155,11 +159,20 @@ class ViewController: UIViewController, AVPictureInPictureControllerDelegate {
             updateHomeView()
         }
     }
-    private var isKeepAliveNotificationEnabled = KeepAliveNotificationTester.isEnabled {
+    private var isPiPStoppedNotificationEnabled = KeepAliveNotificationTester.isPiPStoppedNotificationEnabled {
         didSet {
-            guard oldValue != isKeepAliveNotificationEnabled else { return }
+            guard oldValue != isPiPStoppedNotificationEnabled else { return }
             if !isLoadingHomePreferences {
-                KeepAliveNotificationTester.isEnabled = isKeepAliveNotificationEnabled
+                KeepAliveNotificationTester.isPiPStoppedNotificationEnabled = isPiPStoppedNotificationEnabled
+            }
+            updateHomeView()
+        }
+    }
+    private var isBackgroundInterruptionNotificationEnabled = KeepAliveNotificationTester.isBackgroundProbeEnabled {
+        didSet {
+            guard oldValue != isBackgroundInterruptionNotificationEnabled else { return }
+            if !isLoadingHomePreferences {
+                KeepAliveNotificationTester.isBackgroundProbeEnabled = isBackgroundInterruptionNotificationEnabled
             }
             updateHomeView()
         }
@@ -243,6 +256,10 @@ class ViewController: UIViewController, AVPictureInPictureControllerDelegate {
     private var isPiPVisuallyHidden: Bool {
         clampedPiPHeight <= 0.15
     }
+    private var isPiPSuspendedAtSide: Bool {
+        guard pipController?.isPictureInPictureActive == true else { return false }
+        return pipController.isPictureInPictureSuspended
+    }
     private var shouldRenderClockMode: Bool {
         isClockModeFeatureEnabled && isClockModeEnabled && !isPiPVisuallyHidden
     }
@@ -265,8 +282,9 @@ class ViewController: UIViewController, AVPictureInPictureControllerDelegate {
         return true
     }
     private var shouldUsePlayerLayerPiPCompatibility: Bool {
-        // BETA4_ANCHOR_BILIBILI_DANMAKU_FIX:
-        // 启用方式回归 beta3 的 VideoCall contentSource，避免引入全屏挂载；弹幕修复只保留 preferred=0 相关改动。
+        // BETA5_ANCHOR_PLAYER_LAYER_PIP_TIME_MODE:
+        // playerLayer 承载实验已验证：高度调整慢、PiP 内容挂载易黑屏、0.1pt 隐藏会触发关闭。
+        // 因此默认回到 beta4 的 VideoCall contentSource 主线，保留实验代码但不启用。
         return false
     }
 
@@ -296,6 +314,7 @@ class ViewController: UIViewController, AVPictureInPictureControllerDelegate {
         NotificationCenter.default.addObserver(self, selector: #selector(handleEnterForeground), name: UIApplication.willEnterForegroundNotification, object: nil)
         NotificationCenter.default.addObserver(self, selector: #selector(handleEnterBackground), name: UIApplication.didEnterBackgroundNotification, object: nil)
         NotificationCenter.default.addObserver(self, selector: #selector(handleKeepAliveModeDidChange), name: Self.iOS26KeepAliveModeDidChangeNotification, object: nil)
+        NotificationCenter.default.addObserver(self, selector: #selector(handleClockDisplayLinkPreferenceDidChange), name: ClockDisplayLinkPreference.didChangeNotification, object: nil)
     }
 
     override func viewDidAppear(_ animated: Bool) {
@@ -356,7 +375,8 @@ class ViewController: UIViewController, AVPictureInPictureControllerDelegate {
             isScrollingEnabled: isScrollingEnabled,
             isClockModeEnabled: isClockModeEnabled,
             isDarkModeForced: isDarkModeForced,
-            isKeepAliveNotificationEnabled: isKeepAliveNotificationEnabled,
+            isPiPStoppedNotificationEnabled: isPiPStoppedNotificationEnabled,
+            isBackgroundInterruptionNotificationEnabled: isBackgroundInterruptionNotificationEnabled,
             keepAliveNotificationFrequency: keepAliveNotificationFrequency,
             keepsPiPStatusInfoPersistent: keepsPiPStatusInfoPersistent,
             remembersPiPHeight: remembersPiPHeight,
@@ -368,7 +388,8 @@ class ViewController: UIViewController, AVPictureInPictureControllerDelegate {
             onToggleScrolling: { [weak self] in self?.toggleScrolling() },
             onSetClockMode: { [weak self] newValue in self?.setClockMode(newValue) },
             onSetDarkModeForced: { [weak self] newValue in self?.setDarkModeForced(newValue) },
-            onSetKeepAliveNotificationEnabled: { [weak self] newValue in self?.setKeepAliveNotificationEnabled(newValue) },
+            onSetPiPStoppedNotificationEnabled: { [weak self] newValue in self?.setPiPStoppedNotificationEnabled(newValue) },
+            onSetBackgroundInterruptionNotificationEnabled: { [weak self] newValue in self?.setBackgroundInterruptionNotificationEnabled(newValue) },
             onSetKeepAliveNotificationFrequency: { [weak self] frequency in self?.setKeepAliveNotificationFrequency(frequency) },
             onSetPiPStatusInfoPersistent: { [weak self] newValue in self?.setPiPStatusInfoPersistent(newValue) },
             onToggleSettings: { [weak self] in self?.toggleSettingsPanel() },
@@ -410,7 +431,8 @@ class ViewController: UIViewController, AVPictureInPictureControllerDelegate {
             isScrollingEnabled: isScrollingEnabled,
             isClockModeEnabled: isClockModeEnabled,
             isDarkModeForced: isDarkModeForced,
-            isKeepAliveNotificationEnabled: isKeepAliveNotificationEnabled,
+            isPiPStoppedNotificationEnabled: isPiPStoppedNotificationEnabled,
+            isBackgroundInterruptionNotificationEnabled: isBackgroundInterruptionNotificationEnabled,
             keepAliveNotificationFrequency: keepAliveNotificationFrequency,
             keepsPiPStatusInfoPersistent: keepsPiPStatusInfoPersistent,
             remembersPiPHeight: remembersPiPHeight,
@@ -422,7 +444,8 @@ class ViewController: UIViewController, AVPictureInPictureControllerDelegate {
             onToggleScrolling: { [weak self] in self?.toggleScrolling() },
             onSetClockMode: { [weak self] newValue in self?.setClockMode(newValue) },
             onSetDarkModeForced: { [weak self] newValue in self?.setDarkModeForced(newValue) },
-            onSetKeepAliveNotificationEnabled: { [weak self] newValue in self?.setKeepAliveNotificationEnabled(newValue) },
+            onSetPiPStoppedNotificationEnabled: { [weak self] newValue in self?.setPiPStoppedNotificationEnabled(newValue) },
+            onSetBackgroundInterruptionNotificationEnabled: { [weak self] newValue in self?.setBackgroundInterruptionNotificationEnabled(newValue) },
             onSetKeepAliveNotificationFrequency: { [weak self] frequency in self?.setKeepAliveNotificationFrequency(frequency) },
             onSetPiPStatusInfoPersistent: { [weak self] newValue in self?.setPiPStatusInfoPersistent(newValue) },
             onToggleSettings: { [weak self] in self?.toggleSettingsPanel() },
@@ -455,7 +478,8 @@ class ViewController: UIViewController, AVPictureInPictureControllerDelegate {
         }
         isScrollingEnabled = isClockModeEnabled ? false : prefersTextScrolling
         isDarkModeForced = AppAppearancePreference.isDarkModeForced
-        isKeepAliveNotificationEnabled = KeepAliveNotificationTester.isEnabled
+        isPiPStoppedNotificationEnabled = KeepAliveNotificationTester.isPiPStoppedNotificationEnabled
+        isBackgroundInterruptionNotificationEnabled = KeepAliveNotificationTester.isBackgroundProbeEnabled
         keepAliveNotificationFrequency = KeepAliveNotificationTester.probeFrequency
         keepsPiPStatusInfoPersistent = UserDefaults.standard.bool(forKey: userDefaultsPiPStatusInfoPersistentKey)
         isPiPStatusInfoVisible = keepsPiPStatusInfoPersistent
@@ -514,16 +538,29 @@ class ViewController: UIViewController, AVPictureInPictureControllerDelegate {
         }
     }
 
-    private func setKeepAliveNotificationEnabled(_ isEnabled: Bool) {
-        DiagnosticsRuntimeState.recordUserAction(isEnabled ? "开启后台中断提醒beta" : "关闭后台中断提醒beta")
+    private func setPiPStoppedNotificationEnabled(_ isEnabled: Bool) {
+        DiagnosticsRuntimeState.recordUserAction(isEnabled ? "开启悬浮窗被挤通知" : "关闭悬浮窗被挤通知")
         if isEnabled {
-            KeepAliveNotificationTester.prepareForHomeToggle(from: self) { [weak self] granted in
+            KeepAliveNotificationTester.prepareForPiPStoppedToggle(from: self) { [weak self] granted in
                 guard let self else { return }
-                self.isKeepAliveNotificationEnabled = granted
+                self.isPiPStoppedNotificationEnabled = granted
             }
         } else {
-            isKeepAliveNotificationEnabled = false
-            KeepAliveNotificationTester.cancelAllTestingNotifications(reason: "首页关闭后台中断提醒beta")
+            isPiPStoppedNotificationEnabled = false
+            KeepAliveNotificationTester.cancelPiPStoppedNotifications(reason: "首页关闭悬浮窗被挤通知")
+        }
+    }
+
+    private func setBackgroundInterruptionNotificationEnabled(_ isEnabled: Bool) {
+        DiagnosticsRuntimeState.recordUserAction(isEnabled ? "开启后台中断提醒beta" : "关闭后台中断提醒beta")
+        if isEnabled {
+            KeepAliveNotificationTester.prepareForBackgroundProbeToggle(from: self) { [weak self] granted in
+                guard let self else { return }
+                self.isBackgroundInterruptionNotificationEnabled = granted
+            }
+        } else {
+            isBackgroundInterruptionNotificationEnabled = false
+            KeepAliveNotificationTester.cancelBackgroundProbeNotifications(reason: "首页关闭后台中断提醒beta")
         }
     }
 
@@ -596,6 +633,7 @@ class ViewController: UIViewController, AVPictureInPictureControllerDelegate {
     private func updateDiagnosticsPiPState() {
         let state = [
             "active=\(pipController?.isPictureInPictureActive ?? false)",
+            "suspended=\(isPiPSuspendedAtSide)",
             "own=\(isOwnPiPConfirmedActive)",
             "ui=\(isPiPActiveForUI)",
             "wants=\(wantsPiPActive)",
@@ -1010,37 +1048,61 @@ class ViewController: UIViewController, AVPictureInPictureControllerDelegate {
         AppDebugLogger.log("Shortcut action requested: \(action.rawValue), reason=\(reason)")
 
         switch action {
-        case .toggleFloatingWindow:
-            togglePiPFromShortcut()
+        case .startFloatingWindow:
+            startPiPFromShortcut(shouldHideAfterStart: false)
         case .hideFloatingWindow:
             hidePiPFromShortcut()
+        case .startAndHideFloatingWindow:
+            startPiPFromShortcut(shouldHideAfterStart: true)
         }
         return true
     }
 
-    private func togglePiPFromShortcut() {
+    private func startPiPFromShortcut(shouldHideAfterStart: Bool) {
+        // BETA5_ANCHOR_SHORTCUT_START_AND_HIDE:
+        // 快捷指令“打开悬浮窗”只负责打开；“打开并隐藏悬浮窗”在 PiP 真正启动后缩小到 0.1pt。
         if pipController == nil, !preparePiPInfrastructureIfNeeded() {
             isPiPActiveForUI = false
+            shouldHidePiPAfterShortcutStart = false
             showMessage("当前环境不支持悬浮窗")
             return
         }
 
         guard let pipController else {
             isPiPActiveForUI = false
+            shouldHidePiPAfterShortcutStart = false
             showMessage("当前环境不支持悬浮窗")
             return
         }
 
-        recoverStalePiPTransitionIfNeeded(reason: "快捷方式点击悬浮窗")
+        recoverStalePiPTransitionIfNeeded(reason: "快捷方式打开悬浮窗")
 
         guard !isPiPTransitioning else {
-            AppDebugLogger.log("Shortcut toggle ignored: PiP transitioning")
+            shouldHidePiPAfterShortcutStart = shouldHidePiPAfterShortcutStart || shouldHideAfterStart
+            AppDebugLogger.log("Shortcut start ignored: PiP transitioning")
             return
         }
 
-        AppDebugLogger.log("Shortcut toggle: \(pipController.isPictureInPictureActive ? "active PiP -> stop" : "inactive PiP -> start")")
+        if pipController.isPictureInPictureActive {
+            shouldHidePiPAfterShortcutStart = false
+            if shouldHideAfterStart {
+                hidePiPFromShortcut()
+            } else {
+                showMessage("悬浮窗已开启")
+            }
+            return
+        }
+
+        shouldHidePiPAfterShortcutStart = shouldHideAfterStart
+        AppDebugLogger.log("Shortcut start: inactive PiP -> start, hideAfterStart=\(shouldHideAfterStart)")
         prepareShortcutPiPStartRetryIfNeeded()
-        togglePiP()
+        AppDebugLogger.log("Start PiP requested by shortcut")
+        wantsPiPActive = true
+        updatePiPAutomaticStartPolicy()
+        didRetryLegacyPiPStart = false
+        isPiPActiveForUI = true
+        configureRunningText()
+        startPiPSmoothly()
     }
 
     private func prepareShortcutPiPStartRetryIfNeeded() {
@@ -1087,6 +1149,7 @@ class ViewController: UIViewController, AVPictureInPictureControllerDelegate {
 
     private func hidePiPFromShortcut() {
         guard let pipController, pipController.isPictureInPictureActive else {
+            shouldHidePiPAfterShortcutStart = false
             showMessage("请先开启悬浮窗并吸附到侧边")
             return
         }
@@ -1095,12 +1158,21 @@ class ViewController: UIViewController, AVPictureInPictureControllerDelegate {
         showMessage("已隐藏悬浮窗")
     }
 
+    private func hidePiPAfterShortcutStartIfNeeded() {
+        guard shouldHidePiPAfterShortcutStart else { return }
+        shouldHidePiPAfterShortcutStart = false
+        commitPiPHeight(minPiPHeight)
+        showMessage("已打开并隐藏悬浮窗")
+    }
+
     private func shortcutActionTitle(_ action: PiPShortcutAction) -> String {
         switch action {
-        case .toggleFloatingWindow:
-            return "开关悬浮窗"
+        case .startFloatingWindow:
+            return "打开悬浮窗"
         case .hideFloatingWindow:
             return "隐藏悬浮窗"
+        case .startAndHideFloatingWindow:
+            return "打开并隐藏悬浮窗"
         }
     }
 
@@ -1476,6 +1548,7 @@ class ViewController: UIViewController, AVPictureInPictureControllerDelegate {
         lastClockOverlayFPSText = ""
         lastClockOverlayNetworkText = ""
         lastClockRenderTick = -1
+        lastBackgroundClockDiagnosticsTimestamp = nil
     }
 
     private func resetClockMetrics() {
@@ -1492,6 +1565,7 @@ class ViewController: UIViewController, AVPictureInPictureControllerDelegate {
         lastClockOverlayFPSText = ""
         lastClockOverlayNetworkText = ""
         lastClockRenderTick = -1
+        lastBackgroundClockDiagnosticsTimestamp = nil
     }
 
     @objc private func updateScrollingText(_ displayLink: CADisplayLink) {
@@ -1517,11 +1591,18 @@ class ViewController: UIViewController, AVPictureInPictureControllerDelegate {
             displayLink.preferredFrameRateRange = CAFrameRateRange(
                 minimum: 30,
                 maximum: target,
-                preferred: 0
+                preferred: ClockDisplayLinkPreference.preferredFrameRateValue(target: target)
             )
         } else {
             displayLink.preferredFramesPerSecond = targetFramesPerSecond
         }
+    }
+
+    @objc private func handleClockDisplayLinkPreferenceDidChange() {
+        if let clockDisplayLink {
+            configureForClockRefreshRate(clockDisplayLink)
+        }
+        AppDebugLogger.log("时间悬浮窗强拉120调试开关：\(ClockDisplayLinkPreference.forcesTargetFrameRate ? "开启" : "关闭")")
     }
 
     @objc private func updateClockLabel() {
@@ -1533,8 +1614,34 @@ class ViewController: UIViewController, AVPictureInPictureControllerDelegate {
             stopClockTimer()
             return
         }
+        logBackgroundClockDiagnosticsIfNeeded(displayLink)
         updateMeasuredFPS(from: displayLink)
         updateClockOverlay(timestamp: displayLink.timestamp, forceNetworkSample: false)
+    }
+
+    private func logBackgroundClockDiagnosticsIfNeeded(_ displayLink: CADisplayLink) {
+        let isSuspended = isPiPSuspendedAtSide
+        if lastLoggedPiPSuspendedAtSide != isSuspended {
+            lastLoggedPiPSuspendedAtSide = isSuspended
+            if let clockDisplayLink {
+                configureForClockRefreshRate(clockDisplayLink)
+            }
+            AppDebugLogger.log("PiP suspended state changed: \(isSuspended)")
+        }
+        guard UIApplication.shared.applicationState == .background else {
+            lastBackgroundClockDiagnosticsTimestamp = nil
+            return
+        }
+        if let lastBackgroundClockDiagnosticsTimestamp,
+           displayLink.timestamp - lastBackgroundClockDiagnosticsTimestamp < 5.0 {
+            return
+        }
+        lastBackgroundClockDiagnosticsTimestamp = displayLink.timestamp
+        let interval = displayLink.targetTimestamp - displayLink.timestamp
+        let instantFPS = interval > 0.001 ? Int((1.0 / interval).rounded()) : 0
+        AppDebugLogger.log(
+            "后台时间悬浮窗采样：suspended=\(isSuspended),height=\(formattedHeight(clampedPiPHeight)),instantFPS=\(instantFPS),measuredFPS=\(measuredPiPFPS),timestamp=\(String(format: "%.3f", displayLink.timestamp))"
+        )
     }
 
     private func updateMeasuredFPS(from displayLink: CADisplayLink) {
@@ -1580,7 +1687,10 @@ class ViewController: UIViewController, AVPictureInPictureControllerDelegate {
     private func fpsConfirmationRequirement(from currentFPS: Int, to candidateFPS: Int) -> (count: Int, duration: CFTimeInterval) {
         guard candidateFPS > currentFPS else { return (3, 0) }
         if candidateFPS >= 120 {
-            return (10, 0.35)
+            if currentFPS <= 60 {
+                return (8, 0.18)
+            }
+            return (24, 0.9)
         }
         return (5, 0.12)
     }
@@ -1719,6 +1829,7 @@ class ViewController: UIViewController, AVPictureInPictureControllerDelegate {
             return
         }
         restoreMinimumRememberedHeightIfNeeded()
+        captureWindowsBeforePiPStart()
         beginPiPTransition(expectedActive: true, reason: "start legacy")
         isStoppingPiP = false
         keepPlaybackAlive()
@@ -1941,20 +2052,127 @@ class ViewController: UIViewController, AVPictureInPictureControllerDelegate {
 
     private func prepareCustomViewForPiPStart() {
         if shouldUsePlayerLayerPiPCompatibility {
-            attachCustomViewToKeyWindow()
+            attachCustomViewToPiPWindowIfAvailable(reason: "prepare start")
         } else {
             attachCustomViewToPiPContent()
         }
     }
 
     private func attachCustomViewToKeyWindow() {
-        guard let window = UIApplication.shared.windows.first, let customView else { return }
-        if customView.superview !== window {
+        attachCustomViewToPiPWindowIfAvailable(reason: "legacy fallback")
+    }
+
+    private func captureWindowsBeforePiPStart() {
+        windowsBeforePiPStart = Set(allApplicationWindows().map { ObjectIdentifier($0) })
+    }
+
+    @discardableResult
+    private func attachCustomViewToPiPWindowIfAvailable(reason: String) -> Bool {
+        guard shouldUsePlayerLayerPiPCompatibility, let customView else { return false }
+        guard let hostView = candidatePiPHostViewForCustomView() else {
+            AppDebugLogger.log("Skip attach custom view: PiP host unavailable, reason=\(reason), windows=\(windowDiagnosticsForPiPAttach())")
+            return false
+        }
+        if customView.superview !== hostView {
             customView.removeFromSuperview()
-            window.addSubview(customView)
+            hostView.addSubview(customView)
+            AppDebugLogger.log("Attach custom view to PiP host, reason=\(reason), host=\(type(of: hostView)), bounds=\(hostView.bounds), window=\(type(of: hostView.window))")
         }
         updateLegacyCustomViewGeometry()
-        window.layoutIfNeeded()
+        hostView.layoutIfNeeded()
+        return true
+    }
+
+    private func allApplicationWindows() -> [UIWindow] {
+        var windows = UIApplication.shared.connectedScenes
+            .compactMap { $0 as? UIWindowScene }
+            .flatMap(\.windows)
+        for window in UIApplication.shared.windows where !windows.contains(where: { $0 === window }) {
+            windows.append(window)
+        }
+        return windows
+    }
+
+    private func candidatePiPHostViewForCustomView() -> UIView? {
+        let windows = allApplicationWindows()
+        let visibleWindows = windows.filter {
+            !$0.isHidden
+                && $0.alpha > 0
+                && $0.bounds.width > 1
+                && $0.bounds.height > 1
+        }
+
+        if let currentHost = customView?.superview,
+           currentHost !== view,
+           currentHost.window !== view.window,
+           isSafePiPHostView(currentHost) {
+            return currentHost
+        }
+
+        let newWindows = visibleWindows.filter { window in
+            window !== view.window && !windowsBeforePiPStart.contains(ObjectIdentifier(window))
+        }
+        if let host = newWindows.compactMap({ safePiPHostView(in: $0) }).first {
+            return host
+        }
+
+        if pipController?.isPictureInPictureActive == true {
+            let nonMainWindows = visibleWindows.filter { $0 !== view.window }
+            if let host = nonMainWindows.compactMap({ safePiPHostView(in: $0) }).first {
+                return host
+            }
+        }
+
+        return nil
+    }
+
+    private func safePiPHostView(in window: UIWindow) -> UIView? {
+        if isSafePiPHostView(window) {
+            return window
+        }
+        return safePiPSubviewCandidates(in: window).first
+    }
+
+    private func safePiPSubviewCandidates(in rootView: UIView) -> [UIView] {
+        var candidates: [UIView] = []
+        func visit(_ candidate: UIView) {
+            if isSafePiPHostView(candidate) {
+                candidates.append(candidate)
+            }
+            candidate.subviews.forEach(visit)
+        }
+        rootView.subviews.forEach(visit)
+        return candidates.sorted { lhs, rhs in
+            let lhsArea = lhs.bounds.width * lhs.bounds.height
+            let rhsArea = rhs.bounds.width * rhs.bounds.height
+            return lhsArea > rhsArea
+        }
+    }
+
+    private func isSafePiPHostView(_ candidate: UIView) -> Bool {
+        guard !candidate.isHidden, candidate.alpha > 0 else { return false }
+        let bounds = candidate.bounds
+        guard bounds.width >= currentPiPSize.width * 0.5,
+              bounds.height >= currentPiPSize.height * 0.5 else {
+            return false
+        }
+
+        let screenBounds = candidate.window?.screen.bounds ?? UIScreen.main.bounds
+        let screenWidth = max(screenBounds.width, screenBounds.height)
+        let screenHeight = min(screenBounds.width, screenBounds.height)
+        let candidateWidth = max(bounds.width, bounds.height)
+        let candidateHeight = min(bounds.width, bounds.height)
+        let isFullscreenLike = candidateWidth >= screenWidth * 0.92
+            && candidateHeight >= screenHeight * 0.92
+        return !isFullscreenLike
+    }
+
+    private func windowDiagnosticsForPiPAttach() -> String {
+        allApplicationWindows().enumerated().map { index, window in
+            let marker = windowsBeforePiPStart.contains(ObjectIdentifier(window)) ? "old" : "new"
+            let isMain = window === view.window ? "main" : "other"
+            return "#\(index){\(marker),\(isMain),hidden=\(window.isHidden),alpha=\(String(format: "%.2f", window.alpha)),bounds=\(formatRect(window.bounds)),type=\(type(of: window))}"
+        }.joined(separator: ";")
     }
 
     private func detachLegacyCustomViewIfNeeded() {
@@ -2458,6 +2676,7 @@ class ViewController: UIViewController, AVPictureInPictureControllerDelegate {
             BackgroundTaskManager.shared.stopPlay()
             PowerUsageLogger.markKeepAliveStop()
         case .ended:
+            KeepAliveNotificationTester.markAudioInterruptionEnded()
             guard shouldKeepPiPPlaybackAlive else { return }
             AppDebugLogger.log("Audio interruption ended, resume keepAlive")
             keepPlaybackAlive()
@@ -2496,6 +2715,7 @@ class ViewController: UIViewController, AVPictureInPictureControllerDelegate {
         AppDebugLogger.log("PiP will start")
         prepareCustomViewForPiPStart()
         showPiPContentForOpening()
+        scheduleLegacyCustomViewAttachRetries()
     }
 
     func pictureInPictureControllerDidStartPictureInPicture(_ pictureInPictureController: AVPictureInPictureController) {
@@ -2510,6 +2730,7 @@ class ViewController: UIViewController, AVPictureInPictureControllerDelegate {
         prepareCustomViewForPiPStart()
         configureRunningText()
         showPiPContentForOpening()
+        scheduleLegacyCustomViewAttachRetries()
         finishPiPTransition()
         isOwnPiPConfirmedActive = true
         isPiPActiveForUI = true
@@ -2520,8 +2741,27 @@ class ViewController: UIViewController, AVPictureInPictureControllerDelegate {
         KeepAliveLogger.markPiPStarted(mode: shouldUsePiPOnlyKeepAlive ? "PiP保活-低功耗" : "音频强保活")
         updateDiagnosticsPiPState()
         updateDisplaySleepDiagnostics(reason: "PiP启动完成", shouldLog: true)
+        hidePiPAfterShortcutStartIfNeeded()
         AppDebugLogger.log("PiP did start")
         print("画中画弹出后：\(UIApplication.shared.windows)")
+    }
+
+    private func scheduleLegacyCustomViewAttachRetries() {
+        guard shouldUsePlayerLayerPiPCompatibility else { return }
+        let delays: [TimeInterval] = [0, 0.08, 0.2, 0.5, 1.0]
+        for delay in delays {
+            DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
+                guard
+                    let self,
+                    self.shouldUsePlayerLayerPiPCompatibility,
+                    self.pipController?.isPictureInPictureActive == true
+                else {
+                    return
+                }
+                _ = self.attachCustomViewToPiPWindowIfAvailable(reason: "did start retry \(String(format: "%.2f", delay))")
+                self.showPiPContentForOpening()
+            }
+        }
     }
 
     func pictureInPictureControllerWillStopPictureInPicture(_ pictureInPictureController: AVPictureInPictureController) {
@@ -2531,6 +2771,7 @@ class ViewController: UIViewController, AVPictureInPictureControllerDelegate {
         cancelShortcutPiPStartRetry()
         pendingPiPStartWorkItem = nil
         pipStartTimeoutWorkItem = nil
+        shouldHidePiPAfterShortcutStart = false
         beginPiPTransition(expectedActive: false, reason: "will stop")
         if needsLegacyPiPCompatibility {
             isStoppingPiP = true

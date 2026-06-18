@@ -266,15 +266,11 @@
 				inputFileListPaths = (
 				);
 				inputPaths = (
-					"$(SRCROOT)/pip_swift/Assets.xcassets/AppIcon.appiconset/appicon-iphone-60x60-2x.png",
-					"$(SRCROOT)/pip_swift/Assets.xcassets/AppIcon.appiconset/appicon-iphone-60x60-3x.png",
 				);
 				name = "Ensure App Icons";
 				outputFileListPaths = (
 				);
 				outputPaths = (
-					"$(TARGET_BUILD_DIR)/$(UNLOCALIZED_RESOURCES_FOLDER_PATH)/AppIcon60x60@2x.png",
-					"$(TARGET_BUILD_DIR)/$(UNLOCALIZED_RESOURCES_FOLDER_PATH)/AppIcon60x60@3x.png",
 				);
 				runOnlyForDeploymentPostprocessing = 0;
 				shellPath = /bin/sh;
