@@ -281,24 +281,21 @@ struct PiPHomeView: View {
         .padding(.bottom, layout.headerBottomPadding)
     }
 
-    private var keepAliveModeBadgeBackground: some View {
+    private var keepAliveModeBadgeBackground: AnyView {
         let shape = Capsule()
-        return Group {
-            if #available(iOS 26.0, *) {
+        if #available(iOS 26.0, *) {
+            return AnyView(
                 shape
                     .fill(Color(UIColor.secondarySystemGroupedBackground).opacity(0.22))
                     .glassEffect(.regular.interactive(), in: shape)
-            } else if #available(iOS 15.0, *) {
-                shape
-                    .fill(.ultraThinMaterial)
-                    .overlay(shape.fill(Color(UIColor.secondarySystemGroupedBackground).opacity(0.36)))
-                    .overlay(shape.strokeBorder(legacyGlassStrokeColor, lineWidth: 1))
-            } else {
-                shape
-                    .fill(Color(UIColor.secondarySystemGroupedBackground).opacity(0.94))
-                    .overlay(shape.strokeBorder(legacyGlassStrokeColor, lineWidth: 1))
-            }
+            )
         }
+        return AnyView(
+            shape
+                .fill(.ultraThinMaterial)
+                .overlay(shape.fill(Color(UIColor.secondarySystemGroupedBackground).opacity(0.36)))
+                .overlay(shape.strokeBorder(legacyGlassStrokeColor, lineWidth: 1))
+        )
     }
 
     private var statusBadgeBackground: some View {
@@ -706,21 +703,20 @@ struct PiPHomeView: View {
         .shadow(color: Color.black.opacity(0.16), radius: 18, x: 0, y: 10)
     }
 
-    private var settingsPopoverBackground: some View {
+    private var settingsPopoverBackground: AnyView {
         let shape = RoundedRectangle(cornerRadius: 22, style: .continuous)
-        return Group {
-            if #available(iOS 26.0, *) {
+        if #available(iOS 26.0, *) {
+            return AnyView(
                 shape
                     .fill(Color(UIColor.secondarySystemGroupedBackground).opacity(0.08))
                     .glassEffect(.regular.interactive(), in: shape)
-            } else if #available(iOS 15.0, *) {
-                shape
-                    .fill(.ultraThinMaterial)
-                    .overlay(shape.fill(Color(UIColor.secondarySystemGroupedBackground).opacity(0.28)))
-            } else {
-                shape.fill(Color(UIColor.secondarySystemGroupedBackground).opacity(0.9))
-            }
+            )
         }
+        return AnyView(
+            shape
+                .fill(.ultraThinMaterial)
+                .overlay(shape.fill(Color(UIColor.secondarySystemGroupedBackground).opacity(0.28)))
+        )
     }
 
     private var rememberHeightBinding: Binding<Bool> {
@@ -918,22 +914,21 @@ private struct SettingsGearButton: View {
             .contentShape(shape)
     }
 
-    @ViewBuilder
-    private func gearGlassBackground(shape: Capsule) -> some View {
+    private func gearGlassBackground(shape: Capsule) -> AnyView {
         if #available(iOS 26.0, *) {
-            shape
-                .fill(Color(UIColor.secondarySystemBackground).opacity(isExpanded ? 0.4 : 0.22))
-                .glassEffect(.regular.interactive(), in: shape)
-        } else if #available(iOS 15.0, *) {
-            shape
-	                .fill(.regularMaterial)
-	                .overlay(
-	                    shape.fill(Color(UIColor.secondarySystemGroupedBackground).opacity(isExpanded ? 0.56 : 0.4))
-	                )
-        } else {
-            shape
-                .fill(Color(UIColor.secondarySystemGroupedBackground).opacity(isExpanded ? 0.9 : 0.76))
+            return AnyView(
+                shape
+                    .fill(Color(UIColor.secondarySystemBackground).opacity(isExpanded ? 0.4 : 0.22))
+                    .glassEffect(.regular.interactive(), in: shape)
+            )
         }
+        return AnyView(
+            shape
+                .fill(.regularMaterial)
+                .overlay(
+                    shape.fill(Color(UIColor.secondarySystemGroupedBackground).opacity(isExpanded ? 0.56 : 0.4))
+                )
+        )
     }
 
     private var layout: AdaptiveLayoutMetrics { .current }
@@ -950,21 +945,21 @@ private struct SettingsGlassContainer: ViewModifier {
             .background(glassBackground(shape: shape))
     }
 
-    @ViewBuilder
-    private func glassBackground(shape: RoundedRectangle) -> some View {
+    private func glassBackground(shape: RoundedRectangle) -> AnyView {
         if #available(iOS 26.0, *) {
-            shape
-                .fill(Color.white.opacity(isActive ? 0.1 : 0.06))
-                .glassEffect(.regular.interactive(), in: shape)
-        } else if #available(iOS 15.0, *) {
+            return AnyView(
+                shape
+                    .fill(Color.white.opacity(isActive ? 0.1 : 0.06))
+                    .glassEffect(.regular.interactive(), in: shape)
+            )
+        }
+        return AnyView(
             shape
                 .fill(.regularMaterial)
                 .overlay(
                     shape.fill(Color(UIColor.secondarySystemGroupedBackground).opacity(isActive ? 0.34 : 0.2))
                 )
-        } else {
-            shape.fill(Color(UIColor.secondarySystemGroupedBackground).opacity(isActive ? 0.9 : 0.76))
-        }
+        )
     }
 }
 
@@ -1557,82 +1552,72 @@ struct VersionPageView: View {
         displayedDebugModeEnabled ? 92 : 48
     }
 
-    private var versionFlagBackground: some View {
+    private var versionFlagBackground: AnyView {
         let shape = Capsule()
-        return Group {
-            if #available(iOS 26.0, *) {
+        if #available(iOS 26.0, *) {
+            return AnyView(
                 shape
                     .fill(Color(UIColor.secondarySystemGroupedBackground).opacity(0.22))
                     .glassEffect(.regular.interactive(), in: shape)
-            } else if #available(iOS 15.0, *) {
-                shape
-                    .fill(.ultraThinMaterial)
-                    .overlay(shape.fill(Color(UIColor.secondarySystemGroupedBackground).opacity(0.36)))
-                    .overlay(shape.strokeBorder(legacyGlassStrokeColor, lineWidth: 1))
-            } else {
-                shape
-                    .fill(Color(UIColor.secondarySystemGroupedBackground).opacity(0.94))
-                    .overlay(shape.strokeBorder(legacyGlassStrokeColor, lineWidth: 1))
-            }
+            )
         }
+        return AnyView(
+            shape
+                .fill(.ultraThinMaterial)
+                .overlay(shape.fill(Color(UIColor.secondarySystemGroupedBackground).opacity(0.36)))
+                .overlay(shape.strokeBorder(legacyGlassStrokeColor, lineWidth: 1))
+        )
     }
 
-    private var betaVersionBadgeBackground: some View {
+    private var betaVersionBadgeBackground: AnyView {
         let shape = Capsule()
-        return Group {
-            if #available(iOS 26.0, *) {
+        if #available(iOS 26.0, *) {
+            return AnyView(
                 shape
                     .fill(Color(UIColor.systemRed).opacity(0.12))
                     .glassEffect(.regular.interactive(), in: shape)
                     .overlay(shape.strokeBorder(Color(UIColor.systemRed).opacity(0.36), lineWidth: 1))
-            } else if #available(iOS 15.0, *) {
-                shape
-                    .fill(.ultraThinMaterial)
-                    .overlay(shape.fill(Color(UIColor.systemRed).opacity(0.12)))
-                    .overlay(shape.strokeBorder(Color(UIColor.systemRed).opacity(0.36), lineWidth: 1))
-            } else {
-                shape
-                    .fill(Color(UIColor.systemRed).opacity(0.14))
-                    .overlay(shape.strokeBorder(Color(UIColor.systemRed).opacity(0.38), lineWidth: 1))
-            }
+            )
         }
+        return AnyView(
+            shape
+                .fill(.ultraThinMaterial)
+                .overlay(shape.fill(Color(UIColor.systemRed).opacity(0.12)))
+                .overlay(shape.strokeBorder(Color(UIColor.systemRed).opacity(0.36), lineWidth: 1))
+        )
     }
 
-    private var diagnosticsStatusBackground: some View {
+    private var diagnosticsStatusBackground: AnyView {
         let shape = Capsule()
-        return Group {
-            if #available(iOS 26.0, *) {
+        if #available(iOS 26.0, *) {
+            return AnyView(
                 shape
                     .fill(Color(UIColor.systemRed).opacity(0.08))
                     .glassEffect(.regular.interactive(), in: shape)
-            } else if #available(iOS 15.0, *) {
-                shape
-                    .fill(.ultraThinMaterial)
-                    .overlay(shape.fill(Color(UIColor.systemRed).opacity(0.08)))
-                    .overlay(shape.strokeBorder(Color(UIColor.systemRed).opacity(0.34), lineWidth: 1))
-            } else {
-                shape
-                    .fill(Color(UIColor.systemRed).opacity(0.1))
-                    .overlay(shape.strokeBorder(Color(UIColor.systemRed).opacity(0.34), lineWidth: 1))
-            }
+            )
         }
+        return AnyView(
+            shape
+                .fill(.ultraThinMaterial)
+                .overlay(shape.fill(Color(UIColor.systemRed).opacity(0.08)))
+                .overlay(shape.strokeBorder(Color(UIColor.systemRed).opacity(0.34), lineWidth: 1))
+        )
     }
 
-    private var infoPanelBackground: some View {
+    private var infoPanelBackground: AnyView {
         let shape = RoundedRectangle(cornerRadius: 20, style: .continuous)
-        return Group {
-            if #available(iOS 26.0, *) {
+        if #available(iOS 26.0, *) {
+            return AnyView(
                 shape
                     .fill(Color(UIColor.secondarySystemGroupedBackground).opacity(0.08))
                     .glassEffect(.regular.interactive(), in: shape)
-            } else if #available(iOS 15.0, *) {
-                shape
-                    .fill(.ultraThinMaterial)
-                    .overlay(shape.fill(Color(UIColor.secondarySystemGroupedBackground).opacity(0.36)))
-            } else {
-                shape.fill(Color(UIColor.secondarySystemGroupedBackground).opacity(0.9))
-            }
+            )
         }
+        return AnyView(
+            shape
+                .fill(.ultraThinMaterial)
+                .overlay(shape.fill(Color(UIColor.secondarySystemGroupedBackground).opacity(0.36)))
+        )
     }
 
     private var layout: AdaptiveLayoutMetrics { .current }
@@ -1659,19 +1644,19 @@ private struct DebugModeButton: View {
             .contentShape(Circle())
     }
 
-    @ViewBuilder
-    private func debugGlassBackground(shape: Circle) -> some View {
+    private func debugGlassBackground(shape: Circle) -> AnyView {
         if #available(iOS 26.0, *) {
-            shape
-                .fill(Color(UIColor.secondarySystemGroupedBackground).opacity(isExpanded ? 0.36 : 0.22))
-                .glassEffect(.regular.interactive(), in: shape)
-        } else if #available(iOS 15.0, *) {
+            return AnyView(
+                shape
+                    .fill(Color(UIColor.secondarySystemGroupedBackground).opacity(isExpanded ? 0.36 : 0.22))
+                    .glassEffect(.regular.interactive(), in: shape)
+            )
+        }
+        return AnyView(
             shape
                 .fill(.regularMaterial)
                 .overlay(shape.fill(Color(UIColor.secondarySystemBackground).opacity(isExpanded ? 0.54 : 0.38)))
-        } else {
-            shape.fill(Color(UIColor.secondarySystemBackground).opacity(isExpanded ? 0.84 : 0.64))
-        }
+        )
     }
 }
 
@@ -1698,19 +1683,19 @@ private struct GitHubLinkIcon: View {
         .accessibilityLabel("GitHub")
     }
 
-    @ViewBuilder
-    private func glassBackground(shape: Circle) -> some View {
+    private func glassBackground(shape: Circle) -> AnyView {
         if #available(iOS 26.0, *) {
-            shape
-                .fill(Color(UIColor.secondarySystemGroupedBackground).opacity(0.22))
-                .glassEffect(.regular.interactive(), in: shape)
-        } else if #available(iOS 15.0, *) {
+            return AnyView(
+                shape
+                    .fill(Color(UIColor.secondarySystemGroupedBackground).opacity(0.22))
+                    .glassEffect(.regular.interactive(), in: shape)
+            )
+        }
+        return AnyView(
             shape
                 .fill(.regularMaterial)
                 .overlay(shape.fill(Color(UIColor.secondarySystemBackground).opacity(0.38)))
-        } else {
-            shape.fill(Color(UIColor.secondarySystemBackground).opacity(0.64))
-        }
+        )
     }
 }
 
@@ -1855,21 +1840,20 @@ private struct DebugModePanel: View {
         )
     }
 
-    private var panelBackground: some View {
+    private var panelBackground: AnyView {
         let shape = RoundedRectangle(cornerRadius: 22, style: .continuous)
-        return Group {
-            if #available(iOS 26.0, *) {
+        if #available(iOS 26.0, *) {
+            return AnyView(
                 shape
                     .fill(Color(UIColor.secondarySystemGroupedBackground).opacity(0.08))
                     .glassEffect(.regular.interactive(), in: shape)
-            } else if #available(iOS 15.0, *) {
-                shape
-                    .fill(.ultraThinMaterial)
-                    .overlay(shape.fill(Color(UIColor.secondarySystemGroupedBackground).opacity(0.28)))
-            } else {
-                shape.fill(Color(UIColor.secondarySystemGroupedBackground).opacity(0.9))
-            }
+            )
         }
+        return AnyView(
+            shape
+                .fill(.ultraThinMaterial)
+                .overlay(shape.fill(Color(UIColor.secondarySystemGroupedBackground).opacity(0.28)))
+        )
     }
 }
 
@@ -2139,22 +2123,21 @@ private struct SettingsLiquidGlassButtonStyle: ButtonStyle {
             .animation(.spring(response: 0.22, dampingFraction: 0.8), value: configuration.isPressed)
     }
 
-    @ViewBuilder
-    private func settingsBackground(isPressed: Bool, shape: RoundedRectangle) -> some View {
+    private func settingsBackground(isPressed: Bool, shape: RoundedRectangle) -> AnyView {
         if #available(iOS 26.0, *) {
-            shape
-                .fill(Color(UIColor.secondarySystemBackground).opacity(isPressed ? 0.42 : 0.22))
-                .glassEffect(.regular.interactive(), in: shape)
-        } else if #available(iOS 15.0, *) {
+            return AnyView(
+                shape
+                    .fill(Color(UIColor.secondarySystemBackground).opacity(isPressed ? 0.42 : 0.22))
+                    .glassEffect(.regular.interactive(), in: shape)
+            )
+        }
+        return AnyView(
             shape
                 .fill(.ultraThinMaterial)
                 .overlay(
                     shape.fill(Color(UIColor.secondarySystemBackground).opacity(isPressed ? 0.38 : 0.22))
                 )
-        } else {
-            shape
-                .fill(Color(UIColor.secondarySystemBackground).opacity(isPressed ? 0.86 : 0.68))
-        }
+        )
     }
 }
 
@@ -2181,25 +2164,24 @@ private struct PrimaryLiquidGlassButtonStyle: ButtonStyle {
             .animation(.spring(response: 0.24, dampingFraction: 0.76), value: configuration.isPressed)
     }
 
-    @ViewBuilder
     private func primaryBackground(
         isPressed: Bool,
         shape: RoundedRectangle
-    ) -> some View {
+    ) -> AnyView {
         if #available(iOS 26.0, *) {
-            shape
-                .fill(Color(UIColor.systemBlue).opacity(isPressed ? 0.2 : 0.12))
-                .glassEffect(.regular.interactive(), in: shape)
-        } else if #available(iOS 15.0, *) {
+            return AnyView(
+                shape
+                    .fill(Color(UIColor.systemBlue).opacity(isPressed ? 0.2 : 0.12))
+                    .glassEffect(.regular.interactive(), in: shape)
+            )
+        }
+        return AnyView(
             shape
                 .fill(.ultraThinMaterial)
                 .overlay(
                     shape.fill(Color(UIColor.systemBlue).opacity(isPressed ? 0.24 : 0.14))
                 )
-        } else {
-            shape
-                .fill(Color(UIColor.systemBlue).opacity(isPressed ? 0.2 : 0.12))
-        }
+        )
     }
 }
 
@@ -2220,25 +2202,24 @@ private struct GlassCapsuleButtonStyle: ButtonStyle {
             .animation(.spring(response: 0.22, dampingFraction: 0.78), value: configuration.isPressed)
     }
 
-    @ViewBuilder
     private func glassBackground(
         isPressed: Bool,
         shape: Capsule
-    ) -> some View {
+    ) -> AnyView {
         if #available(iOS 26.0, *) {
-            shape
-                .fill(Color(UIColor.secondarySystemBackground).opacity(isPressed ? 0.4 : 0.22))
-                .glassEffect(.regular.interactive(), in: shape)
-        } else if #available(iOS 15.0, *) {
+            return AnyView(
+                shape
+                    .fill(Color(UIColor.secondarySystemBackground).opacity(isPressed ? 0.4 : 0.22))
+                    .glassEffect(.regular.interactive(), in: shape)
+            )
+        }
+        return AnyView(
             shape
                 .fill(.regularMaterial)
                 .overlay(
                     shape.fill(Color(UIColor.secondarySystemBackground).opacity(isPressed ? 0.54 : 0.38))
                 )
-        } else {
-            shape
-                .fill(Color(UIColor.secondarySystemBackground).opacity(isPressed ? 0.84 : 0.64))
-        }
+        )
     }
 
     private func legacyStrokeColor(isPressed: Bool) -> Color {
@@ -2284,24 +2265,23 @@ private struct LiquidGlassButtonStyle: ButtonStyle {
             .animation(.spring(response: 0.22, dampingFraction: 0.78), value: configuration.isPressed)
     }
 
-    @ViewBuilder
     private func glassBackground(
         isPressed: Bool,
         shape: RoundedRectangle
-    ) -> some View {
+    ) -> AnyView {
         if #available(iOS 26.0, *) {
-            shape
-                .fill(Color(UIColor.secondarySystemBackground).opacity(isPressed ? 0.42 : 0.22))
-                .glassEffect(.regular.interactive(), in: shape)
-        } else if #available(iOS 15.0, *) {
+            return AnyView(
+                shape
+                    .fill(Color(UIColor.secondarySystemBackground).opacity(isPressed ? 0.42 : 0.22))
+                    .glassEffect(.regular.interactive(), in: shape)
+            )
+        }
+        return AnyView(
             shape
                 .fill(.ultraThinMaterial)
                 .overlay(
                     shape.fill(Color(UIColor.secondarySystemBackground).opacity(isPressed ? 0.38 : 0.22))
                 )
-        } else {
-            shape
-                .fill(Color(UIColor.secondarySystemBackground).opacity(isPressed ? 0.84 : 0.64))
-        }
+        )
     }
 }
