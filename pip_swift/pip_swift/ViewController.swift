@@ -216,7 +216,12 @@ class ViewController: UIViewController, AVPictureInPictureControllerDelegate {
 
     private let textPiPWidth: CGFloat = 300
     private let clockPiPWidth: CGFloat = 200
-    private let isClockModeFeatureEnabled = true
+    private var isClockModeFeatureEnabled: Bool {
+        if #available(iOS 26.0, *) {
+            return true
+        }
+        return false
+    }
     private let defaultPiPHeight: CGFloat = 120
     private let compactPiPHeight: CGFloat = 44
     private let minPiPHeight: CGFloat = 0.1
@@ -262,6 +267,9 @@ class ViewController: UIViewController, AVPictureInPictureControllerDelegate {
     }
     private var shouldRenderClockMode: Bool {
         isClockModeFeatureEnabled && isClockModeEnabled && !isPiPVisuallyHidden
+    }
+    private var isClockModeAvailableForUI: Bool {
+        isClockModeFeatureEnabled
     }
     private var pipStatusColor: UIColor {
         isPiPRuntimeActive ? .systemBlue : .secondaryLabel
@@ -374,6 +382,7 @@ class ViewController: UIViewController, AVPictureInPictureControllerDelegate {
             overlayResetToken: overlayResetToken,
             isScrollingEnabled: isScrollingEnabled,
             isClockModeEnabled: isClockModeEnabled,
+            isClockModeAvailable: isClockModeAvailableForUI,
             isDarkModeForced: isDarkModeForced,
             isPiPStoppedNotificationEnabled: isPiPStoppedNotificationEnabled,
             isBackgroundInterruptionNotificationEnabled: isBackgroundInterruptionNotificationEnabled,
@@ -430,6 +439,7 @@ class ViewController: UIViewController, AVPictureInPictureControllerDelegate {
             overlayResetToken: overlayResetToken,
             isScrollingEnabled: isScrollingEnabled,
             isClockModeEnabled: isClockModeEnabled,
+            isClockModeAvailable: isClockModeAvailableForUI,
             isDarkModeForced: isDarkModeForced,
             isPiPStoppedNotificationEnabled: isPiPStoppedNotificationEnabled,
             isBackgroundInterruptionNotificationEnabled: isBackgroundInterruptionNotificationEnabled,
@@ -1589,7 +1599,7 @@ class ViewController: UIViewController, AVPictureInPictureControllerDelegate {
         if #available(iOS 15.0, *) {
             let target = Float(targetFramesPerSecond)
             displayLink.preferredFrameRateRange = CAFrameRateRange(
-                minimum: 30,
+                minimum: target,
                 maximum: target,
                 preferred: ClockDisplayLinkPreference.preferredFrameRateValue(target: target)
             )
@@ -2438,6 +2448,16 @@ class ViewController: UIViewController, AVPictureInPictureControllerDelegate {
     private func setClockMode(_ isEnabled: Bool) {
         DiagnosticsRuntimeState.recordUserAction(isEnabled ? "切换为时分秒悬浮窗" : "切换为文本悬浮窗")
         if isEnabled {
+            guard isClockModeFeatureEnabled else {
+                UserDefaults.standard.set(false, forKey: userDefaultsClockModeEnabledKey)
+                isClockModeEnabled = false
+                prefersTextScrolling = true
+                UserDefaults.standard.set(true, forKey: userDefaultsScrollingEnabledKey)
+                isScrollingEnabled = true
+                updateHomeView()
+                AppDebugLogger.log("Clock mode blocked below iOS 26 to avoid ProMotion fallback")
+                return
+            }
             isClockModeEnabled = true
             isScrollingEnabled = false
         } else {

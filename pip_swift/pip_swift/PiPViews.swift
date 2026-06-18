@@ -95,6 +95,7 @@ struct PiPHomeView: View {
     let overlayResetToken: Int
     let isScrollingEnabled: Bool
     let isClockModeEnabled: Bool
+    let isClockModeAvailable: Bool
     let isDarkModeForced: Bool
     let isPiPStoppedNotificationEnabled: Bool
     let isBackgroundInterruptionNotificationEnabled: Bool
@@ -658,8 +659,12 @@ struct PiPHomeView: View {
                         title: "时间悬浮窗",
                         systemImage: "clock.fill",
                         isOn: clockModeBinding,
+                        isEnabled: isClockModeAvailable,
                         statusText: { isOn in
-                            isOn ? "打开后悬浮窗显示时分秒" : "关闭后恢复原有文本滚动内容"
+                            guard isClockModeAvailable else {
+                                return "iOS 26 以下会导致120Hz失效，已强制禁用"
+                            }
+                            return isOn ? "打开后悬浮窗显示时分秒" : "关闭后恢复原有文本滚动内容"
                         }
                     )
 

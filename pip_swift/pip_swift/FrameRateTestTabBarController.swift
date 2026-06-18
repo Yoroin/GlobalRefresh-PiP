@@ -27,9 +27,8 @@ enum FrameRatePreference {
 }
 
 enum ClockDisplayLinkPreference {
-    // BETA5_ANCHOR_CLOCK_DISPLAYLINK_FORCE_TARGET_DEBUG:
-    // 临时调试开关：用于验证时间悬浮窗自身 preferred=target 是否能改善游戏侧边掉帧。
-    // 正式版不保留此开关，默认主线应维持时间悬浮窗 preferred=0，避免弹幕/缩放/隐藏抖动。
+    // BETA5_ANCHOR_CLOCK_DISPLAYLINK_TARGET:
+    // 1.0.8 兼容验证：时间悬浮窗自身保留 preferred=target，观察侧边吸附和游戏帧率表现。
     private static let forceTargetKey = "pip.debug.clockDisplayLinkForceTarget"
     static let didChangeNotification = Notification.Name("ClockDisplayLinkPreferenceDidChange")
 
@@ -42,7 +41,7 @@ enum ClockDisplayLinkPreference {
     }
 
     static func preferredFrameRateValue(target: Float) -> Float {
-        0
+        target
     }
 }
 
