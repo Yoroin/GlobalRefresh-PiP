@@ -53,9 +53,9 @@ final class FrameRateTestTabBarController: UITabBarController, UITabBarControlle
         DiagnosticsRuntimeState.updateCurrentPage("帧率演示")
 
         viewControllers = [
-            makePage(title: "测试页面1-120", contentPrefix: "测试页面一", targetFrameRate: 120, symbol: "1.circle", selectedSymbol: "1.circle.fill"),
-            makePage(title: "测试页面2-80", contentPrefix: "测试页面二", targetFrameRate: 90, symbol: "2.circle", selectedSymbol: "2.circle.fill"),
-            makePage(title: "测试页面3-60", contentPrefix: "测试页面三", targetFrameRate: 60, symbol: "3.circle", selectedSymbol: "3.circle.fill")
+            makePage(title: L10n.text("测试页面1-120", "Test 1-120"), contentPrefix: L10n.text("测试页面一", "Test Page 1"), targetFrameRate: 120, symbol: "1.circle", selectedSymbol: "1.circle.fill"),
+            makePage(title: L10n.text("测试页面2-80", "Test 2-80"), contentPrefix: L10n.text("测试页面二", "Test Page 2"), targetFrameRate: 90, symbol: "2.circle", selectedSymbol: "2.circle.fill"),
+            makePage(title: L10n.text("测试页面3-60", "Test 3-60"), contentPrefix: L10n.text("测试页面三", "Test Page 3"), targetFrameRate: 60, symbol: "3.circle", selectedSymbol: "3.circle.fill")
         ]
     }
 
@@ -135,7 +135,7 @@ private struct FrameRateTestPageView: View {
             }
 
             if isSearchVisible {
-                TextField("搜索", text: $searchText)
+                TextField(L10n.text("搜索", "Search"), text: $searchText)
                     .font(.system(size: 16, weight: .semibold))
                     .textFieldStyle(.plain)
                     .padding(.horizontal, 16)
@@ -187,9 +187,9 @@ struct RootFrameRateTestView: View {
                 .edgesIgnoringSafeArea(.all)
 
             VStack(alignment: .leading, spacing: 0) {
-                PageHeaderTitle(title: "帧率演示")
+                PageHeaderTitle(title: L10n.frameRateDemo)
 
-                Text("可通过该页面的开关控制来对比80hz和120hz的区别，本app内所有页面帧率以及悬浮窗帧率受到该开关控制")
+                Text(L10n.text("可通过该页面的开关控制来对比80hz和120hz的区别，本app内所有页面帧率以及悬浮窗帧率受到该开关控制", "Use this page to compare 80 Hz and 120 Hz. The switch affects the app pages and the floating window refresh behavior."))
                     .font(.system(size: 14, weight: .semibold))
                     .foregroundColor(Color(UIColor.secondaryLabel))
                     .fixedSize(horizontal: false, vertical: true)
@@ -200,11 +200,11 @@ struct RootFrameRateTestView: View {
                 VStack(spacing: 14) {
                     HStack(spacing: 12) {
                         VStack(alignment: .leading, spacing: 4) {
-                            Text("强制本页面120hz")
+                            Text(L10n.text("强制本页面120hz", "Force 120 Hz"))
                                 .font(.system(size: 17, weight: .bold))
                                 .foregroundColor(Color(UIColor.label))
 
-                            Text(isHighRefreshEnabled ? "当前请求 120Hz 演示刷新" : "全局120功能已失效，请开始上下滑动体验系统80hz")
+                            Text(isHighRefreshEnabled ? L10n.text("当前请求 120Hz 演示刷新", "Currently requesting 120 Hz demo refresh") : L10n.text("全局120功能已失效，请开始上下滑动体验系统80hz", "120 Hz boost is disabled. Scroll to test system 80 Hz."))
                                 .font(.system(size: 13, weight: .semibold))
                                 .foregroundColor(Color(UIColor.secondaryLabel))
                         }
@@ -235,7 +235,7 @@ struct RootFrameRateTestView: View {
                 .padding(.bottom, 10)
 
                 RootFrameRateListView(
-                    contentPrefix: "帧率演示",
+                    contentPrefix: L10n.frameRateDemo,
                     targetFrameRate: isHighRefreshEnabled ? 120 : 80
                 )
             }
@@ -320,7 +320,7 @@ private struct RootFrameRateListView: View {
                     )
             }
 
-            Text("测试测试测试测试测试")
+            Text(L10n.text("测试测试测试测试测试", "Refresh rate test sample text"))
                 .font(.system(size: 15, weight: .semibold))
                 .foregroundColor(Color(UIColor.secondaryLabel))
                 .lineLimit(1)
@@ -361,7 +361,7 @@ struct FrameRateScrollableListView: View {
     }
 
     private func testTextField(index: Int) -> some View {
-        TextField("", text: .constant("\(contentPrefix)-\(index + 1) 测试测试测试测试测试"))
+        TextField("", text: .constant("\(contentPrefix)-\(index + 1) \(L10n.text("测试测试测试测试测试", "Refresh rate test sample text"))"))
             .font(.system(size: 17, weight: .semibold))
             .foregroundColor(Color(UIColor.label))
             .padding(.horizontal, 16)

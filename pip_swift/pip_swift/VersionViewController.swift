@@ -157,8 +157,12 @@ final class VersionViewController: UIViewController {
     private func copyDiagnosticsLog() {
         DiagnosticsRuntimeState.recordUserAction("复制诊断日志")
         UIPasteboard.general.string = DiagnosticsLogExporter.exportText()
-        let alert = UIAlertController(title: "诊断日志已复制", message: "可以直接粘贴发送给开发者", preferredStyle: .alert)
-        alert.addAction(UIAlertAction(title: "确定", style: .default))
+        let alert = UIAlertController(
+            title: L10n.text("诊断日志已复制", "Diagnostics Copied"),
+            message: L10n.text("可以直接粘贴发送给开发者", "You can paste it directly to the developer."),
+            preferredStyle: .alert
+        )
+        alert.addAction(UIAlertAction(title: L10n.ok, style: .default))
         present(alert, animated: true)
     }
 
@@ -190,16 +194,16 @@ final class VersionViewController: UIViewController {
     private func confirmEnableDebugMode() {
         DiagnosticsRuntimeState.recordUserAction("请求开启调试模式")
         let alert = UIAlertController(
-            title: "打开调试模式可能引发不稳定因素，请谨慎开启",
+            title: L10n.text("打开调试模式可能引发不稳定因素，请谨慎开启", "Debug mode may introduce instability. Enable with care."),
             message: nil,
             preferredStyle: .alert
         )
-        alert.addAction(UIAlertAction(title: "取消", style: .cancel) { [weak self] _ in
+        alert.addAction(UIAlertAction(title: L10n.cancel, style: .cancel) { [weak self] _ in
             self?.isDebugPanelVisible = false
             self?.debugPanelResetToken += 1
             self?.updateSwiftUI()
         })
-        alert.addAction(UIAlertAction(title: "确认开启", style: .default) { [weak self] _ in
+        alert.addAction(UIAlertAction(title: L10n.text("确认开启", "Enable"), style: .default) { [weak self] _ in
             DiagnosticsRuntimeState.recordUserAction("确认开启调试模式")
             self?.setDebugMode(true)
         })
@@ -224,12 +228,20 @@ private final class ChangelogViewController: UIViewController {
         let contentView = applyLegacyGlassSheetBackground()
 
         let titleLabel = UILabel()
-        titleLabel.text = "更新日志"
+        titleLabel.text = L10n.changelog
         titleLabel.font = .systemFont(ofSize: 24, weight: .black)
         titleLabel.textColor = .label
         titleLabel.textAlignment = .left
 
         let stackView = UIStackView(arrangedSubviews: [
+            makeSection(
+                version: L10n.text("1.0.9 beta1（26.6.22）", "1.0.9 beta1 (2026.6.22)"),
+                items: [
+                    L10n.text("新增国际化基础：主界面、教程、帧率演示、版本页与常见问题开始支持英文系统显示", "Added the internationalization foundation: Home, Tutorial, Frame Rate Demo, Version, and FAQ now support English system language."),
+                    L10n.text("保留中文诊断日志，方便继续排查悬浮窗、后台保活、发热和帧率问题", "Kept diagnostic logs in Chinese for ongoing troubleshooting of PiP, background keep-alive, heat, and frame-rate issues."),
+                    L10n.text("从 1.0.8 fix2 稳定源码锚点继续开发", "Continues from the stable 1.0.8 fix2 source anchor.")
+                ]
+            ),
             makeSection(
                 version: "1.0.8（26.6.19）",
                 items: [
@@ -362,43 +374,43 @@ private final class FAQViewController: UIViewController {
         let contentView = applyLegacyGlassSheetBackground()
 
         let titleLabel = UILabel()
-        titleLabel.text = "常见问题"
+        titleLabel.text = L10n.faq
         titleLabel.font = .systemFont(ofSize: 24, weight: .black)
         titleLabel.textColor = .label
         titleLabel.textAlignment = .left
 
         let stackView = UIStackView(arrangedSubviews: [
             makeQuestion(
-                question: "1.这个APP的作用是什么？",
-                answer: "通过将悬浮窗挂在侧面，解锁系统的1-120hz自适应刷新率，而非1-80hz，可以使流畅度得到提升，跟悬浮时钟是一个效果，同时增加了保活（实测挂一周都不会掉后台）和隐藏悬浮窗功能"
+                question: L10n.text("1.这个APP的作用是什么？", "1. What does this app do?"),
+                answer: L10n.text("通过将悬浮窗挂在侧面，解锁系统的1-120hz自适应刷新率，而非1-80hz，可以使流畅度得到提升，跟悬浮时钟是一个效果，同时增加了保活（实测挂一周都不会掉后台）和隐藏悬浮窗功能", "It docks a PiP floating window to the screen edge to unlock the system's 1-120 Hz adaptive refresh range instead of 1-80 Hz, improving smoothness. It also adds background keep-alive and hidden PiP support.")
             ),
             makeQuestion(
-                question: "2.生效后是一直120hz吗，会不会很耗电，怎么判断是否生效呢",
-                answer: "滑动的时候最高120hz，静止的时候还是1hz。打开后，iOS的系统设置页面上下滑动自行观察。"
+                question: L10n.text("2.生效后是一直120hz吗，会不会很耗电，怎么判断是否生效呢", "2. Does it stay at 120 Hz all the time?"),
+                answer: L10n.text("滑动的时候最高120hz，静止的时候还是1hz。打开后，iOS的系统设置页面上下滑动自行观察。", "No. It can reach 120 Hz while scrolling, and still drops very low while idle. Open it and scroll in iOS Settings to observe the difference.")
             ),
             makeQuestion(
-                question: "3.60hz的手机和锁60hz的APP能生效吗",
-                answer: "不行，只对锁定了1-80hz的APP生效，例如微博、b站、系统设置和其他系统应用等。腾讯全家桶和阿里全家桶均已自主适配120hz"
+                question: L10n.text("3.60hz的手机和锁60hz的APP能生效吗", "3. Does it work on 60 Hz devices or apps locked to 60 Hz?"),
+                answer: L10n.text("不行，只对锁定了1-80hz的APP生效，例如微博、b站、系统设置和其他系统应用等。腾讯全家桶和阿里全家桶均已自主适配120hz", "No. It mainly helps apps limited to 1-80 Hz, such as some system apps and apps like Weibo or Bilibili. Apps already adapted to 120 Hz do not need it.")
             ),
             makeQuestion(
-                question: "4.帧率演示页面是干嘛的",
-                answer: "可通过该页面的开关控制来对比80hz和120hz的区别，本app内所有页面帧率以及悬浮窗帧率受到该开关控制"
+                question: L10n.text("4.帧率演示页面是干嘛的", "4. What is the Frame Rate Demo page for?"),
+                answer: L10n.text("可通过该页面的开关控制来对比80hz和120hz的区别，本app内所有页面帧率以及悬浮窗帧率受到该开关控制", "It lets you compare 80 Hz and 120 Hz. The switch affects the app pages and the floating window refresh behavior.")
             ),
             makeQuestion(
-                question: "5.后台能一直保活吗",
-                answer: "可以，实测挂几天后台都不会掉，除非因为内存不足或者被其他带有画中画功能的APP挤掉了悬浮窗，需要重新打开，例如短视频APP（可以去自行关掉画中画功能）"
+                question: L10n.text("5.后台能一直保活吗", "5. Can it stay alive in the background?"),
+                answer: L10n.text("可以，实测挂几天后台都不会掉，除非因为内存不足或者被其他带有画中画功能的APP挤掉了悬浮窗，需要重新打开，例如短视频APP（可以去自行关掉画中画功能）", "In testing, it can stay alive for days. It may still stop if memory is low or another PiP app pushes it away, such as some short-video apps.")
             ),
             makeQuestion(
-                question: "6.停止/启用滚动悬浮窗有什么用",
-                answer: "字面意思，停止悬浮窗的文本滚动，不影响120hz的解锁"
+                question: L10n.text("6.停止/启用滚动悬浮窗有什么用", "6. What does PiP text scrolling do?"),
+                answer: L10n.text("字面意思，停止悬浮窗的文本滚动，不影响120hz的解锁", "It only stops or starts the scrolling text inside the floating window. It does not affect 120 Hz unlocking.")
             ),
             makeQuestion(
-                question: "7.怎么完全隐藏悬浮窗",
-                answer: "点击启用悬浮窗，拖至侧边吸附后将悬浮窗高度调节至0.1pt即可"
+                question: L10n.text("7.怎么完全隐藏悬浮窗", "7. How do I fully hide the floating window?"),
+                answer: L10n.text("点击启用悬浮窗，拖至侧边吸附后将悬浮窗高度调节至0.1pt即可", "Enable the floating window, dock it to the edge, then set the PiP height to 0.1 pt.")
             ),
             makeQuestion(
-                question: "8.新旧保活模式有什么区别哪个更好",
-                answer: "经过实测后更推荐新模式仅PiP保活方案作为默认方案，更为省电，跟老方案音频强保活对比保活率一致实测没有出现杀后台，并且避免了可能出现的部分用户反馈的音频冲突问题，当然也保留了选择空间，可自行前往调试模式切换"
+                question: L10n.text("8.新旧保活模式有什么区别哪个更好", "8. Which keep-alive mode is better?"),
+                answer: L10n.text("经过实测后更推荐新模式仅PiP保活方案作为默认方案，更为省电，跟老方案音频强保活对比保活率一致实测没有出现杀后台，并且避免了可能出现的部分用户反馈的音频冲突问题，当然也保留了选择空间，可自行前往调试模式切换", "The low-power PiP-only mode is recommended. In testing it keeps similar background stability while using less power and avoiding possible audio conflicts. You can still switch modes in Debug Mode.")
             )
         ])
         stackView.axis = .vertical

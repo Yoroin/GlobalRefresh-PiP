@@ -135,13 +135,13 @@ struct PiPHomeView: View {
                 homeHeader
 
                 VStack(spacing: layout.homeActionSpacing) {
-                    ActionButton(title: "使用教程", systemImage: "book") {
+                    ActionButton(title: L10n.text("使用教程", "Tutorial"), systemImage: "book") {
                         runAfterDismissingSettings(onShowTutorial)
                     }
-                    ActionButton(title: "修改悬浮窗样式", systemImage: "rectangle.compress.vertical") {
+                    ActionButton(title: L10n.text("修改悬浮窗样式", "Change Floating Style"), systemImage: "rectangle.compress.vertical") {
                         runAfterDismissingSettings(onToggleStyle)
                     }
-                    ActionButton(title: "自定义悬浮窗高度", systemImage: "arrow.up.and.down", detail: pipHeight) {
+                    ActionButton(title: L10n.text("自定义悬浮窗高度", "Custom PiP Height"), systemImage: "arrow.up.and.down", detail: pipHeight) {
                         runAfterDismissingSettings(onCustomizeHeight)
                     }
 
@@ -151,7 +151,7 @@ struct PiPHomeView: View {
 
                 Spacer(minLength: layout.isCompact ? 8 : 18)
 
-                PrimaryPiPButton(title: isPiPActive ? "关闭悬浮窗" : "开启悬浮窗") {
+                PrimaryPiPButton(title: isPiPActive ? L10n.text("关闭悬浮窗", "Stop Floating Window") : L10n.text("开启悬浮窗", "Enable Floating Window")) {
                     runAfterDismissingSettings(onTogglePiP)
                 }
                     .frame(maxWidth: 286)
@@ -232,12 +232,12 @@ struct PiPHomeView: View {
     private var homeHeader: some View {
         HStack(alignment: .top) {
             VStack(alignment: .leading, spacing: 7) {
-                Text("首页")
+                Text(L10n.home)
                     .font(.system(size: layout.headerTitleSize, weight: .black, design: .rounded))
                     .foregroundColor(Color(UIColor.label))
 
                 HStack(spacing: 7) {
-                    Text("当前保活模式")
+                    Text(L10n.text("当前保活模式", "Keep-alive mode"))
                         .font(.system(size: 14, weight: .semibold))
                         .foregroundColor(Color(UIColor.secondaryLabel))
 
@@ -273,7 +273,7 @@ struct PiPHomeView: View {
                 dismissNotificationFrequencyInfoIfNeeded()
                 onToggleSettings()
             } label: {
-                SettingsGearButton(title: "更多设置", isExpanded: isSettingsVisible)
+                SettingsGearButton(title: L10n.text("更多设置", "More"), isExpanded: isSettingsVisible)
             }
             .buttonStyle(.plain)
         }
@@ -359,7 +359,7 @@ struct PiPHomeView: View {
 
     private var pipStatusRow: some View {
         HStack(spacing: 8) {
-            Text("悬浮窗状态")
+            Text(L10n.text("悬浮窗状态", "PiP status"))
                 .font(.system(size: 14, weight: .semibold))
                 .foregroundColor(Color(UIColor.secondaryLabel))
 
@@ -417,7 +417,7 @@ struct PiPHomeView: View {
 
     private var keepAliveNotificationBadge: some View {
         HStack(spacing: 3) {
-            Text("通知")
+            Text(L10n.text("通知", "Notify"))
                 .font(.system(size: 11, weight: .bold))
             Image(systemName: isAnyNotificationEnabled ? "checkmark" : "xmark")
                 .font(.system(size: 10, weight: .bold))
@@ -435,12 +435,12 @@ struct PiPHomeView: View {
             HStack(spacing: 6) {
                 Image(systemName: "bell.badge.fill")
                     .font(.system(size: 15, weight: .bold))
-                Text("后台中断通知模式")
+                Text(L10n.text("后台中断通知模式", "Background interruption alerts"))
                     .font(.system(size: 15, weight: .bold))
             }
             .foregroundColor(Color(UIColor.systemGreen))
 
-            Text("当前：\(keepAliveNotificationFrequency.title)")
+            Text(L10n.text("当前：", "Current: ") + keepAliveNotificationFrequency.localizedTitle)
                 .font(.system(size: 13, weight: .semibold))
                 .foregroundColor(Color(UIColor.secondaryLabel))
 
@@ -467,7 +467,7 @@ struct PiPHomeView: View {
             HStack(spacing: 6) {
                 Image(systemName: "rectangle.on.rectangle.slash.fill")
                     .font(.system(size: 15, weight: .bold))
-                Text("被挤通知已开启")
+                Text(L10n.text("被挤通知已开启", "PiP conflict alert is on"))
                     .font(.system(size: 15, weight: .bold))
             }
             .foregroundColor(Color(UIColor.systemGreen))
@@ -499,10 +499,10 @@ struct PiPHomeView: View {
                     )
 
                 VStack(alignment: .leading, spacing: 2) {
-                    Text(frequency.title)
+                    Text(frequency.localizedTitle)
                         .font(.system(size: 14, weight: .bold))
                         .foregroundColor(Color(UIColor.label))
-                    Text(frequency.detail)
+                    Text(frequency.localizedDetail)
                         .font(.system(size: 12, weight: .semibold))
                         .foregroundColor(Color(UIColor.secondaryLabel))
                         .lineLimit(2)
@@ -542,7 +542,7 @@ struct PiPHomeView: View {
             .foregroundColor(Color(UIColor.secondaryLabel))
             .fixedSize(horizontal: false, vertical: true)
 
-            Text("上次关闭时间：\(pipStoppedAtText)")
+            Text(L10n.text("上次关闭时间：", "Last stopped: ") + pipStoppedAtText)
                 .font(.system(size: 14, weight: .semibold))
                 .foregroundColor(Color(UIColor.secondaryLabel))
                 .fixedSize(horizontal: false, vertical: true)
@@ -565,7 +565,7 @@ struct PiPHomeView: View {
         @State private var now = Date()
 
         var body: some View {
-            Text("已运行时间：\(displayText)")
+            Text(L10n.text("已运行时间：", "Runtime: ") + displayText)
                 .lineLimit(1)
                 .minimumScaleFactor(0.78)
                 .allowsTightening(true)
@@ -594,24 +594,24 @@ struct PiPHomeView: View {
 
     private var keepAliveModeDescription: String {
         keepAliveMode == "音频强保活"
-            ? "音频强保活，强力保活方案，缺点较为耗电，且小部分场景可能影响音频，已默认不再使用，仅适合超强保活且不在意耗电的需求用户"
-            : "新方案仅PiP保活，经实测较老方案更为省电，保活效果一致，并且解决音频冲突问题，优先推荐"
+            ? L10n.text("音频强保活，强力保活方案，缺点较为耗电，且小部分场景可能影响音频，已默认不再使用，仅适合超强保活且不在意耗电的需求用户", "Audio keep-alive is stronger but uses more power and may affect audio in some cases. It is no longer the default.")
+            : L10n.text("新方案仅PiP保活，经实测较老方案更为省电，保活效果一致，并且解决音频冲突问题，优先推荐", "Low-power PiP keep-alive is recommended. In testing it keeps the same background stability while using less power and avoiding audio conflicts.")
     }
 
     private var settingsPopover: some View {
         VStack(alignment: .leading, spacing: 7) {
-            Text("高级设置")
+            Text(L10n.text("高级设置", "Advanced Settings"))
                 .font(.system(size: 18, weight: .black, design: .rounded))
                 .foregroundColor(Color(UIColor.label))
 
             ScrollView(.vertical, showsIndicators: false) {
                 VStack(alignment: .leading, spacing: 7) {
                     SettingsToggleRow(
-                        title: "记忆悬浮窗高度",
+                        title: L10n.text("记忆悬浮窗高度", "Remember PiP Height"),
                         systemImage: "slider.horizontal.3",
                         isOn: rememberHeightBinding,
                         statusText: { isOn in
-                            isOn ? "下次打开自动恢复当前高度，0.1pt自动恢复44pt" : "每次打开使用默认高度"
+                            isOn ? L10n.text("下次打开自动恢复当前高度，0.1pt自动恢复44pt", "Restore this height next time. 0.1 pt restores to 44 pt automatically.") : L10n.text("每次打开使用默认高度", "Use the default height each time.")
                         }
                     )
 
@@ -619,11 +619,11 @@ struct PiPHomeView: View {
                         .opacity(0.42)
 
                     SettingsToggleRow(
-                        title: "悬浮窗被挤通知",
+                        title: L10n.text("悬浮窗被挤通知", "PiP Conflict Alert"),
                         systemImage: "rectangle.on.rectangle.slash.fill",
                         isOn: pipStoppedNotificationBinding,
                         statusText: { _ in
-                            "被其他画中画应用挤掉时发送通知"
+                            L10n.text("被其他画中画应用挤掉时发送通知", "Notify when another PiP app pushes this floating window away.")
                         }
                     )
 
@@ -631,12 +631,12 @@ struct PiPHomeView: View {
                         .opacity(0.42)
 
                     SettingsToggleRow(
-                        title: "后台中断通知",
+                        title: L10n.text("后台中断通知", "Background Alert"),
                         titleSuffix: "beta",
                         systemImage: "bell.badge.fill",
                         isOn: backgroundInterruptionNotificationBinding,
                         statusText: { _ in
-                            "轮询检测后台中断，可能晚报或者误报，用于检测后台被杀的场景"
+                            L10n.text("轮询检测后台中断，可能晚报或者误报，用于检测后台被杀的场景", "Polls for background interruption. It may be delayed or false-positive, mainly for detecting background termination.")
                         }
                     )
 
@@ -644,11 +644,11 @@ struct PiPHomeView: View {
                         .opacity(0.42)
 
                     SettingsToggleRow(
-                        title: "悬浮窗状态常驻",
+                        title: L10n.text("悬浮窗状态常驻", "Pin PiP Status"),
                         systemImage: "pin.fill",
                         isOn: pipStatusInfoPersistentBinding,
                         statusText: { isOn in
-                            isOn ? "使首页的悬浮窗状态时间常驻展示" : "关闭后点开状态时间会按普通弹窗自动收起"
+                            isOn ? L10n.text("使首页的悬浮窗状态时间常驻展示", "Keep PiP runtime visible on the home page.") : L10n.text("关闭后点开状态时间会按普通弹窗自动收起", "When off, the status panel auto-hides like a normal popover.")
                         }
                     )
 
@@ -656,15 +656,15 @@ struct PiPHomeView: View {
                         .opacity(0.42)
 
                     SettingsToggleRow(
-                        title: "时间悬浮窗",
+                        title: L10n.text("时间悬浮窗", "Clock PiP"),
                         systemImage: "clock.fill",
                         isOn: clockModeBinding,
                         isEnabled: isClockModeAvailable,
                         statusText: { isOn in
                             guard isClockModeAvailable else {
-                                return "iOS 26 以下会导致120Hz失效，已强制禁用"
+                                return L10n.text("iOS 26 以下会导致120Hz失效，已强制禁用", "Disabled below iOS 26 because it may break 120 Hz.")
                             }
-                            return isOn ? "打开后悬浮窗显示时分秒" : "关闭后恢复原有文本滚动内容"
+                            return isOn ? L10n.text("打开后悬浮窗显示时分秒", "Show hours, minutes, and seconds in PiP.") : L10n.text("关闭后恢复原有文本滚动内容", "Restore the original scrolling text content.")
                         }
                     )
 
@@ -672,12 +672,12 @@ struct PiPHomeView: View {
                         .opacity(0.42)
 
                     SettingsToggleRow(
-                        title: "悬浮窗内容滚动",
+                        title: L10n.text("悬浮窗内容滚动", "PiP Text Scrolling"),
                         systemImage: "text.alignleft",
                         isOn: scrollingBinding,
                         isEnabled: !isClockModeEnabled,
                         statusText: { _ in
-                            "关闭后可停止文本滚动，仅防止晃眼，并不影响全局120，仅文本悬浮窗生效"
+                            L10n.text("关闭后可停止文本滚动，仅防止晃眼，并不影响全局120，仅文本悬浮窗生效", "Stops text scrolling only. It does not affect 120 Hz and only applies to text PiP.")
                         }
                     )
 
@@ -685,12 +685,12 @@ struct PiPHomeView: View {
                         .opacity(0.42)
 
                     SettingsToggleRow(
-                        title: "强制深色模式",
+                        title: L10n.text("强制深色模式", "Force Dark Mode"),
                         systemImage: "moon.fill",
                         isOn: darkModeBinding,
                         controlStyle: .checkbox,
                         statusText: { isOn in
-                            isOn ? "开启后固定使用深色模式" : "默认关闭，跟随系统设置"
+                            isOn ? L10n.text("开启后固定使用深色模式", "Always use dark mode.") : L10n.text("默认关闭，跟随系统设置", "Off by default. Follows system appearance.")
                         }
                     )
                 }
@@ -1039,7 +1039,7 @@ struct VersionPageView: View {
                 }
 
             HStack(alignment: .center) {
-                PageHeaderTitle(title: "关于")
+                PageHeaderTitle(title: L10n.about)
 
                 Spacer()
 
@@ -1050,7 +1050,7 @@ struct VersionPageView: View {
                     HStack(spacing: 6) {
                         Image(systemName: "clock.arrow.circlepath")
                             .font(.system(size: 15, weight: .bold))
-                        Text("更新日志")
+                        Text(L10n.changelog)
                             .font(.system(size: 15, weight: .bold))
                     }
                     .foregroundColor(Color(UIColor.systemBlue))
@@ -1063,20 +1063,20 @@ struct VersionPageView: View {
             .frame(maxHeight: .infinity, alignment: .top)
 
             VStack(spacing: layout.versionMainSpacing) {
-                Text("全局高刷悬浮窗")
+                Text(L10n.text("全局高刷悬浮窗", "Global Refresh PiP"))
                     .font(.system(size: layout.versionTitleSize, weight: .black, design: .rounded))
                     .foregroundColor(Color(UIColor.label))
                     .lineLimit(1)
                     .minimumScaleFactor(0.78)
 
                 VStack(spacing: 8) {
-                    Text("当前版本")
+                    Text(L10n.text("当前版本", "Current Version"))
                         .font(.system(size: 15, weight: .semibold))
                         .foregroundColor(Color(UIColor.secondaryLabel))
 
                     VStack(spacing: 7) {
                         HStack(spacing: 8) {
-                            Text("1.0.8")
+                            Text(L10n.versionDisplay)
                                 .font(.system(size: layout.versionNumberSize, weight: .bold, design: .rounded))
                                 .foregroundColor(Color(UIColor.label))
                         }
@@ -1238,13 +1238,13 @@ struct VersionPageView: View {
     }
 
     private var keepAliveModeTitle: String {
-        displayedIOS26AudioKeepAliveEnabled ? "音频强保活" : "PiP保活-低功耗"
+        displayedIOS26AudioKeepAliveEnabled ? L10n.text("音频强保活", "Audio Keep-alive") : L10n.text("PiP保活-低功耗", "PiP Keep-alive")
     }
 
     private var keepAliveModeDescription: String {
         displayedIOS26AudioKeepAliveEnabled
-            ? "音频强保活，强力保活方案，缺点较为耗电，且小部分场景可能影响音频，已默认不再使用，仅适合超强保活且不在意耗电的需求用户"
-            : "新方案仅PiP保活，经实测较老方案更为省电，保活效果一致，并且解决音频冲突问题，优先推荐"
+            ? L10n.text("音频强保活，强力保活方案，缺点较为耗电，且小部分场景可能影响音频，已默认不再使用，仅适合超强保活且不在意耗电的需求用户", "Audio keep-alive is stronger but uses more power and may affect audio in some cases. It is no longer the default.")
+            : L10n.text("新方案仅PiP保活，经实测较老方案更为省电，保活效果一致，并且解决音频冲突问题，优先推荐", "Low-power PiP keep-alive is recommended. In testing it keeps the same background stability while using less power and avoiding audio conflicts.")
     }
 
     private var fixedFAQButtons: some View {
@@ -1266,7 +1266,7 @@ struct VersionPageView: View {
                     HStack(spacing: 8) {
                         Image(systemName: "questionmark.circle")
                             .font(.system(size: 17, weight: .bold))
-                        Text("常见问题")
+                        Text(L10n.faq)
                             .font(.system(size: 17, weight: .bold))
                     }
                     .foregroundColor(Color(UIColor.systemBlue))
@@ -1293,7 +1293,7 @@ struct VersionPageView: View {
     private var copyDiagnosticsLogButton: some View {
         HStack(spacing: 10) {
             CopyLogButton(
-                title: "复制诊断日志",
+                title: L10n.text("复制诊断日志", "Copy Diagnostics"),
                 systemImage: "doc.text.magnifyingglass"
             ) {
                 dismissDebugPanel()
@@ -1316,7 +1316,7 @@ struct VersionPageView: View {
             }
         } label: {
             HStack(spacing: 4) {
-                Text("调试模式已开启")
+                Text(L10n.text("调试模式已开启", "Debug Mode On"))
                     .font(.system(size: 12, weight: .bold))
                 Image(systemName: "questionmark.circle.fill")
                     .font(.system(size: 12, weight: .bold))
@@ -1436,12 +1436,12 @@ struct VersionPageView: View {
                 HStack(spacing: 6) {
                     Image(systemName: "questionmark.circle.fill")
                         .font(.system(size: 15, weight: .bold))
-                    Text("测试版")
+                    Text(L10n.text("测试版", "Beta"))
                         .font(.system(size: 15, weight: .bold))
                 }
                 .foregroundColor(Color(UIColor.systemRed))
 
-                Text("仅测试使用，非正式版，可能带有不稳定因素")
+                Text(L10n.text("仅测试使用，非正式版，可能带有不稳定因素", "For testing only. This is not a stable release and may be unstable."))
                     .font(.system(size: 13, weight: .semibold))
                     .foregroundColor(Color(UIColor.secondaryLabel))
                     .fixedSize(horizontal: false, vertical: true)
@@ -1469,7 +1469,7 @@ struct VersionPageView: View {
             HStack(spacing: 6) {
                 Image(systemName: "waveform.path.ecg")
                     .font(.system(size: 15, weight: .bold))
-                Text("调试模式已开启")
+                Text(L10n.text("调试模式已开启", "Debug Mode On"))
                     .font(.system(size: 15, weight: .bold))
             }
             .foregroundColor(Color(UIColor.systemRed))
@@ -1541,9 +1541,9 @@ struct VersionPageView: View {
 
     private var debugModeStatusDescription: String {
         if shouldShowDebugDiagnosticsStatus {
-            return "调试模式已开启，可复制诊断日志、切换保活方案。当前已合并记录线程与性能信息，会记录主线程响应、UI帧间隔异常、CPU、内存、线程状态、热状态、电量、当前页面、悬浮窗状态和最近操作，可帮助开发者分析卡死、发热和后台异常。关闭调试模式后会一起关闭。"
+            return L10n.text("调试模式已开启，可复制诊断日志、切换保活方案。当前已合并记录线程与性能信息，会记录主线程响应、UI帧间隔异常、CPU、内存、线程状态、热状态、电量、当前页面、悬浮窗状态和最近操作，可帮助开发者分析卡死、发热和后台异常。关闭调试模式后会一起关闭。", "Debug mode is on. Diagnostics include thread and performance data for investigating freezes, heat, and background issues. Turning debug mode off disables this logging.")
         }
-        return "调试模式已开启，可复制诊断日志、切换保活方案。线程与性能日志会随调试模式自动开启，用于分析卡死、发热和后台异常。"
+        return L10n.text("调试模式已开启，可复制诊断日志、切换保活方案。线程与性能日志会随调试模式自动开启，用于分析卡死、发热和后台异常。", "Debug mode is on. You can copy diagnostics and switch keep-alive modes. Performance logging is enabled for troubleshooting.")
     }
 
     private var debugPanelCenterY: CGFloat {
@@ -1760,7 +1760,7 @@ private struct DebugModePanel: View {
                 Image(systemName: "wrench.and.screwdriver")
                     .font(.system(size: 18, weight: .bold))
                     .frame(width: 22, alignment: .center)
-                Text("调试模式")
+                Text(L10n.text("调试模式", "Debug Mode"))
                     .font(.system(size: 16, weight: .bold))
                     .lineLimit(1)
                 Spacer(minLength: 10)
@@ -1769,7 +1769,7 @@ private struct DebugModePanel: View {
             }
             .frame(height: 32)
 
-            Text("开启后可复制诊断日志、切换保活方案")
+            Text(L10n.text("开启后可复制诊断日志、切换保活方案", "Copy diagnostics and switch keep-alive modes."))
                 .font(.system(size: 12, weight: .semibold))
                 .foregroundColor(Color(UIColor.secondaryLabel))
                 .lineLimit(1)
@@ -1783,7 +1783,7 @@ private struct DebugModePanel: View {
                     Image(systemName: "waveform")
                         .font(.system(size: 18, weight: .bold))
                         .frame(width: 22, alignment: .center)
-                    Text("保活方案切换")
+                    Text(L10n.text("保活方案切换", "Keep-alive Mode"))
                         .font(.system(size: 16, weight: .bold))
                         .lineLimit(1)
                     Spacer(minLength: 10)
@@ -1793,8 +1793,8 @@ private struct DebugModePanel: View {
                 .frame(height: 32)
 
                 VStack(alignment: .leading, spacing: 4) {
-                    Text("开启：新方案仅PiP保活，经实测较老方案更为省电，保活效果一致，并且解决音频冲突问题，优先推荐")
-                    Text("关闭：音频强保活，强力保活方案，缺点较为耗电，且小部分场景可能影响音频，已默认不再使用，仅适合超强保活且不在意耗电的需求用户")
+                    Text(L10n.text("开启：新方案仅PiP保活，经实测较老方案更为省电，保活效果一致，并且解决音频冲突问题，优先推荐", "On: low-power PiP keep-alive. Recommended."))
+                    Text(L10n.text("关闭：音频强保活，强力保活方案，缺点较为耗电，且小部分场景可能影响音频，已默认不再使用，仅适合超强保活且不在意耗电的需求用户", "Off: audio keep-alive. Stronger but uses more power and may affect audio."))
                 }
                 .font(.system(size: 12, weight: .semibold))
                 .foregroundColor(Color(UIColor.secondaryLabel))
@@ -1867,14 +1867,14 @@ private struct VersionDescriptionView: View {
 
     var body: some View {
         VStack(spacing: isCompact ? 4 : 6) {
-            Text("增加悬浮窗后台保活和修改侧边栏大小功能，")
-            Text("挂在侧边栏可保持系统全局120hz，")
-            Text("适配ios26液态玻璃特性")
+            Text(L10n.text("增加悬浮窗后台保活和修改侧边栏大小功能，", "Adds PiP background keep-alive and side-window sizing,"))
+            Text(L10n.text("挂在侧边栏可保持系统全局120hz，", "keeps system-wide 120 Hz when docked to the edge,"))
+            Text(L10n.text("适配ios26液态玻璃特性", "and supports iOS 26 Liquid Glass."))
             HStack(spacing: 0) {
-                Text("原作者：")
+                Text(L10n.text("原作者：", "Original: "))
                 Link("CaiWanFeng", destination: URL(string: "https://github.com/CaiWanFeng/PiP")!)
                     .foregroundColor(Color(UIColor.systemBlue))
-                Text("，完善：")
+                Text(L10n.text("，完善：", ", maintained by "))
                 Link("Yoroin", destination: URL(string: "http://www.coolapk.com/u/3233328")!)
                     .foregroundColor(Color(UIColor.systemBlue))
             }

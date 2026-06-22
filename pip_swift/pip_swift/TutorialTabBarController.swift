@@ -14,7 +14,7 @@ final class TutorialTabBarController: UITabBarController, UITabBarControllerDele
     override func viewDidLoad() {
         super.viewDidLoad()
         delegate = self
-        title = "使用教程"
+        title = L10n.text("使用教程", "Tutorial")
         navigationItem.leftBarButtonItem = UIBarButtonItem(
             systemItem: .close,
             primaryAction: UIAction { [weak self] _ in
@@ -24,26 +24,26 @@ final class TutorialTabBarController: UITabBarController, UITabBarControllerDele
 
         let stepOneController = UIHostingController(
             rootView: TutorialStepView(
-                title: "步骤一",
-                content: "点击首页的“开启悬浮窗”按钮，打开悬浮窗",
+                title: L10n.text("步骤一", "Step 1"),
+                content: L10n.text("点击首页的“开启悬浮窗”按钮，打开悬浮窗", "Tap Enable Floating Window on the home page to start PiP."),
                 imageName: "tutorial-step-1"
             )
         )
         stepOneController.tabBarItem = UITabBarItem(
-            title: "步骤一",
+            title: L10n.text("步骤一", "Step 1"),
             image: UIImage(systemName: "1.circle"),
             selectedImage: UIImage(systemName: "1.circle.fill")
         )
 
         let stepTwoController = UIHostingController(
             rootView: TutorialStepView(
-                title: "步骤二",
-                content: "将悬浮窗拖动到侧边吸附，即可实现系统全局120hz（划掉后台失效）。如需完全隐藏，点击自定义悬浮窗高度将滑块拖至0.1pt",
+                title: L10n.text("步骤二", "Step 2"),
+                content: L10n.text("将悬浮窗拖动到侧边吸附，即可实现系统全局120hz（划掉后台失效）。如需完全隐藏，点击自定义悬浮窗高度将滑块拖至0.1pt", "Drag the floating window to the screen edge. To fully hide it, set the custom PiP height to 0.1 pt."),
                 imageName: "tutorial-step-2"
             )
         )
         stepTwoController.tabBarItem = UITabBarItem(
-            title: "步骤二",
+            title: L10n.text("步骤二", "Step 2"),
             image: UIImage(systemName: "2.circle"),
             selectedImage: UIImage(systemName: "2.circle.fill")
         )

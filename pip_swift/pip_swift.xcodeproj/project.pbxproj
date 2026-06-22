@@ -25,10 +25,12 @@
 					AA50ED35265E319E006DD1A6 /* KeepAliveModeText.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA50ED34265E319E006DD1A6 /* KeepAliveModeText.swift */; };
 					AA50ED37265E319E006DD1A6 /* DiagnosticsResetManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA50ED36265E319E006DD1A6 /* DiagnosticsResetManager.swift */; };
 					AA50ED39265E319E006DD1A6 /* PiPShortcutIntents.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA50ED38265E319E006DD1A6 /* PiPShortcutIntents.swift */; };
+					AA50ED3C265E319E006DD1A6 /* Localization.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA50ED3B265E319E006DD1A6 /* Localization.swift */; };
 		D950ED16265E319D006DD1A6 /* Main.storyboard in Resources */ = {isa = PBXBuildFile; fileRef = D950ED14265E319D006DD1A6 /* Main.storyboard */; };
 		D950ED18265E319E006DD1A6 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = D950ED17265E319E006DD1A6 /* Assets.xcassets */; };
 		D950ED1B265E319E006DD1A6 /* LaunchScreen.storyboard in Resources */ = {isa = PBXBuildFile; fileRef = D950ED19265E319E006DD1A6 /* LaunchScreen.storyboard */; };
 		D95D3E3A27A2AF26001C1B6E /* slience.mp3 in Resources */ = {isa = PBXBuildFile; fileRef = D95D3E3927A2AF26001C1B6E /* slience.mp3 */; };
+		AA50ED3F265E319E006DD1A6 /* InfoPlist.strings in Resources */ = {isa = PBXBuildFile; fileRef = AA50ED3D265E319E006DD1A6 /* InfoPlist.strings */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -53,11 +55,14 @@
 					AA50ED34265E319E006DD1A6 /* KeepAliveModeText.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KeepAliveModeText.swift; sourceTree = "<group>"; };
 					AA50ED36265E319E006DD1A6 /* DiagnosticsResetManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DiagnosticsResetManager.swift; sourceTree = "<group>"; };
 					AA50ED38265E319E006DD1A6 /* PiPShortcutIntents.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PiPShortcutIntents.swift; sourceTree = "<group>"; };
+					AA50ED3B265E319E006DD1A6 /* Localization.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Localization.swift; sourceTree = "<group>"; };
 		D950ED15265E319D006DD1A6 /* Base */ = {isa = PBXFileReference; lastKnownFileType = file.storyboard; name = Base; path = Base.lproj/Main.storyboard; sourceTree = "<group>"; };
 		D950ED17265E319E006DD1A6 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		D950ED1A265E319E006DD1A6 /* Base */ = {isa = PBXFileReference; lastKnownFileType = file.storyboard; name = Base; path = Base.lproj/LaunchScreen.storyboard; sourceTree = "<group>"; };
 		D950ED1C265E319E006DD1A6 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
 		D95D3E3927A2AF26001C1B6E /* slience.mp3 */ = {isa = PBXFileReference; lastKnownFileType = audio.mp3; path = slience.mp3; sourceTree = "<group>"; };
+		AA50ED40265E319E006DD1A6 /* en */ = {isa = PBXFileReference; lastKnownFileType = text.plist.strings; name = en; path = en.lproj/InfoPlist.strings; sourceTree = "<group>"; };
+		AA50ED41265E319E006DD1A6 /* zh-Hans */ = {isa = PBXFileReference; lastKnownFileType = text.plist.strings; name = "zh-Hans"; path = "zh-Hans.lproj/InfoPlist.strings"; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -134,11 +139,13 @@
 											AA50ED34265E319E006DD1A6 /* KeepAliveModeText.swift */,
 											AA50ED36265E319E006DD1A6 /* DiagnosticsResetManager.swift */,
 											AA50ED38265E319E006DD1A6 /* PiPShortcutIntents.swift */,
+											AA50ED3B265E319E006DD1A6 /* Localization.swift */,
 											D950ED0E265E319D006DD1A6 /* AppDelegate.swift */,
 				D950ED10265E319D006DD1A6 /* SceneDelegate.swift */,
 				D950ED14265E319D006DD1A6 /* Main.storyboard */,
 				D950ED17265E319E006DD1A6 /* Assets.xcassets */,
 				D950ED19265E319E006DD1A6 /* LaunchScreen.storyboard */,
+				AA50ED3D265E319E006DD1A6 /* InfoPlist.strings */,
 				D950ED1C265E319E006DD1A6 /* Info.plist */,
 			);
 			path = pip_swift;
@@ -187,6 +194,7 @@
 			hasScannedForEncodings = 0;
 			knownRegions = (
 				en,
+				"zh-Hans",
 				Base,
 			);
 			mainGroup = D950ED02265E319D006DD1A6;
@@ -208,6 +216,7 @@
 						D950ED18265E319E006DD1A6 /* Assets.xcassets in Resources */,
 						D950ED1B265E319E006DD1A6 /* LaunchScreen.storyboard in Resources */,
 						D95D3E3A27A2AF26001C1B6E /* slience.mp3 in Resources */,
+						AA50ED3F265E319E006DD1A6 /* InfoPlist.strings in Resources */,
 						);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -299,6 +308,7 @@
 									AA50ED35265E319E006DD1A6 /* KeepAliveModeText.swift in Sources */,
 									AA50ED37265E319E006DD1A6 /* DiagnosticsResetManager.swift in Sources */,
 									AA50ED39265E319E006DD1A6 /* PiPShortcutIntents.swift in Sources */,
+									AA50ED3C265E319E006DD1A6 /* Localization.swift in Sources */,
 							D950ED0F265E319D006DD1A6 /* AppDelegate.swift in Sources */,
 				D950ED11265E319D006DD1A6 /* SceneDelegate.swift in Sources */,
 			);
@@ -321,6 +331,15 @@
 				D950ED1A265E319E006DD1A6 /* Base */,
 			);
 			name = LaunchScreen.storyboard;
+			sourceTree = "<group>";
+		};
+		AA50ED3D265E319E006DD1A6 /* InfoPlist.strings */ = {
+			isa = PBXVariantGroup;
+			children = (
+				AA50ED40265E319E006DD1A6 /* en */,
+				AA50ED41265E319E006DD1A6 /* zh-Hans */,
+			);
+			name = InfoPlist.strings;
 			sourceTree = "<group>";
 		};
 /* End PBXVariantGroup section */

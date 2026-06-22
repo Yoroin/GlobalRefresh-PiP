@@ -28,6 +28,25 @@ enum KeepAliveNotificationProbeFrequency: String, CaseIterable {
         }
     }
 
+    var localizedTitle: String {
+        switch self {
+        case .low: return L10n.text("低频检测", "Low")
+        case .high: return L10n.text("高频检测", "High")
+        case .ultra: return L10n.text("超高频检测", "Ultra")
+        }
+    }
+
+    var localizedDetail: String {
+        switch self {
+        case .low:
+            return L10n.text("30分钟检测一次，通知延后触发，后台干扰最低", "Checks every 30 minutes. Lowest background interference.")
+        case .high:
+            return L10n.text("1分钟检测一次，带短缓冲，更快发现异常", "Checks every minute with a short buffer for faster detection.")
+        case .ultra:
+            return L10n.text("20秒检测一次，主要用于测试，误报风险更高", "Checks every 20 seconds for testing. Higher false-positive risk.")
+        }
+    }
+
     var interval: TimeInterval {
         switch self {
         case .low: return 30 * 60

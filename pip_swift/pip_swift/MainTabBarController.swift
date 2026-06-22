@@ -22,21 +22,21 @@ final class MainTabBarController: UITabBarController, UITabBarControllerDelegate
 
         let pipController = ViewController()
         pipController.tabBarItem = UITabBarItem(
-            title: "悬浮窗",
+            title: L10n.floatingWindow,
             image: TabIconFactory.icon120Hz(),
             selectedImage: TabIconFactory.icon120Hz()
         )
 
         let frameRateController = UIHostingController(rootView: RootFrameRateTestView())
         frameRateController.tabBarItem = UITabBarItem(
-            title: "帧率演示",
+            title: L10n.frameRateDemo,
             image: UIImage(systemName: "speedometer"),
             selectedImage: UIImage(systemName: "speedometer")
         )
 
         let versionController = VersionViewController()
         versionController.tabBarItem = UITabBarItem(
-            title: "版本",
+            title: L10n.version,
             image: UIImage(systemName: "info.circle"),
             selectedImage: UIImage(systemName: "info.circle.fill")
         )
