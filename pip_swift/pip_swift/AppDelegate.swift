@@ -15,6 +15,7 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
         DiagnosticsResetManager.resetDiagnosticsIfBuildChanged()
         KeepAliveModeText.migrateDefaultToLowPowerPiPIfNeeded()
         KeepAliveNotificationTester.sanitizeOnLaunch()
+        PiPShortcutRuntimeRegistration.warmUpProviderIfAvailable()
         if AppDebugLogger.isDebugModeEnabled {
             DiagnosticsRuntimeState.startAppStateTracking()
             DiagnosticsRuntimeState.refreshAppState()

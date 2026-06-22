@@ -49,66 +49,69 @@ enum PiPShortcutActionCenter {
     }
 }
 
-@available(iOS 16.0, *)
-struct StartFloatingWindowIntent: AppIntent {
-    static var title: LocalizedStringResource = "打开悬浮窗"
-    static var description = IntentDescription("打开全局高刷悬浮窗")
-    static var openAppWhenRun: Bool = true
-    static var isDiscoverable: Bool = true
-    static var authenticationPolicy: IntentAuthenticationPolicy = .alwaysAllowed
+@available(iOS 26.0, *)
+public struct StartFloatingWindowIntent: AppIntent {
+    public static var title: LocalizedStringResource = "打开悬浮窗"
+    public static var description = IntentDescription("打开全局高刷悬浮窗")
+    public static var openAppWhenRun: Bool = true
+    public static var isDiscoverable: Bool = true
+    public static var authenticationPolicy: IntentAuthenticationPolicy = .alwaysAllowed
 
-    @available(iOS 26.0, *)
-    static var supportedModes: IntentModes {
+    public static var supportedModes: IntentModes {
         .foreground(.immediate)
     }
 
-    func perform() async throws -> some IntentResult {
+    public init() {}
+
+    public func perform() async throws -> some IntentResult {
         PiPShortcutActionCenter.request(.startFloatingWindow)
         return .result()
     }
 }
 
-@available(iOS 16.0, *)
-struct HideFloatingWindowIntent: AppIntent {
-    static var title: LocalizedStringResource = "隐藏悬浮窗"
-    static var description = IntentDescription("将已开启并吸附到侧边的悬浮窗缩小到0.1pt")
-    static var openAppWhenRun: Bool = true
-    static var isDiscoverable: Bool = true
-    static var authenticationPolicy: IntentAuthenticationPolicy = .alwaysAllowed
+@available(iOS 26.0, *)
+public struct HideFloatingWindowIntent: AppIntent {
+    public static var title: LocalizedStringResource = "隐藏悬浮窗"
+    public static var description = IntentDescription("将已开启并吸附到侧边的悬浮窗缩小到0.1pt")
+    public static var openAppWhenRun: Bool = true
+    public static var isDiscoverable: Bool = true
+    public static var authenticationPolicy: IntentAuthenticationPolicy = .alwaysAllowed
 
-    @available(iOS 26.0, *)
-    static var supportedModes: IntentModes {
+    public static var supportedModes: IntentModes {
         .foreground(.immediate)
     }
 
-    func perform() async throws -> some IntentResult {
+    public init() {}
+
+    public func perform() async throws -> some IntentResult {
         PiPShortcutActionCenter.request(.hideFloatingWindow)
         return .result()
     }
 }
 
-@available(iOS 16.0, *)
-struct StartAndHideFloatingWindowIntent: AppIntent {
-    static var title: LocalizedStringResource = "打开并隐藏悬浮窗"
-    static var description = IntentDescription("打开全局高刷悬浮窗后自动缩小到0.1pt")
-    static var openAppWhenRun: Bool = true
-    static var isDiscoverable: Bool = true
-    static var authenticationPolicy: IntentAuthenticationPolicy = .alwaysAllowed
+@available(iOS 26.0, *)
+public struct StartAndHideFloatingWindowIntent: AppIntent {
+    public static var title: LocalizedStringResource = "打开并隐藏悬浮窗"
+    public static var description = IntentDescription("打开全局高刷悬浮窗后自动缩小到0.1pt")
+    public static var openAppWhenRun: Bool = true
+    public static var isDiscoverable: Bool = true
+    public static var authenticationPolicy: IntentAuthenticationPolicy = .alwaysAllowed
 
-    @available(iOS 26.0, *)
-    static var supportedModes: IntentModes {
+    public static var supportedModes: IntentModes {
         .foreground(.immediate)
     }
 
-    func perform() async throws -> some IntentResult {
+    public init() {}
+
+    public func perform() async throws -> some IntentResult {
         PiPShortcutActionCenter.request(.startAndHideFloatingWindow)
         return .result()
     }
 }
 
-@available(iOS 16.0, *)
-struct GlobalRefreshShortcutsProvider: AppShortcutsProvider {
-    static var appShortcuts: [AppShortcut] {
+@available(iOS 26.0, *)
+public struct AppShortcuts: AppShortcutsProvider {
+    public static var appShortcuts: [AppShortcut] {
         AppShortcut(
             intent: StartAndHideFloatingWindowIntent(),
             phrases: [
@@ -140,5 +143,13 @@ struct GlobalRefreshShortcutsProvider: AppShortcutsProvider {
         )
     }
 
-    static var shortcutTileColor: ShortcutTileColor = .blue
+    public static var shortcutTileColor: ShortcutTileColor = .blue
+}
+
+enum PiPShortcutRuntimeRegistration {
+    static func warmUpProviderIfAvailable() {
+        guard #available(iOS 26.0, *) else { return }
+        _ = AppShortcuts.appShortcuts.count
+        AppShortcuts.updateAppShortcutParameters()
+    }
 }
