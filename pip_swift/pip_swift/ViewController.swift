@@ -150,6 +150,16 @@ class ViewController: UIViewController, AVPictureInPictureControllerDelegate {
             updateHomeView()
         }
     }
+    private var isProMotionExperimentEnabled = false {
+        didSet {
+            guard oldValue != isProMotionExperimentEnabled else { return }
+            if !isLoadingHomePreferences {
+                UserDefaults.standard.set(isProMotionExperimentEnabled, forKey: userDefaultsProMotionExperimentEnabledKey)
+                handleProMotionExperimentChanged()
+            }
+            updateHomeView()
+        }
+    }
     private var isDarkModeForced = AppAppearancePreference.isDarkModeForced {
         didSet {
             guard oldValue != isDarkModeForced else { return }
@@ -230,6 +240,7 @@ class ViewController: UIViewController, AVPictureInPictureControllerDelegate {
     private let userDefaultsRememberPiPHeightKey = "pip.home.rememberPiPHeight"
     private let userDefaultsClockModeEnabledKey = "pip.home.clockModeEnabled"
     private let userDefaultsClockModeDefaultMigrationKey = "pip.home.clockModeDefaultMigration.v1"
+    private let userDefaultsProMotionExperimentEnabledKey = "pip.home.proMotionExperimentEnabled"
     private let userDefaultsPiPHeightKey = "pip.home.rememberedPiPHeight"
     private let userDefaultsPiPRuntimeStartedAtKey = "pip.home.runtimeStartedAt"
     private let userDefaultsPiPRuntimeDurationKey = "pip.home.runtimeDuration"
@@ -383,6 +394,7 @@ class ViewController: UIViewController, AVPictureInPictureControllerDelegate {
             isScrollingEnabled: isScrollingEnabled,
             isClockModeEnabled: isClockModeEnabled,
             isClockModeAvailable: isClockModeAvailableForUI,
+            isProMotionExperimentEnabled: isProMotionExperimentEnabled,
             isDarkModeForced: isDarkModeForced,
             isPiPStoppedNotificationEnabled: isPiPStoppedNotificationEnabled,
             isBackgroundInterruptionNotificationEnabled: isBackgroundInterruptionNotificationEnabled,
@@ -396,6 +408,7 @@ class ViewController: UIViewController, AVPictureInPictureControllerDelegate {
             onCustomizeHeight: { [weak self] in self?.presentPiPHeightEditor() },
             onToggleScrolling: { [weak self] in self?.toggleScrolling() },
             onSetClockMode: { [weak self] newValue in self?.setClockMode(newValue) },
+            onSetProMotionExperimentEnabled: { [weak self] newValue in self?.setProMotionExperimentEnabled(newValue) },
             onSetDarkModeForced: { [weak self] newValue in self?.setDarkModeForced(newValue) },
             onSetPiPStoppedNotificationEnabled: { [weak self] newValue in self?.setPiPStoppedNotificationEnabled(newValue) },
             onSetBackgroundInterruptionNotificationEnabled: { [weak self] newValue in self?.setBackgroundInterruptionNotificationEnabled(newValue) },
@@ -440,6 +453,7 @@ class ViewController: UIViewController, AVPictureInPictureControllerDelegate {
             isScrollingEnabled: isScrollingEnabled,
             isClockModeEnabled: isClockModeEnabled,
             isClockModeAvailable: isClockModeAvailableForUI,
+            isProMotionExperimentEnabled: isProMotionExperimentEnabled,
             isDarkModeForced: isDarkModeForced,
             isPiPStoppedNotificationEnabled: isPiPStoppedNotificationEnabled,
             isBackgroundInterruptionNotificationEnabled: isBackgroundInterruptionNotificationEnabled,
@@ -453,6 +467,7 @@ class ViewController: UIViewController, AVPictureInPictureControllerDelegate {
             onCustomizeHeight: { [weak self] in self?.presentPiPHeightEditor() },
             onToggleScrolling: { [weak self] in self?.toggleScrolling() },
             onSetClockMode: { [weak self] newValue in self?.setClockMode(newValue) },
+            onSetProMotionExperimentEnabled: { [weak self] newValue in self?.setProMotionExperimentEnabled(newValue) },
             onSetDarkModeForced: { [weak self] newValue in self?.setDarkModeForced(newValue) },
             onSetPiPStoppedNotificationEnabled: { [weak self] newValue in self?.setPiPStoppedNotificationEnabled(newValue) },
             onSetBackgroundInterruptionNotificationEnabled: { [weak self] newValue in self?.setBackgroundInterruptionNotificationEnabled(newValue) },
@@ -486,6 +501,7 @@ class ViewController: UIViewController, AVPictureInPictureControllerDelegate {
             isClockModeEnabled = false
             UserDefaults.standard.set(false, forKey: userDefaultsClockModeEnabledKey)
         }
+        isProMotionExperimentEnabled = UserDefaults.standard.bool(forKey: userDefaultsProMotionExperimentEnabledKey)
         isScrollingEnabled = isClockModeEnabled ? false : prefersTextScrolling
         isDarkModeForced = AppAppearancePreference.isDarkModeForced
         isPiPStoppedNotificationEnabled = KeepAliveNotificationTester.isPiPStoppedNotificationEnabled
@@ -577,6 +593,30 @@ class ViewController: UIViewController, AVPictureInPictureControllerDelegate {
     private func setKeepAliveNotificationFrequency(_ frequency: KeepAliveNotificationProbeFrequency) {
         DiagnosticsRuntimeState.recordUserAction("切换后台中断提醒频率：\(frequency.title)")
         keepAliveNotificationFrequency = frequency
+    }
+
+    private func setProMotionExperimentEnabled(_ isEnabled: Bool) {
+        DiagnosticsRuntimeState.recordUserAction(isEnabled ? "开启ProMotion实验模式" : "关闭ProMotion实验模式")
+        isProMotionExperimentEnabled = isEnabled
+    }
+
+    private func handleProMotionExperimentChanged() {
+        if let clockDisplayLink {
+            configureForClockRefreshRate(clockDisplayLink)
+        }
+        if isProMotionExperimentEnabled {
+            AppDebugLogger.log("ProMotion experiment enabled: backing player on next PiP start, passive clock DisplayLink")
+        } else {
+            AppDebugLogger.log("ProMotion experiment disabled: restored stable clock DisplayLink policy")
+        }
+        if pipController?.isPictureInPictureActive == true || isPiPTransitioning || wantsPiPActive {
+            showMessage(isProMotionExperimentEnabled ? "实验模式已开启，下次重新打开悬浮窗完整生效" : "实验模式已关闭，下次重新打开悬浮窗完整生效")
+            return
+        }
+        if hasPreparedPiPInfrastructure {
+            teardownPiPInfrastructure()
+        }
+        showMessage(isProMotionExperimentEnabled ? "实验模式已开启，下次打开悬浮窗生效" : "实验模式已关闭，下次打开悬浮窗恢复稳定逻辑")
     }
 
     private func setPiPStatusInfoPersistent(_ isEnabled: Bool) {
@@ -839,6 +879,18 @@ class ViewController: UIViewController, AVPictureInPictureControllerDelegate {
 
     private func teardownPiPInfrastructure() {
         stopClockTimer()
+        if let playerEndObserver {
+            NotificationCenter.default.removeObserver(playerEndObserver)
+            self.playerEndObserver = nil
+        }
+        if let playerStallObserver {
+            NotificationCenter.default.removeObserver(playerStallObserver)
+            self.playerStallObserver = nil
+        }
+        playerPauseObserver?.invalidate()
+        playerPauseObserver = nil
+        NotificationCenter.default.removeObserver(self, name: AVAudioSession.interruptionNotification, object: nil)
+        NotificationCenter.default.removeObserver(self, name: AVAudioSession.routeChangeNotification, object: nil)
         playerLayer?.removeFromSuperlayer()
         playerLayer = nil
         pipController = nil
@@ -1231,9 +1283,10 @@ class ViewController: UIViewController, AVPictureInPictureControllerDelegate {
 
     private func restartPlaybackFromBeginning() {
         guard let player = playerLayer?.player else { return }
-        player.seek(to: .zero) { _ in
+        player.seek(to: .zero) { [weak self, weak player] _ in
+            guard let self else { return }
             guard self.shouldKeepPiPPlaybackAlive else {
-                player.pause()
+                player?.pause()
                 return
             }
             self.updateBackingPlayerPlaybackForCurrentMode()
@@ -1479,9 +1532,13 @@ class ViewController: UIViewController, AVPictureInPictureControllerDelegate {
     }
 
     private var shouldPrepareBackingPlayerForPlayback: Bool {
+        // 1.0.9 beta1 anchor: opt-in video-path experiment for B站弹幕/王者吸附掉帧对比。
+        if isProMotionExperimentEnabled {
+            return true
+        }
         // BETA4_ANCHOR_BILIBILI_DANMAKU_FIX:
         // 回归 beta3：iOS 15+ VideoCall contentSource 不额外准备 PlayerLayer backing player。
-        requiresPlayerLayerForPiP
+        return requiresPlayerLayerForPiP
     }
 
     private func makePlayerItem() -> AVPlayerItem? {
@@ -1490,10 +1547,10 @@ class ViewController: UIViewController, AVPictureInPictureControllerDelegate {
             height: max(currentPiPSize.height, 1)
         )
         let url = FileManager.default.temporaryDirectory
-            .appendingPathComponent("pip-transparent-alpha-60fps-v1-\(Int(backingVideoSize.width))x\(Int(backingVideoSize.height)).mov")
+            .appendingPathComponent("pip-transparent-alpha-\(backingVideoFrameRate)fps-v2-\(Int(backingVideoSize.width))x\(Int(backingVideoSize.height)).mov")
         if !FileManager.default.fileExists(atPath: url.path) {
             do {
-                try PlaceholderVideoFactory.makeBackingVideo(at: url, size: backingVideoSize)
+                try PlaceholderVideoFactory.makeBackingVideo(at: url, size: backingVideoSize, frameRate: backingVideoFrameRate)
             } catch {
                 print(error)
                 AppDebugLogger.log("Placeholder video failed: \(error.localizedDescription)")
@@ -1501,6 +1558,10 @@ class ViewController: UIViewController, AVPictureInPictureControllerDelegate {
             }
         }
         return AVPlayerItem(asset: AVAsset(url: url))
+    }
+
+    private var backingVideoFrameRate: Int {
+        isProMotionExperimentEnabled ? max(60, UIScreen.main.maximumFramesPerSecond) : 60
     }
 
     private func beginBackgroundTaskIfNeeded() {
@@ -1598,6 +1659,14 @@ class ViewController: UIViewController, AVPictureInPictureControllerDelegate {
 
         if #available(iOS 15.0, *) {
             let target = Float(targetFramesPerSecond)
+            if isProMotionExperimentEnabled {
+                displayLink.preferredFrameRateRange = CAFrameRateRange(
+                    minimum: 0,
+                    maximum: 0,
+                    preferred: 0
+                )
+                return
+            }
             displayLink.preferredFrameRateRange = CAFrameRateRange(
                 minimum: target,
                 maximum: target,
@@ -1709,12 +1778,13 @@ class ViewController: UIViewController, AVPictureInPictureControllerDelegate {
         guard let clockOverlayView else { return }
         updateClockMetrics(timestamp: timestamp, forceNetworkSample: forceNetworkSample)
         let now = Date()
-        let renderTick = Int((now.timeIntervalSince1970 * 10).rounded(.down))
+        let renderFPS: Double = isProMotionExperimentEnabled ? 5 : 10
+        let renderTick = Int((now.timeIntervalSince1970 * renderFPS).rounded(.down))
         let fpsText = "\(measuredPiPFPS)Hz"
         let networkText = currentNetworkSpeedText
         guard forceNetworkSample
             || renderTick != lastClockRenderTick
-            || fpsText != lastClockOverlayFPSText
+            || (!isProMotionExperimentEnabled && fpsText != lastClockOverlayFPSText)
             || networkText != lastClockOverlayNetworkText else {
             return
         }
@@ -3174,20 +3244,21 @@ private struct NetworkTrafficSample {
 }
 
 private enum PlaceholderVideoFactory {
-    static func makeBackingVideo(at url: URL, size: CGSize) throws {
+    static func makeBackingVideo(at url: URL, size: CGSize, frameRate: Int = 60) throws {
         try? FileManager.default.removeItem(at: url)
 
         do {
-            try makeVideo(at: url, size: size, fileType: .mov, codec: .hevcWithAlpha, alpha: 0)
+            try makeVideo(at: url, size: size, frameRate: frameRate, fileType: .mov, codec: .hevcWithAlpha, alpha: 0)
         } catch {
             try? FileManager.default.removeItem(at: url)
-            try makeVideo(at: url, size: size, fileType: .mov, codec: .h264, alpha: 0.01)
+            try makeVideo(at: url, size: size, frameRate: frameRate, fileType: .mov, codec: .h264, alpha: 0.01)
         }
     }
 
     private static func makeVideo(
         at url: URL,
         size: CGSize,
+        frameRate: Int,
         fileType: AVFileType,
         codec: AVVideoCodecType,
         alpha: CGFloat
@@ -3218,9 +3289,9 @@ private enum PlaceholderVideoFactory {
         writer.startWriting()
         writer.startSession(atSourceTime: .zero)
 
-        let frameRate = 60
-        let timescale = Int32(frameRate)
-        for frameIndex in 0..<frameRate {
+        let safeFrameRate = min(max(frameRate, 30), 120)
+        let timescale = Int32(safeFrameRate)
+        for frameIndex in 0..<safeFrameRate {
             while !input.isReadyForMoreMediaData {
                 Thread.sleep(forTimeInterval: 0.01)
             }

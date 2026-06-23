@@ -96,6 +96,7 @@ struct PiPHomeView: View {
     let isScrollingEnabled: Bool
     let isClockModeEnabled: Bool
     let isClockModeAvailable: Bool
+    let isProMotionExperimentEnabled: Bool
     let isDarkModeForced: Bool
     let isPiPStoppedNotificationEnabled: Bool
     let isBackgroundInterruptionNotificationEnabled: Bool
@@ -109,6 +110,7 @@ struct PiPHomeView: View {
     let onCustomizeHeight: () -> Void
     let onToggleScrolling: () -> Void
     let onSetClockMode: (Bool) -> Void
+    let onSetProMotionExperimentEnabled: (Bool) -> Void
     let onSetDarkModeForced: (Bool) -> Void
     let onSetPiPStoppedNotificationEnabled: (Bool) -> Void
     let onSetBackgroundInterruptionNotificationEnabled: (Bool) -> Void
@@ -672,6 +674,21 @@ struct PiPHomeView: View {
                         .opacity(0.42)
 
                     SettingsToggleRow(
+                        title: L10n.text("ProMotion实验模式", "ProMotion Experiment"),
+                        titleSuffix: "beta",
+                        systemImage: "speedometer",
+                        isOn: proMotionExperimentBinding,
+                        statusText: { isOn in
+                            isOn
+                                ? L10n.text("实验：启用静默视频保活并让时间悬浮窗被动检测，尝试减少B站弹幕和游戏掉帧；建议重新打开悬浮窗后测试", "Experimental: enables silent video backing and passive clock probing to reduce stutter. Reopen PiP before testing.")
+                                : L10n.text("默认关闭，保持1.0.8稳定逻辑；用于对比B站弹幕和王者吸附掉帧", "Off by default. Keeps the stable 1.0.8 behavior for comparison.")
+                        }
+                    )
+
+                    Divider()
+                        .opacity(0.42)
+
+                    SettingsToggleRow(
                         title: L10n.text("悬浮窗内容滚动", "PiP Text Scrolling"),
                         systemImage: "text.alignleft",
                         isOn: scrollingBinding,
@@ -797,6 +814,18 @@ struct PiPHomeView: View {
                 UIImpactFeedbackGenerator(style: .light).impactOccurred()
                 dismissPiPStatusInfoIfNeededRespectingPersistence()
                 onSetClockMode(newValue)
+            }
+        )
+    }
+
+    private var proMotionExperimentBinding: Binding<Bool> {
+        Binding(
+            get: { isProMotionExperimentEnabled },
+            set: { newValue in
+                guard newValue != isProMotionExperimentEnabled else { return }
+                UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                dismissPiPStatusInfoIfNeededRespectingPersistence()
+                onSetProMotionExperimentEnabled(newValue)
             }
         )
     }
