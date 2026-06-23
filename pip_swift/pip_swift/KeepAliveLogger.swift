@@ -94,10 +94,16 @@ struct KeepAliveInterruptionNotice {
     let runtimeText: String
 
     var message: String {
-        """
-        上次后台在\(interruptedAtText)左右中断
-        持续运行了\(runtimeText)
-        """
+        L10n.text(
+            """
+            上次后台在\(interruptedAtText)左右中断
+            持续运行了\(runtimeText)
+            """,
+            """
+            The last background session may have stopped around \(interruptedAtText).
+            Runtime: \(runtimeText)
+            """
+        )
     }
 }
 
@@ -107,11 +113,27 @@ struct KeepAliveLocalNotificationNotice {
     let reason: String
 
     var message: String {
-        """
-        上次后台在\(interruptedAtText)左右中断
-        持续运行了\(runtimeText)
-        原因：\(reason)
-        """
+        L10n.text(
+            """
+            上次后台在\(interruptedAtText)左右中断
+            持续运行了\(runtimeText)
+            原因：\(reason)
+            """,
+            """
+            The last background session may have stopped around \(interruptedAtText).
+            Runtime: \(runtimeText)
+            Reason: \(localizedReason)
+            """
+        )
+    }
+
+    private var localizedReason: String {
+        switch reason {
+        case "可能被其他画中画应用挤掉或被系统停止":
+            return L10n.text(reason, "Another PiP app or the system may have stopped it")
+        default:
+            return reason
+        }
     }
 }
 
@@ -488,11 +510,11 @@ enum KeepAliveNotificationTester {
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) { [weak controller] in
             guard let controller, controller.presentedViewController == nil else { return }
             let alert = UIAlertController(
-                title: "后台保活可能已中断",
+                title: L10n.text("后台保活可能已中断", "Background keep-alive may have stopped"),
                 message: notice.message,
                 preferredStyle: .alert
             )
-            alert.addAction(UIAlertAction(title: "知道了", style: .default))
+            alert.addAction(UIAlertAction(title: L10n.text("知道了", "OK"), style: .default))
             controller.present(alert, animated: true)
         }
     }
@@ -502,11 +524,11 @@ enum KeepAliveNotificationTester {
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) { [weak controller] in
             guard let controller, controller.presentedViewController == nil else { return }
             let alert = UIAlertController(
-                title: "后台保活可能已中断",
+                title: L10n.text("后台保活可能已中断", "Background keep-alive may have stopped"),
                 message: notice.message,
                 preferredStyle: .alert
             )
-            alert.addAction(UIAlertAction(title: "知道了", style: .default))
+            alert.addAction(UIAlertAction(title: L10n.text("知道了", "OK"), style: .default))
             controller.present(alert, animated: true)
             clearPendingLocalNotificationNotice()
         }
@@ -738,12 +760,18 @@ enum KeepAliveNotificationTester {
         let notificationDelay = max(1, delay ?? frequency.notificationDelay)
         let expectedAt = Date().addingTimeInterval(notificationDelay)
         let expectedText = notificationDateText(expectedAt)
-        let notificationBody = """
-        可能中断时间：\(expectedText)
-        模式：\(mode)，频率：\(frequency.title)
-        """
+        let notificationBody = L10n.text(
+            """
+            可能中断时间：\(expectedText)
+            模式：\(mode)，频率：\(frequency.title)
+            """,
+            """
+            Possible interruption: \(expectedText)
+            Mode: \(mode), frequency: \(frequency.localizedTitle)
+            """
+        )
         let content = UNMutableNotificationContent()
-        content.title = "后台定时探测中断通知"
+        content.title = L10n.text("后台定时探测中断通知", "Background Probe Alert")
         content.body = notificationBody
         content.sound = .default
 
@@ -898,12 +926,18 @@ enum KeepAliveNotificationTester {
         let notificationDelay = frequency.notificationDelay
         let expectedAt = Date().addingTimeInterval(notificationDelay)
         let expectedText = notificationDateText(expectedAt)
-        let notificationBody = """
-        可能中断时间：\(expectedText)
-        模式：\(mode)，频率：\(frequency.title)
-        """
+        let notificationBody = L10n.text(
+            """
+            可能中断时间：\(expectedText)
+            模式：\(mode)，频率：\(frequency.title)
+            """,
+            """
+            Possible interruption: \(expectedText)
+            Mode: \(mode), frequency: \(frequency.localizedTitle)
+            """
+        )
         let content = UNMutableNotificationContent()
-        content.title = "后台定时探测中断通知"
+        content.title = L10n.text("后台定时探测中断通知", "Background Probe Alert")
         content.body = notificationBody
         content.sound = .default
 
@@ -1276,13 +1310,20 @@ enum KeepAliveNotificationTester {
             requestAuthorizationIfNeeded()
             let stoppedAt = Date()
             let stoppedText = notificationDateText(stoppedAt)
-            let notificationBody = """
-            中断时间：\(stoppedText)
-            原因：可能被其他画中画应用挤掉或被系统停止
-            模式：\(mode)
-            """
+            let notificationBody = L10n.text(
+                """
+                中断时间：\(stoppedText)
+                原因：可能被其他画中画应用挤掉或被系统停止
+                模式：\(mode)
+                """,
+                """
+                Stopped at: \(stoppedText)
+                Reason: another PiP app or the system may have stopped it
+                Mode: \(mode)
+                """
+            )
             let content = UNMutableNotificationContent()
-            content.title = "全局高刷悬浮窗已停止"
+            content.title = L10n.text("全局高刷悬浮窗已停止", "Global Refresh PiP Stopped")
             content.body = notificationBody
             content.sound = .default
 
@@ -1373,11 +1414,14 @@ enum KeepAliveNotificationTester {
 
     private static func openSystemSettings(from controller: UIViewController?, reason: String) {
         guard let url = URL(string: UIApplication.openSettingsURLString) else { return }
-        let message = "后台中断通知需要开启系统通知权限，请在设置里允许通知后再打开。"
+        let message = L10n.text(
+            "后台中断通知需要开启系统通知权限，请在设置里允许通知后再打开。",
+            "Background alerts need notification permission. Please allow notifications in Settings, then turn this on again."
+        )
         if let controller, controller.presentedViewController == nil {
-            let alert = UIAlertController(title: "通知权限未开启", message: message, preferredStyle: .alert)
-            alert.addAction(UIAlertAction(title: "取消", style: .cancel))
-            alert.addAction(UIAlertAction(title: "去设置", style: .default) { _ in
+            let alert = UIAlertController(title: L10n.text("通知权限未开启", "Notifications Disabled"), message: message, preferredStyle: .alert)
+            alert.addAction(UIAlertAction(title: L10n.cancel, style: .cancel))
+            alert.addAction(UIAlertAction(title: L10n.text("去设置", "Open Settings"), style: .default) { _ in
                 UIApplication.shared.open(url)
             })
             controller.present(alert, animated: true)

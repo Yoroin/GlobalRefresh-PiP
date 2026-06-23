@@ -31,6 +31,7 @@
 		D950ED1B265E319E006DD1A6 /* LaunchScreen.storyboard in Resources */ = {isa = PBXBuildFile; fileRef = D950ED19265E319E006DD1A6 /* LaunchScreen.storyboard */; };
 		D95D3E3A27A2AF26001C1B6E /* slience.mp3 in Resources */ = {isa = PBXBuildFile; fileRef = D95D3E3927A2AF26001C1B6E /* slience.mp3 */; };
 		AA50ED3F265E319E006DD1A6 /* InfoPlist.strings in Resources */ = {isa = PBXBuildFile; fileRef = AA50ED3D265E319E006DD1A6 /* InfoPlist.strings */; };
+		B1090001265E319E006DD1A6 /* Localizable.strings in Resources */ = {isa = PBXBuildFile; fileRef = B1090000265E319E006DD1A6 /* Localizable.strings */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -63,6 +64,8 @@
 		D95D3E3927A2AF26001C1B6E /* slience.mp3 */ = {isa = PBXFileReference; lastKnownFileType = audio.mp3; path = slience.mp3; sourceTree = "<group>"; };
 		AA50ED40265E319E006DD1A6 /* en */ = {isa = PBXFileReference; lastKnownFileType = text.plist.strings; name = en; path = en.lproj/InfoPlist.strings; sourceTree = "<group>"; };
 		AA50ED41265E319E006DD1A6 /* zh-Hans */ = {isa = PBXFileReference; lastKnownFileType = text.plist.strings; name = "zh-Hans"; path = "zh-Hans.lproj/InfoPlist.strings"; sourceTree = "<group>"; };
+		B1090002265E319E006DD1A6 /* en */ = {isa = PBXFileReference; lastKnownFileType = text.plist.strings; name = en; path = en.lproj/Localizable.strings; sourceTree = "<group>"; };
+		B1090003265E319E006DD1A6 /* zh-Hans */ = {isa = PBXFileReference; lastKnownFileType = text.plist.strings; name = "zh-Hans"; path = "zh-Hans.lproj/Localizable.strings"; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -146,6 +149,7 @@
 				D950ED17265E319E006DD1A6 /* Assets.xcassets */,
 				D950ED19265E319E006DD1A6 /* LaunchScreen.storyboard */,
 				AA50ED3D265E319E006DD1A6 /* InfoPlist.strings */,
+				B1090000265E319E006DD1A6 /* Localizable.strings */,
 				D950ED1C265E319E006DD1A6 /* Info.plist */,
 			);
 			path = pip_swift;
@@ -217,7 +221,8 @@
 						D950ED1B265E319E006DD1A6 /* LaunchScreen.storyboard in Resources */,
 						D95D3E3A27A2AF26001C1B6E /* slience.mp3 in Resources */,
 						AA50ED3F265E319E006DD1A6 /* InfoPlist.strings in Resources */,
-						);
+						B1090001265E319E006DD1A6 /* Localizable.strings in Resources */,
+							);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
 /* End PBXResourcesBuildPhase section */
@@ -340,6 +345,15 @@
 				AA50ED41265E319E006DD1A6 /* zh-Hans */,
 			);
 			name = InfoPlist.strings;
+			sourceTree = "<group>";
+		};
+		B1090000265E319E006DD1A6 /* Localizable.strings */ = {
+			isa = PBXVariantGroup;
+			children = (
+				B1090002265E319E006DD1A6 /* en */,
+				B1090003265E319E006DD1A6 /* zh-Hans */,
+			);
+			name = Localizable.strings;
 			sourceTree = "<group>";
 		};
 /* End PBXVariantGroup section */

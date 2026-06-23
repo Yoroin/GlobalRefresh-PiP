@@ -51,8 +51,8 @@ enum PiPShortcutActionCenter {
 
 @available(iOS 26.0, *)
 public struct StartFloatingWindowIntent: AppIntent {
-    public static var title: LocalizedStringResource = "打开悬浮窗"
-    public static var description = IntentDescription("打开全局高刷悬浮窗")
+    public static var title: LocalizedStringResource = "Open Floating Window"
+    public static var description = IntentDescription("Open Global Refresh PiP")
     public static var openAppWhenRun: Bool = true
     public static var isDiscoverable: Bool = true
     public static var authenticationPolicy: IntentAuthenticationPolicy = .alwaysAllowed
@@ -71,8 +71,8 @@ public struct StartFloatingWindowIntent: AppIntent {
 
 @available(iOS 26.0, *)
 public struct HideFloatingWindowIntent: AppIntent {
-    public static var title: LocalizedStringResource = "隐藏悬浮窗"
-    public static var description = IntentDescription("将已开启并吸附到侧边的悬浮窗缩小到0.1pt")
+    public static var title: LocalizedStringResource = "Hide Floating Window"
+    public static var description = IntentDescription("Shrink the active docked floating window to 0.1 pt")
     public static var openAppWhenRun: Bool = true
     public static var isDiscoverable: Bool = true
     public static var authenticationPolicy: IntentAuthenticationPolicy = .alwaysAllowed
@@ -91,8 +91,8 @@ public struct HideFloatingWindowIntent: AppIntent {
 
 @available(iOS 26.0, *)
 public struct StartAndHideFloatingWindowIntent: AppIntent {
-    public static var title: LocalizedStringResource = "打开并隐藏悬浮窗"
-    public static var description = IntentDescription("打开全局高刷悬浮窗后自动缩小到0.1pt")
+    public static var title: LocalizedStringResource = "Open and Hide Floating Window"
+    public static var description = IntentDescription("Open Global Refresh PiP, then shrink it to 0.1 pt")
     public static var openAppWhenRun: Bool = true
     public static var isDiscoverable: Bool = true
     public static var authenticationPolicy: IntentAuthenticationPolicy = .alwaysAllowed
@@ -115,30 +115,30 @@ public struct AppShortcuts: AppShortcutsProvider {
         AppShortcut(
             intent: StartAndHideFloatingWindowIntent(),
             phrases: [
-                "\(.applicationName)打开并隐藏悬浮窗",
-                "\(.applicationName)打开隐藏悬浮窗"
+                "\(.applicationName) open and hide floating window",
+                "\(.applicationName) open hidden floating window"
             ],
-            shortTitle: "打开并隐藏",
+            shortTitle: "Open and Hide",
             systemImageName: "pip.remove"
         )
 
         AppShortcut(
             intent: StartFloatingWindowIntent(),
             phrases: [
-                "\(.applicationName)打开悬浮窗",
-                "\(.applicationName)开启悬浮窗"
+                "\(.applicationName) open floating window",
+                "\(.applicationName) enable floating window"
             ],
-            shortTitle: "打开悬浮窗",
+            shortTitle: "Open Floating",
             systemImageName: "pip"
         )
 
         AppShortcut(
             intent: HideFloatingWindowIntent(),
             phrases: [
-                "\(.applicationName)隐藏悬浮窗",
-                "\(.applicationName)缩小悬浮窗"
+                "\(.applicationName) hide floating window",
+                "\(.applicationName) shrink floating window"
             ],
-            shortTitle: "隐藏悬浮窗",
+            shortTitle: "Hide Floating",
             systemImageName: "eye.slash"
         )
     }

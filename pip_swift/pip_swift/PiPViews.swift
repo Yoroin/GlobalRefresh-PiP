@@ -595,7 +595,7 @@ struct PiPHomeView: View {
     }
 
     private var keepAliveModeDescription: String {
-        keepAliveMode == "音频强保活"
+        keepAliveMode == L10n.text("音频强保活", "Audio Keep-alive")
             ? L10n.text("音频强保活，强力保活方案，缺点较为耗电，且小部分场景可能影响音频，已默认不再使用，仅适合超强保活且不在意耗电的需求用户", "Audio keep-alive is stronger but uses more power and may affect audio in some cases. It is no longer the default.")
             : L10n.text("新方案仅PiP保活，经实测较老方案更为省电，保活效果一致，并且解决音频冲突问题，优先推荐", "Low-power PiP keep-alive is recommended. In testing it keeps the same background stability while using less power and avoiding audio conflicts.")
     }

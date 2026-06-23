@@ -264,9 +264,11 @@ class ViewController: UIViewController, AVPictureInPictureControllerDelegate {
     }
     private var pipStatusTitle: String {
         guard isPiPRuntimeActive else {
-            return "待启用"
+            return L10n.text("待启用", "Ready")
         }
-        return clampedPiPHeight <= 0.15 ? "运行中-已隐藏" : "运行中"
+        return clampedPiPHeight <= 0.15
+            ? L10n.text("运行中-已隐藏", "Running-Hidden")
+            : L10n.text("运行中", "Running")
     }
 
     private var isPiPVisuallyHidden: Bool {
@@ -548,7 +550,10 @@ class ViewController: UIViewController, AVPictureInPictureControllerDelegate {
 
     private func normalizedStoredPiPRuntimeStoppedAtText() -> String {
         let storedText = UserDefaults.standard.string(forKey: userDefaultsPiPRuntimeStoppedAtTextKey) ?? "暂无"
-        return storedText.isEmpty ? "暂无" : storedText
+        guard !storedText.isEmpty, storedText != "暂无" else {
+            return L10n.text("暂无", "None")
+        }
+        return storedText
     }
 
     private func setRememberPiPHeight(_ isEnabled: Bool) {
@@ -610,13 +615,13 @@ class ViewController: UIViewController, AVPictureInPictureControllerDelegate {
             AppDebugLogger.log("ProMotion experiment disabled: restored stable clock DisplayLink policy")
         }
         if pipController?.isPictureInPictureActive == true || isPiPTransitioning || wantsPiPActive {
-            showMessage(isProMotionExperimentEnabled ? "实验模式已开启，下次重新打开悬浮窗完整生效" : "实验模式已关闭，下次重新打开悬浮窗完整生效")
+            showMessage(isProMotionExperimentEnabled ? L10n.text("实验模式已开启，下次重新打开悬浮窗完整生效", "Experiment enabled. Reopen PiP for full effect.") : L10n.text("实验模式已关闭，下次重新打开悬浮窗完整生效", "Experiment disabled. Reopen PiP for full effect."))
             return
         }
         if hasPreparedPiPInfrastructure {
             teardownPiPInfrastructure()
         }
-        showMessage(isProMotionExperimentEnabled ? "实验模式已开启，下次打开悬浮窗生效" : "实验模式已关闭，下次打开悬浮窗恢复稳定逻辑")
+        showMessage(isProMotionExperimentEnabled ? L10n.text("实验模式已开启，下次打开悬浮窗生效", "Experiment enabled. It takes effect next time PiP starts.") : L10n.text("实验模式已关闭，下次打开悬浮窗恢复稳定逻辑", "Experiment disabled. Stable behavior resumes next time PiP starts."))
     }
 
     private func setPiPStatusInfoPersistent(_ isEnabled: Bool) {
@@ -1048,18 +1053,8 @@ class ViewController: UIViewController, AVPictureInPictureControllerDelegate {
     }
 
     private var originalPiPText: String {
-        """
-        悬浮窗运行中
-        悬浮窗运行中
-        悬浮窗运行中
-        悬浮窗运行中
-        悬浮窗运行中
-        悬浮窗运行中
-        悬浮窗运行中
-        悬浮窗运行中
-        悬浮窗运行中
-        悬浮窗运行中
-        """
+        let line = L10n.text("悬浮窗运行中", "Floating window running")
+        return Array(repeating: line, count: 10).joined(separator: "\n")
     }
 
     private func togglePiP() {
@@ -1068,13 +1063,13 @@ class ViewController: UIViewController, AVPictureInPictureControllerDelegate {
         AppDebugLogger.log("Toggle PiP tapped, active=\(pipController?.isPictureInPictureActive ?? false), prepared=\(hasPreparedPiPInfrastructure), wants=\(wantsPiPActive)")
         if pipController == nil, !preparePiPInfrastructureIfNeeded() {
             isPiPActiveForUI = false
-            showMessage("当前环境不支持悬浮窗")
+            showMessage(L10n.text("当前环境不支持悬浮窗", "Floating window is not supported here."))
             return
         }
 
         guard let pipController else {
             isPiPActiveForUI = false
-            showMessage("当前环境不支持悬浮窗")
+            showMessage(L10n.text("当前环境不支持悬浮窗", "Floating window is not supported here."))
             return
         }
 
@@ -1126,14 +1121,14 @@ class ViewController: UIViewController, AVPictureInPictureControllerDelegate {
         if pipController == nil, !preparePiPInfrastructureIfNeeded() {
             isPiPActiveForUI = false
             shouldHidePiPAfterShortcutStart = false
-            showMessage("当前环境不支持悬浮窗")
+            showMessage(L10n.text("当前环境不支持悬浮窗", "Floating window is not supported here."))
             return
         }
 
         guard let pipController else {
             isPiPActiveForUI = false
             shouldHidePiPAfterShortcutStart = false
-            showMessage("当前环境不支持悬浮窗")
+            showMessage(L10n.text("当前环境不支持悬浮窗", "Floating window is not supported here."))
             return
         }
 
@@ -1150,7 +1145,7 @@ class ViewController: UIViewController, AVPictureInPictureControllerDelegate {
             if shouldHideAfterStart {
                 hidePiPFromShortcut()
             } else {
-                showMessage("悬浮窗已开启")
+                showMessage(L10n.text("悬浮窗已开启", "Floating window is already on."))
             }
             return
         }
@@ -1212,29 +1207,29 @@ class ViewController: UIViewController, AVPictureInPictureControllerDelegate {
     private func hidePiPFromShortcut() {
         guard let pipController, pipController.isPictureInPictureActive else {
             shouldHidePiPAfterShortcutStart = false
-            showMessage("请先开启悬浮窗并吸附到侧边")
+            showMessage(L10n.text("请先开启悬浮窗并吸附到侧边", "Enable PiP and dock it to the edge first."))
             return
         }
 
         commitPiPHeight(minPiPHeight)
-        showMessage("已隐藏悬浮窗")
+        showMessage(L10n.text("已隐藏悬浮窗", "Floating window hidden."))
     }
 
     private func hidePiPAfterShortcutStartIfNeeded() {
         guard shouldHidePiPAfterShortcutStart else { return }
         shouldHidePiPAfterShortcutStart = false
         commitPiPHeight(minPiPHeight)
-        showMessage("已打开并隐藏悬浮窗")
+        showMessage(L10n.text("已打开并隐藏悬浮窗", "Floating window opened and hidden."))
     }
 
     private func shortcutActionTitle(_ action: PiPShortcutAction) -> String {
         switch action {
         case .startFloatingWindow:
-            return "打开悬浮窗"
+            return L10n.text("打开悬浮窗", "Open Floating Window")
         case .hideFloatingWindow:
-            return "隐藏悬浮窗"
+            return L10n.text("隐藏悬浮窗", "Hide Floating Window")
         case .startAndHideFloatingWindow:
-            return "打开并隐藏悬浮窗"
+            return L10n.text("打开并隐藏悬浮窗", "Open and Hide")
         }
     }
 
@@ -2656,7 +2651,7 @@ class ViewController: UIViewController, AVPictureInPictureControllerDelegate {
 
     private func showMessage(_ message: String) {
         let alert = UIAlertController(title: message, message: nil, preferredStyle: .alert)
-        alert.addAction(UIAlertAction(title: "确定", style: .default))
+        alert.addAction(UIAlertAction(title: L10n.ok, style: .default))
         present(alert, animated: true)
     }
 
@@ -2971,7 +2966,7 @@ private final class PiPHeightEditorViewController: UIViewController {
         let contentView = applyLegacyGlassSheetBackground()
 
         let titleLabel = UILabel()
-        titleLabel.text = "自定义悬浮窗高度"
+        titleLabel.text = L10n.text("自定义悬浮窗高度", "Custom PiP Height")
         titleLabel.font = .systemFont(ofSize: 24, weight: .black)
         titleLabel.textColor = .label
 
@@ -3005,17 +3000,15 @@ private final class PiPHeightEditorViewController: UIViewController {
         }
 
         let hintLabel = UILabel()
-        hintLabel.text = "滑动时会实时调整已打开悬浮窗的高度\n可根据自身喜好调节侧边吸附框大小"
+        hintLabel.text = L10n.text("滑动时会实时调整已打开悬浮窗的高度\n可根据自身喜好调节侧边吸附框大小", "Drag to adjust the active floating window height in real time.\nUse it to tune the side dock size.")
         hintLabel.font = .systemFont(ofSize: 14, weight: .semibold)
         hintLabel.textColor = .secondaryLabel
         hintLabel.numberOfLines = 0
 
-        let resetButton = makeGlassButton(title: "恢复默认 120pt", isPrimary: false)
-        resetButton.setTitle("恢复默认 120pt", for: .normal)
+        let resetButton = makeGlassButton(title: L10n.text("恢复默认 120pt", "Reset to 120 pt"), isPrimary: false)
         resetButton.addTarget(self, action: #selector(handleReset), for: .touchUpInside)
 
-        let doneButton = makeGlassButton(title: "完成", isPrimary: true)
-        doneButton.setTitle("完成", for: .normal)
+        let doneButton = makeGlassButton(title: L10n.text("完成", "Done"), isPrimary: true)
         doneButton.addTarget(self, action: #selector(handleDone), for: .touchUpInside)
 
         let buttonStack = UIStackView(arrangedSubviews: [resetButton, doneButton])

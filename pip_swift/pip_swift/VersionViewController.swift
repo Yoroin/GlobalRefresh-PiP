@@ -246,78 +246,78 @@ private final class ChangelogViewController: UIViewController {
                 ]
             ),
             makeSection(
-                version: "1.0.8（26.6.19）",
+                version: L10n.text("1.0.8（26.6.19）", "1.0.8 (2026.6.19)"),
                 items: [
-                    "使用 Xcode 27 beta 构建，适配 iOS 15-iOS 27",
-                    "新增悬浮窗时间、网速、帧率检测（因打开悬浮窗后全局默认120hz，帧率检测功能需要先临时关闭帧率演示的强制120hz开关）",
-                    "iOS 26 以下强制禁用时间悬浮窗，避免旧系统启用后导致全局120Hz失效；普通文本悬浮窗不受影响",
-                    "首页更多设置新增 深色模式 开关，默认关闭时跟随系统设置，开启后固定使用深色模式",
-                    "首页更多设置新增 悬浮窗被挤通知 和 后台中断通知 beta 两个独立开关；被挤通知用于其他画中画挤掉悬浮窗时实时提醒（一般只开这个就够用了）。后台中断通知 beta 默认关闭，通过定时轮询和预排本地通知辅助判断后台是否仍存活；频率主要影响异常发现速度和误报风险，不代表耗电量线性增加",
-                    "优化首页布局稳定性，修复部分状态切换后页面轻微错位",
-                    "新增系统快捷指令：打开并隐藏悬浮窗、打开悬浮窗、隐藏悬浮窗，便于放在控制中心一键操作；添加入口为长按控制中心-新增快捷指令-选中全局高刷，控制中心添加快捷指令仅支持 iOS 18+（如果屏幕上出现两个点是因为悬浮窗的关闭按钮没有隐藏，让悬浮窗恢复正常大小后点一下即可，下次会自动隐藏）",
-                    "新增悬浮窗状态常驻开关，便于查看存活时间",
-                    "适配深色模式桌面图标",
-                    "优化悬浮窗停止流程",
-                    "优化强制帧率演示页面描述，此开关目前开启和关闭都将影响悬浮窗的120hz功能"
+                    L10n.text("使用 Xcode 27 beta 构建，适配 iOS 15-iOS 27", "Built with Xcode 27 beta, compatible with iOS 15 through iOS 27."),
+                    L10n.text("新增悬浮窗时间、网速、帧率检测（因打开悬浮窗后全局默认120hz，帧率检测功能需要先临时关闭帧率演示的强制120hz开关）", "Added PiP clock, network speed, and frame-rate detection. Because opening PiP can enable global 120 Hz by default, temporarily turn off the Frame Rate Demo force-120 switch before using frame-rate detection."),
+                    L10n.text("iOS 26 以下强制禁用时间悬浮窗，避免旧系统启用后导致全局120Hz失效；普通文本悬浮窗不受影响", "Clock PiP is disabled below iOS 26 to avoid breaking global 120 Hz on older systems. Text PiP is unaffected."),
+                    L10n.text("首页更多设置新增 深色模式 开关，默认关闭时跟随系统设置，开启后固定使用深色模式", "Added a Dark Mode switch in Home > More. Off follows the system; on forces dark mode."),
+                    L10n.text("首页更多设置新增 悬浮窗被挤通知 和 后台中断通知 beta 两个独立开关；被挤通知用于其他画中画挤掉悬浮窗时实时提醒（一般只开这个就够用了）。后台中断通知 beta 默认关闭，通过定时轮询和预排本地通知辅助判断后台是否仍存活；频率主要影响异常发现速度和误报风险，不代表耗电量线性增加", "Added separate PiP Conflict Alert and Background Alert beta switches in Home > More. Conflict alerts notify when another PiP app pushes this PiP away. Background Alert beta is off by default and uses polling plus scheduled local notifications to help detect background termination. Frequency mainly affects detection speed and false-positive risk, not battery use linearly."),
+                    L10n.text("优化首页布局稳定性，修复部分状态切换后页面轻微错位", "Improved home layout stability and fixed slight shifts after some state changes."),
+                    L10n.text("新增系统快捷指令：打开并隐藏悬浮窗、打开悬浮窗、隐藏悬浮窗，便于放在控制中心一键操作；添加入口为长按控制中心-新增快捷指令-选中全局高刷，控制中心添加快捷指令仅支持 iOS 18+（如果屏幕上出现两个点是因为悬浮窗的关闭按钮没有隐藏，让悬浮窗恢复正常大小后点一下即可，下次会自动隐藏）", "Added Shortcuts: Open and Hide, Open Floating Window, and Hide Floating Window for one-tap Control Center use. To add them, long-press Control Center, add a shortcut, then select Global Refresh. Control Center shortcut tiles require iOS 18+."),
+                    L10n.text("新增悬浮窗状态常驻开关，便于查看存活时间", "Added a pinned PiP status switch for viewing runtime."),
+                    L10n.text("适配深色模式桌面图标", "Added dark-mode app icon support."),
+                    L10n.text("优化悬浮窗停止流程", "Improved the PiP stop flow."),
+                    L10n.text("优化强制帧率演示页面描述，此开关目前开启和关闭都将影响悬浮窗的120hz功能", "Improved the force-refresh demo description. This switch currently affects the PiP 120 Hz behavior both when on and off.")
                 ]
             ),
             makeSection(
-                version: "1.0.7（26.6.8）",
+                version: L10n.text("1.0.7（26.6.8）", "1.0.7 (2026.6.8)"),
                 items: [
-                    "为了减少耗电量，经过实测对比后APP将默认启用为更为省电的仅PiP保活新方案，后台保活效果仍为显著，且解决了小部分场景下的音频冲突问题",
-                    "可通过版本号-下方或首页查看当前保活模式",
-                    "不再推荐使用老方案，如有需求可再自行前往调试模式-自由切换",
-                    "首页新增悬浮窗状态检测，方便查看是否生效以及隐藏和是否被杀后台，点击可查看每次打开后的持续运行时间以及上次关闭时间，便于判断后台留存时间",
-                    "首页停止滚动按钮移至二级菜单，防止误解"
+                    L10n.text("为了减少耗电量，经过实测对比后APP将默认启用为更为省电的仅PiP保活新方案，后台保活效果仍为显著，且解决了小部分场景下的音频冲突问题", "Switched the default to the lower-power PiP-only keep-alive mode after testing. Background stability remains strong while avoiding some audio conflicts."),
+                    L10n.text("可通过版本号-下方或首页查看当前保活模式", "The current keep-alive mode is shown below the version number and on the home page."),
+                    L10n.text("不再推荐使用老方案，如有需求可再自行前往调试模式-自由切换", "The old mode is no longer recommended, but it can still be selected in Debug Mode."),
+                    L10n.text("首页新增悬浮窗状态检测，方便查看是否生效以及隐藏和是否被杀后台，点击可查看每次打开后的持续运行时间以及上次关闭时间，便于判断后台留存时间", "Added PiP status detection on the home page, including active/hidden state, runtime, and last stop time."),
+                    L10n.text("首页停止滚动按钮移至二级菜单，防止误解", "Moved the stop-scrolling button into More Settings to reduce confusion.")
                 ]
             ),
             makeSection(
-                version: "1.0.6（26.6.6）",
+                version: L10n.text("1.0.6（26.6.6）", "1.0.6 (2026.6.6)"),
                 items: [
-                    "调试模式新增 保活方案切换 开关，可尝试切换为更省电的仅PiP保活方案，但后台留存率可能下降可能出现低版本兼容性问题，可自行选择",
-                    "修复关闭悬浮窗后进入后台可能自动重新开启的问题",
-                    "调试模式新增复制诊断日志功能，用于辅助排查耗电变化和推断后台保活中断时间段"
+                    L10n.text("调试模式新增 保活方案切换 开关，可尝试切换为更省电的仅PiP保活方案，但后台留存率可能下降可能出现低版本兼容性问题，可自行选择", "Added a Debug Mode keep-alive switch for trying the lower-power PiP-only mode."),
+                    L10n.text("修复关闭悬浮窗后进入后台可能自动重新开启的问题", "Fixed an issue where PiP could reopen automatically after being stopped and sent to the background."),
+                    L10n.text("调试模式新增复制诊断日志功能，用于辅助排查耗电变化和推断后台保活中断时间段", "Added diagnostics copy support in Debug Mode for investigating battery changes and background interruptions.")
                 ]
             ),
             makeSection(
-                version: "1.0.5（26.6.6）",
+                version: L10n.text("1.0.5（26.6.6）", "1.0.5 (2026.6.6)"),
                 items: [
-                    "修复iOS16部分用户卡顿的问题，修复iOS16部分用户相机可能导致的闪退问题以及自定义悬浮窗高度不生效的问题（感谢两位老铁的崩溃日志和测试）",
-                    "修复部分用户反馈的音频冲突问题",
-                    "优化旧版iOS系统的UI，未适配液态玻璃的组件采用高斯模糊"
+                    L10n.text("修复iOS16部分用户卡顿的问题，修复iOS16部分用户相机可能导致的闪退问题以及自定义悬浮窗高度不生效的问题（感谢两位老铁的崩溃日志和测试）", "Fixed stutter for some iOS 16 users, a possible camera-related crash, and custom PiP height issues."),
+                    L10n.text("修复部分用户反馈的音频冲突问题", "Fixed audio conflict issues reported by some users."),
+                    L10n.text("优化旧版iOS系统的UI，未适配液态玻璃的组件采用高斯模糊", "Improved the UI on older iOS versions with blur fallbacks for Liquid Glass-style components.")
                 ]
             ),
             makeSection(
-                version: "1.0.4（26.6.4）",
+                version: L10n.text("1.0.4（26.6.4）", "1.0.4 (2026.6.4)"),
                 items: [
-                    "修复低版本iOS设备闪退问题，已在iOS15.8设备调试通过"
+                    L10n.text("修复低版本iOS设备闪退问题，已在iOS15.8设备调试通过", "Fixed crashes on older iOS devices, tested on iOS 15.8.")
                 ]
             ),
             makeSection(
-                version: "1.0.3（26.6.4）",
+                version: L10n.text("1.0.3（26.6.4）", "1.0.3 (2026.6.4)"),
                 items: [
-                    "对“滚动悬浮窗”增加默认记忆功能；首页新增 记忆悬浮窗高度 开关",
-                    "尝试修复iOS16低版本无法打开悬浮窗的问题"
+                    L10n.text("对“滚动悬浮窗”增加默认记忆功能；首页新增 记忆悬浮窗高度 开关", "Added remembered scrolling PiP height, with a new Remember PiP Height switch on the home page."),
+                    L10n.text("尝试修复iOS16低版本无法打开悬浮窗的问题", "Attempted to fix PiP startup issues on lower iOS 16 versions.")
                 ]
             ),
             makeSection(
-                version: "1.0.2（26.6.3）",
+                version: L10n.text("1.0.2（26.6.3）", "1.0.2 (2026.6.3)"),
                 items: [
-                    "调整自定义悬浮窗的最低值为0.1pt，可以做到完全隐藏悬浮窗"
+                    L10n.text("调整自定义悬浮窗的最低值为0.1pt，可以做到完全隐藏悬浮窗", "Lowered the custom PiP height minimum to 0.1 pt so the floating window can be fully hidden.")
                 ]
             ),
             makeSection(
-                version: "1.0.1（26.5.27）",
+                version: L10n.text("1.0.1（26.5.27）", "1.0.1 (2026.5.27)"),
                 items: [
-                    "去除旋转窗口功能",
-                    "增加自定义悬浮窗高度功能，可通过滑块无级调节",
-                    "增加关闭/开启滚动功能"
+                    L10n.text("去除旋转窗口功能", "Removed the rotate-window feature."),
+                    L10n.text("增加自定义悬浮窗高度功能，可通过滑块无级调节", "Added custom PiP height control with a smooth slider."),
+                    L10n.text("增加关闭/开启滚动功能", "Added text scrolling on/off control.")
                 ]
             ),
             makeSection(
-                version: "1.0.0（26.5.26）",
+                version: L10n.text("1.0.0（26.5.26）", "1.0.0 (2026.5.26)"),
                 items: [
-                    "在原版基础上增加后台保活功能和修改悬浮窗大小"
+                    L10n.text("在原版基础上增加后台保活功能和修改悬浮窗大小", "Added background keep-alive and PiP size adjustment on top of the original project.")
                 ]
             )
         ])
