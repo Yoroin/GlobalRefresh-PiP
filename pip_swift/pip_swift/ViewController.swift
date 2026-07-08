@@ -3089,7 +3089,7 @@ class ViewController: UIViewController, AVPictureInPictureControllerDelegate {
     private func playerLayerReferenceVideoURL() -> URL? {
         Bundle.main.url(forResource: "pip_reference_10_1", withExtension: "mov")
             ?? Bundle.main.url(forResource: "playerlayer_video_noaudio", withExtension: "mp4")
-            ?? Bundle.main.url(forResource: "竖向视频", withExtension: "mp4")
+            ?? Bundle.main.url(forResource: "vertical_video", withExtension: "mp4")
     }
 
     private func referenceRenderSize(for asset: AVAsset) -> CGSize {
