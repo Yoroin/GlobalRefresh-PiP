@@ -83,7 +83,7 @@ enum KeepAliveNotificationProbeFrequency: String, CaseIterable {
         switch self {
         case .low: return 29 * 60
         case .high: return 55
-        case .ultra: return 10
+        case .ultra: return 20
         }
     }
 
@@ -171,7 +171,6 @@ enum KeepAliveLogger {
         UserDefaults.standard.set(Date().timeIntervalSince1970, forKey: sessionStartKey)
         UserDefaults.standard.set(mode, forKey: lastModeKey)
         heartbeat()
-        KeepAliveNotificationTester.markPiPStartedForBackgroundProbe()
         appendIfDebug("悬浮窗开始保活，模式=\(mode)")
     }
 
@@ -372,9 +371,10 @@ enum KeepAliveLogger {
 // TEST ANCHOR: 后台中断/悬浮窗停止提醒测试。撤回时删除本 enum，并移除 KeepAliveLogger/ViewController/VersionViewController 中的调用。
 enum KeepAliveNotificationTester {
     private static let legacyEnabledKey = "pip.keepAlive.notificationTesterEnabled"
-    private static let backgroundProbeEnabledKey = "pip.keepAlive.backgroundProbeNotificationEnabled"
-    private static let pipStoppedEnabledKey = "pip.keepAlive.pipStoppedNotificationEnabled"
-    private static let splitNotificationMigrationKey = "pip.keepAlive.notificationSplit.v1"
+	    private static let backgroundProbeEnabledKey = "pip.keepAlive.backgroundProbeNotificationEnabled"
+	    private static let pipStoppedEnabledKey = "pip.keepAlive.pipStoppedNotificationEnabled"
+	    private static let splitNotificationMigrationKey = "pip.keepAlive.notificationSplit.v1"
+	    private static let pipStoppedDefaultMigrationKey = "pip.keepAlive.pipStoppedNotificationDefault.v1"
     private static let frequencyKey = "pip.keepAlive.notificationProbeFrequency"
     private static let frequencyMigrationKey = "pip.keepAlive.notificationProbeFrequency.v6"
     private static let defaultProbeFrequency = KeepAliveNotificationProbeFrequency.low
@@ -410,15 +410,28 @@ enum KeepAliveNotificationTester {
     private static var audioInterruptionSessionActive = false
     private static var suppressBackgroundProbeUntilUnlock = false
 
-    private static func migrateSplitNotificationPreferencesIfNeeded() {
-        guard !UserDefaults.standard.bool(forKey: splitNotificationMigrationKey) else { return }
-        UserDefaults.standard.set(true, forKey: splitNotificationMigrationKey)
-        UserDefaults.standard.set(false, forKey: backgroundProbeEnabledKey)
-        UserDefaults.standard.set(false, forKey: pipStoppedEnabledKey)
-        if UserDefaults.standard.bool(forKey: legacyEnabledKey) {
-            AppDebugLogger.log("后台通知开关已拆分，旧开关不自动迁移，两个新开关默认关闭")
-        }
-    }
+	    private static func migrateSplitNotificationPreferencesIfNeeded() {
+	        guard !UserDefaults.standard.bool(forKey: splitNotificationMigrationKey) else { return }
+	        UserDefaults.standard.set(true, forKey: splitNotificationMigrationKey)
+	        UserDefaults.standard.set(false, forKey: backgroundProbeEnabledKey)
+	        if UserDefaults.standard.bool(forKey: legacyEnabledKey) {
+	            AppDebugLogger.log("后台通知开关已拆分，旧开关不自动迁移，两个新开关默认关闭")
+	        }
+	    }
+
+	    static func enablePiPStoppedNotificationByDefaultIfNeeded(from controller: UIViewController?, completion: @escaping (Bool) -> Void) {
+	        migrateSplitNotificationPreferencesIfNeeded()
+	        guard !UserDefaults.standard.bool(forKey: pipStoppedDefaultMigrationKey) else {
+	            completion(isPiPStoppedNotificationEnabled)
+	            return
+	        }
+	        UserDefaults.standard.set(true, forKey: pipStoppedDefaultMigrationKey)
+	        guard UserDefaults.standard.object(forKey: pipStoppedEnabledKey) == nil else {
+	            completion(isPiPStoppedNotificationEnabled)
+	            return
+	        }
+	        prepareForPiPStoppedToggle(from: controller, shouldOpenSettingsOnDenied: false, completion: completion)
+	    }
 
     static var isEnabled: Bool {
         isBackgroundProbeEnabled
@@ -488,10 +501,18 @@ enum KeepAliveNotificationTester {
         }
     }
 
-    static func prepareForPiPStoppedToggle(from controller: UIViewController?, completion: @escaping (Bool) -> Void) {
-        ensureAuthorizationForHomeToggle(from: controller) { granted in
-            guard granted else {
-                isPiPStoppedNotificationEnabled = false
+	    static func prepareForPiPStoppedToggle(
+	        from controller: UIViewController?,
+	        shouldOpenSettingsOnDenied: Bool = true,
+	        completion: @escaping (Bool) -> Void
+	    ) {
+	        ensureAuthorizationForHomeToggle(
+	            from: controller,
+	            purpose: .pipStopped,
+	            shouldOpenSettingsOnDenied: shouldOpenSettingsOnDenied
+	        ) { granted in
+	            guard granted else {
+	                isPiPStoppedNotificationEnabled = false
                 completion(false)
                 return
             }
@@ -1362,13 +1383,7 @@ enum KeepAliveNotificationTester {
         UNUserNotificationCenter.current().getNotificationSettings { settings in
             switch settings.authorizationStatus {
             case .notDetermined:
-                UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound]) { granted, error in
-                    if let error {
-                        AppDebugLogger.log("本地通知权限请求失败：\(error.localizedDescription)")
-                    } else {
-                        AppDebugLogger.log("本地通知权限请求结果：\(granted ? "允许" : "拒绝")")
-                    }
-                }
+                AppDebugLogger.log("本地通知权限尚未决定，等待前台授权入口触发")
             case .denied:
                 AppDebugLogger.log("本地通知权限已被拒绝，后台中断提醒无法弹出")
             default:
@@ -1377,27 +1392,89 @@ enum KeepAliveNotificationTester {
         }
     }
 
-    private static func ensureAuthorizationForHomeToggle(from controller: UIViewController?, completion: @escaping (Bool) -> Void) {
+    private enum NotificationAuthorizationPurpose {
+        case backgroundProbe
+        case pipStopped
+    }
+
+    private static func requestSystemNotificationAuthorization(
+        from controller: UIViewController?,
+        purpose: NotificationAuthorizationPurpose,
+        shouldOpenSettingsOnDenied: Bool,
+        completion: @escaping (Bool) -> Void
+    ) {
+        let performRequest = {
+            UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound]) { granted, error in
+                if let error {
+                    AppDebugLogger.log("本地通知权限请求失败：\(error.localizedDescription)")
+                } else {
+                    AppDebugLogger.log("本地通知权限请求结果：\(granted ? "允许" : "拒绝")")
+                }
+                DispatchQueue.main.async {
+                    if !granted, shouldOpenSettingsOnDenied {
+                        openSystemSettings(from: controller, purpose: purpose, reason: "首次授权未允许")
+                    }
+                    completion(granted)
+                }
+            }
+        }
+
+        DispatchQueue.main.async {
+            guard let controller, controller.presentedViewController == nil else {
+                performRequest()
+                return
+            }
+
+            let message: String
+            switch purpose {
+            case .backgroundProbe:
+                message = L10n.text(
+                    "通知权限用于在后台保活异常中断时提醒你。",
+                    "Notifications are used to alert you when background keep-alive may stop unexpectedly."
+                )
+            case .pipStopped:
+                message = L10n.text(
+                    "通知权限用于在悬浮窗被其他画中画应用挤掉或被系统停止时通知。",
+                    "Notifications are used to alert you when another Picture in Picture app or the system stops the floating window."
+                )
+            }
+
+            let alert = UIAlertController(
+                title: L10n.text("开启通知提醒", "Enable Notifications"),
+                message: message,
+                preferredStyle: .alert
+            )
+            alert.addAction(UIAlertAction(title: L10n.text("暂不开启", "Not Now"), style: .cancel) { _ in
+                completion(false)
+            })
+            alert.addAction(UIAlertAction(title: L10n.text("继续授权", "Continue"), style: .default) { _ in
+                performRequest()
+            })
+            controller.present(alert, animated: true)
+        }
+    }
+
+    private static func ensureAuthorizationForHomeToggle(
+        from controller: UIViewController?,
+        purpose: NotificationAuthorizationPurpose = .backgroundProbe,
+        shouldOpenSettingsOnDenied: Bool = true,
+        completion: @escaping (Bool) -> Void
+    ) {
         UNUserNotificationCenter.current().getNotificationSettings { settings in
             switch settings.authorizationStatus {
             case .notDetermined:
-                UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound]) { granted, error in
-                    if let error {
-                        AppDebugLogger.log("本地通知权限请求失败：\(error.localizedDescription)")
-                    } else {
-                        AppDebugLogger.log("本地通知权限请求结果：\(granted ? "允许" : "拒绝")")
-                    }
-                    DispatchQueue.main.async {
-                        if !granted {
-                            openSystemSettings(from: controller, reason: "首次授权未允许")
-                        }
-                        completion(granted)
-                    }
-                }
+                requestSystemNotificationAuthorization(
+                    from: controller,
+                    purpose: purpose,
+                    shouldOpenSettingsOnDenied: shouldOpenSettingsOnDenied,
+                    completion: completion
+                )
             case .denied:
                 AppDebugLogger.log("本地通知权限未开启，跳转系统设置")
                 DispatchQueue.main.async {
-                    openSystemSettings(from: controller, reason: "权限关闭")
+                    if shouldOpenSettingsOnDenied {
+                        openSystemSettings(from: controller, purpose: purpose, reason: "权限关闭")
+                    }
                     completion(false)
                 }
             case .authorized, .provisional, .ephemeral:
@@ -1412,12 +1489,21 @@ enum KeepAliveNotificationTester {
         }
     }
 
-    private static func openSystemSettings(from controller: UIViewController?, reason: String) {
-        guard let url = URL(string: UIApplication.openSettingsURLString) else { return }
-        let message = L10n.text(
-            "后台中断通知需要开启系统通知权限，请在设置里允许通知后再打开。",
-            "Background alerts need notification permission. Please allow notifications in Settings, then turn this on again."
-        )
+	    private static func openSystemSettings(from controller: UIViewController?, purpose: NotificationAuthorizationPurpose, reason: String) {
+	        guard let url = URL(string: UIApplication.openSettingsURLString) else { return }
+	        let message: String
+	        switch purpose {
+	        case .backgroundProbe:
+	            message = L10n.text(
+	                "后台中断通知需要开启系统通知权限，请在设置里允许通知后再打开。",
+	                "Background alerts need notification permission. Please allow notifications in Settings, then turn this on again."
+	            )
+	        case .pipStopped:
+	            message = L10n.text(
+	                "悬浮窗被挤通知需要开启系统通知权限，请在设置里允许通知后再打开。",
+	                "PiP conflict alerts need notification permission. Please allow notifications in Settings, then turn this on again."
+	            )
+	        }
         if let controller, controller.presentedViewController == nil {
             let alert = UIAlertController(title: L10n.text("通知权限未开启", "Notifications Disabled"), message: message, preferredStyle: .alert)
             alert.addAction(UIAlertAction(title: L10n.cancel, style: .cancel))
@@ -1506,7 +1592,7 @@ private extension KeepAliveNotificationProbeFrequency {
         switch self {
         case .low: return "29分钟"
         case .high: return "55秒"
-        case .ultra: return "10秒"
+        case .ultra: return "20秒"
         }
     }
 }

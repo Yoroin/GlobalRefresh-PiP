@@ -42,11 +42,25 @@ final class VersionViewController: UIViewController {
         super.viewDidLoad()
         DiagnosticsRuntimeState.updateCurrentPage("版本")
         setupSwiftUI()
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(handleLanguageDidChange),
+            name: L10n.languageDidChangeNotification,
+            object: nil
+        )
+    }
+
+    deinit {
+        NotificationCenter.default.removeObserver(self)
     }
 
     override func viewDidAppear(_ animated: Bool) {
         super.viewDidAppear(animated)
         DiagnosticsRuntimeState.updateCurrentPage("版本")
+    }
+
+    @objc private func handleLanguageDidChange() {
+        updateSwiftUI()
     }
 
     private func setupSwiftUI() {
@@ -179,7 +193,8 @@ final class VersionViewController: UIViewController {
             PowerUsageLogger.startFreshStatistics()
             MetricKitLogger.shared.start()
             DebugDiagnosticsMonitor.setEnabled(true)
-            AppDebugLogger.log("Debug mode enabled")
+            AppDebugLogger.log("Debug mode enabled, diagnostics monitors enabled")
+            AppDebugLogger.log(PerformanceDiagnosticsLogger.currentSnapshotText())
         } else {
             MetricKitLogger.shared.stop()
             DebugDiagnosticsMonitor.setEnabled(false)
@@ -232,17 +247,27 @@ private final class ChangelogViewController: UIViewController {
         titleLabel.font = .systemFont(ofSize: 24, weight: .black)
         titleLabel.textColor = .label
         titleLabel.textAlignment = .left
+        titleLabel.numberOfLines = 1
 
         let stackView = UIStackView(arrangedSubviews: [
             makeSection(
-                version: L10n.text("1.0.9 beta1（26.6.22）", "1.0.9 beta1 (2026.6.22)"),
+                version: L10n.text("1.0.9 （26.7.8）", "1.0.9 (2026.7.8)"),
                 items: [
-                    L10n.text("首页更多设置新增 ProMotion实验模式 beta，默认关闭，用于对比B站弹幕和王者侧边吸附掉帧问题", "Added the ProMotion Experiment beta switch in More Settings. It is off by default for comparing Bilibili danmaku and game side-dock stutter."),
-                    L10n.text("实验模式开启后，ContentSource 画中画会额外启用静默视频保活，并按设备最高帧率生成占位视频，尝试用视频路径维持全局高刷", "When enabled, ContentSource PiP also starts silent video backing and generates a placeholder video at the device maximum frame rate to test the video path for high refresh."),
-                    L10n.text("实验模式下时间悬浮窗改为被动帧率检测并降低文字刷新频率，减少对前台App渲染的干扰；需重新打开悬浮窗后完整生效", "In experiment mode, Clock PiP uses passive frame-rate probing with lower text update frequency to reduce interference. Reopen PiP for full effect."),
-                    L10n.text("新增国际化基础：主界面、教程、帧率演示、版本页与常见问题开始支持英文系统显示", "Added the internationalization foundation: Home, Tutorial, Frame Rate Demo, Version, and FAQ now support English system language."),
-                    L10n.text("保留中文诊断日志，方便继续排查悬浮窗、后台保活、发热和帧率问题", "Kept diagnostic logs in Chinese for ongoing troubleshooting of PiP, background keep-alive, heat, and frame-rate issues."),
-                    L10n.text("从 1.0.8 fix2 稳定源码锚点继续开发", "Continues from the stable 1.0.8 fix2 source anchor.")
+                    L10n.text("注：此次更新重点解决问题，高刷作用字段回滚至1.0.7稳定版，解决部分iOS版本解锁120失效的问题；新增底层方案切换，解决b站弹幕和荒野乱斗卡顿，缺点无法完全隐藏最低1pt，原因，默认可隐藏悬浮窗底层会强拉120导致锁60的app卡顿，锁80的app不受影响", "Note: this update focuses on key fixes. The high-refresh driver fields have been rolled back to the stable 1.0.7 behavior to fix 120 Hz unlock failures on some iOS versions. Engine switching was added to address Bilibili danmaku and Brawl Stars stutter. The tradeoff is that the new route cannot fully hide and has a 1 pt minimum. The default fully hideable route forces 120 Hz at a lower level, which can stutter in apps locked to 60 Hz; apps locked to 80 Hz are not affected."),
+                    L10n.text("新增首页按钮 一键0.1pt 用于悬浮窗吸附后快速调节高度", "Added the One-tap 0.1 pt home button for quickly adjusting the height after the floating window is docked."),
+                    L10n.text("优化悬浮窗的组件，避免0.1pt时屏幕出现两个白点（仅对iOS16+生效）", "Optimized floating window components to avoid two white dots appearing on screen at 0.1 pt. This only applies to iOS 16+."),
+                    L10n.text("优化悬浮窗隐藏后的资源占用：当高度调至 0.1pt 时，暂停文字滚动和时钟刷新，减少长期后台挂载时的无效开销和发热", "Optimized resource usage after hiding the floating window. When height is set to 0.1 pt, text scrolling and clock refresh are paused to reduce unnecessary long-running background work and heat."),
+                    L10n.text("去除 后台中断通知beta 减少误报情况", "Removed the Background Interruption Alert beta feature to reduce false positives."),
+                    L10n.text("优化深色模式切换逻辑，按钮移至首页", "Improved dark mode switching logic and moved the button to the home page."),
+                    L10n.text("快捷指令尝试适配低版本iOS，如无法使用，请在更多设置-手动导入快捷指令使用", "Shortcuts now attempt to support older iOS versions. If they do not work, use More Settings > Manually Import Shortcuts."),
+                    L10n.text("新增“底层切换”测试入口（日常用户请忽略）：更多设置-底层切换-新方案。新方案仅用于解决因部分游戏和弹幕自身锁60而与120帧率不同步导致的卡顿，表现为b站弹幕一快一慢以及荒野乱斗大厅偶尔掉帧，新方案PlayerLayer参考悬浮时钟受底层限制最低1pt，无法完全隐藏，视觉上会有一条细线，默认方案VideoCall仍保留0.1pt隐藏能力，非必要请默认使用老方案", "Added an Engine Switch testing entry (daily users can ignore it): More Settings > Engine Switch > New Route. The new PlayerLayer route is only for stutter caused by some games or danmaku being locked to 60 Hz and becoming unsynchronized with 120 Hz, such as Bilibili danmaku speeding up and slowing down or occasional Brawl Stars lobby drops. The PlayerLayer route follows Floating Clock behavior and is limited by the underlying framework to a 1 pt minimum, so it cannot fully hide and may show a thin line. The default VideoCall route still supports 0.1 pt hiding. Keep using the old route unless needed."),
+                    L10n.text("增加英文适配", "Added English localization support."),
+                    L10n.text("简化调试模式，优化逻辑，不打开调试模式时完全停止日志记录减少性能开销", "Simplified Debug Mode logic. When Debug Mode is off, logging is completely stopped to reduce performance overhead."),
+                    L10n.text("优化帧率检测逻辑", "Optimized frame-rate detection logic."),
+                    L10n.text("优化部分动画细节", "Optimized some animation details."),
+                    L10n.text("默认启用原有文本悬浮窗、默认启用悬浮窗被挤通知（需要同意授权）、默认启用悬浮窗状态常驻、默认启用记忆悬浮窗高度", "Text floating window is enabled by default, PiP conflict alerts are enabled by default after notification permission is granted, persistent PiP status is enabled by default, and remembered PiP height is enabled by default."),
+                    L10n.text("新增 手动填写高度", "Added manual height input."),
+                    L10n.text("已知问题：直接用快捷指令一键开启悬浮窗隐藏会导致悬浮窗没有吸附到侧面，阻止熄屏，一般还是建议先启用悬浮窗，拖到侧面吸附后再点击一键0.1pt按钮", "Known issue: using a Shortcut to open and hide PiP in one step may leave the floating window undocked, which can prevent auto-lock. In general, open PiP first, drag it to the side until it docks, then tap the One-tap 0.1 pt button.")
                 ]
             ),
             makeSection(
@@ -414,6 +439,14 @@ private final class FAQViewController: UIViewController {
             makeQuestion(
                 question: L10n.text("8.新旧保活模式有什么区别哪个更好", "8. Which keep-alive mode is better?"),
                 answer: L10n.text("经过实测后更推荐新模式仅PiP保活方案作为默认方案，更为省电，跟老方案音频强保活对比保活率一致实测没有出现杀后台，并且避免了可能出现的部分用户反馈的音频冲突问题，当然也保留了选择空间，可自行前往调试模式切换", "The low-power PiP-only mode is recommended. In testing it keeps similar background stability while using less power and avoiding possible audio conflicts. You can still switch modes in Debug Mode.")
+            ),
+            makeQuestion(
+                question: L10n.text("9.首页的底层切换按钮是干嘛的", "9. What does the Engine Switch button do?"),
+                answer: L10n.text("因接到部分用户反馈，默认方案VideoCall虽然可以实现解锁120并完全隐藏，但是底层会因强拉120而导致部分锁60hz的游戏以及60hz的弹幕因帧率不同步而突发掉帧，因此提供底层切换按钮，切换新方案PlayerLayer后可以解决这个问题，但是因底层限制无法完全隐藏，即最低1pt，视觉上会有一条细线，可供自由选择", "Some users reported that although the default VideoCall route can unlock 120 Hz and fully hide the floating window, its lower-level forced 120 Hz behavior may cause sudden stutters in some games locked to 60 Hz or in 60 Hz danmaku because the frame rates are not synchronized. The Engine Switch provides an alternative. Switching to the new PlayerLayer route can solve this issue, but due to lower-level limits it cannot fully hide; the minimum is 1 pt, so a thin line may remain visible. Choose whichever route works best for you.")
+            ),
+            makeQuestion(
+                question: L10n.text("10.为什么我发现有时候无法自动熄屏了", "10. Why does auto-lock sometimes stop working?"),
+                answer: L10n.text("因为隐藏悬浮窗的时候没有把悬浮窗拖到侧面，屏幕上会一直有活动阻止熄屏，请拖动到侧面后再将高度调节至0.1pt", "This can happen if the floating window is hidden before it is docked to the side. Activity may remain on screen and prevent auto-lock. Drag it to the edge first, then adjust the height to 0.1 pt.")
             )
         ])
         stackView.axis = .vertical

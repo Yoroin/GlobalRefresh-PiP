@@ -6,10 +6,7 @@
 import UIKit
 import SwiftUI
 
-final class TutorialTabBarController: UITabBarController, UITabBarControllerDelegate, UIGestureRecognizerDelegate {
-
-    private var interactionController: UIPercentDrivenInteractiveTransition?
-    private var isInteractive = false
+final class TutorialTabBarController: UITabBarController, UITabBarControllerDelegate {
 
     override func viewDidLoad() {
         super.viewDidLoad()
@@ -49,84 +46,10 @@ final class TutorialTabBarController: UITabBarController, UITabBarControllerDele
         )
 
         viewControllers = [stepOneController, stepTwoController]
-
-        let panGesture = UIPanGestureRecognizer(target: self, action: #selector(handlePan(_:)))
-        panGesture.delegate = self
-        panGesture.cancelsTouchesInView = false
-        view.addGestureRecognizer(panGesture)
-    }
-
-    func gestureRecognizerShouldBegin(_ gestureRecognizer: UIGestureRecognizer) -> Bool {
-        guard let panGesture = gestureRecognizer as? UIPanGestureRecognizer else {
-            return true
-        }
-        let velocity = panGesture.velocity(in: view)
-        return abs(velocity.x) > abs(velocity.y)
-    }
-
-    @objc private func handlePan(_ gesture: UIPanGestureRecognizer) {
-        guard let controllers = viewControllers, controllers.count > 1 else { return }
-
-        let translation = gesture.translation(in: view)
-        let velocity = gesture.velocity(in: view)
-        let progress = min(max(abs(translation.x) / max(view.bounds.width, 1), 0), 1)
-
-        switch gesture.state {
-        case .began:
-            let targetIndex = velocity.x < 0 ? selectedIndex + 1 : selectedIndex - 1
-            guard controllers.indices.contains(targetIndex) else { return }
-
-            isInteractive = true
-            interactionController = UIPercentDrivenInteractiveTransition()
-            selectedIndex = targetIndex
-
-        case .changed:
-            interactionController?.update(progress)
-
-        case .ended:
-            let shouldFinish = progress > 0.35 || abs(velocity.x) > 700
-            shouldFinish ? interactionController?.finish() : interactionController?.cancel()
-            interactionController = nil
-            isInteractive = false
-
-        case .cancelled, .failed:
-            interactionController?.cancel()
-            interactionController = nil
-            isInteractive = false
-
-        default:
-            break
-        }
-    }
-
-    func tabBarController(
-        _ tabBarController: UITabBarController,
-        animationControllerForTransitionFrom fromVC: UIViewController,
-        to toVC: UIViewController
-    ) -> UIViewControllerAnimatedTransitioning? {
-        guard
-            let controllers = viewControllers,
-            let fromIndex = controllers.firstIndex(of: fromVC),
-            let toIndex = controllers.firstIndex(of: toVC)
-        else {
-            return nil
-        }
-
-        return TabSlideAnimator(direction: toIndex > fromIndex ? .forward : .backward)
-    }
-
-    func tabBarController(
-        _ tabBarController: UITabBarController,
-        interactionControllerFor animationController: UIViewControllerAnimatedTransitioning
-    ) -> UIViewControllerInteractiveTransitioning? {
-        isInteractive ? interactionController : nil
     }
 
     func tabBarController(_ tabBarController: UITabBarController, shouldSelect viewController: UIViewController) -> Bool {
-        guard
-            !isInteractive,
-            selectedViewController !== viewController
-        else {
+        guard selectedViewController !== viewController else {
             return true
         }
 

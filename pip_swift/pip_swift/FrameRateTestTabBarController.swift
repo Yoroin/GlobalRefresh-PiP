@@ -8,6 +8,10 @@ import SwiftUI
 
 enum FrameRatePreference {
     static let force120HzKey = "frameRateDemo.force120Hz"
+    static let experimentProfileKey = "frameRateDemo.experimentProfile"
+    private static let customMinimumKey = "frameRateDemo.customMinimum"
+    private static let customMaximumKey = "frameRateDemo.customMaximum"
+    private static let customPreferredKey = "frameRateDemo.customPreferred"
     static let didChangeNotification = Notification.Name("FrameRatePreferenceDidChange")
 
     static var isHighRefreshEnabled: Bool {
@@ -21,27 +25,267 @@ enum FrameRatePreference {
         isHighRefreshEnabled ? 120 : 80
     }
 
+    // 帧率检测完美方案：关闭强制120时 preferred 必须回到 0，让系统自适应，避免误判和干涉其它 App。
     static func preferredFrameRateValue(target: Float) -> Float {
         isHighRefreshEnabled ? target : 0
     }
-}
 
-enum ClockDisplayLinkPreference {
-    // BETA5_ANCHOR_CLOCK_DISPLAYLINK_TARGET:
-    // 1.0.8 兼容验证：时间悬浮窗自身保留 preferred=target，观察侧边吸附和游戏帧率表现。
-    private static let forceTargetKey = "pip.debug.clockDisplayLinkForceTarget"
-    static let didChangeNotification = Notification.Name("ClockDisplayLinkPreferenceDidChange")
-
-    static var forcesTargetFrameRate: Bool {
-        get { false }
+    static var experimentProfile: FrameRateExperimentProfile {
+        get {
+            guard
+                let rawValue = UserDefaults.standard.string(forKey: experimentProfileKey),
+                let profile = FrameRateExperimentProfile(rawValue: rawValue)
+            else {
+                return .followSwitch
+            }
+            return profile
+        }
         set {
-            UserDefaults.standard.set(false, forKey: forceTargetKey)
+            UserDefaults.standard.set(newValue.rawValue, forKey: experimentProfileKey)
             NotificationCenter.default.post(name: didChangeNotification, object: nil)
         }
     }
 
-    static func preferredFrameRateValue(target: Float) -> Float {
-        target
+    @available(iOS 15.0, *)
+    static func frameRateRange(target: Float) -> CAFrameRateRange {
+        // 帧率字段实验已暂停：固定回跟随强制120开关，避免历史实验档位继续影响测试。
+        FrameRateExperimentProfile.followSwitch.frameRateRange(
+            target: target,
+            isHighRefreshEnabled: isHighRefreshEnabled,
+            customValues: customValues
+        )
+    }
+
+    static var previewTarget: Float {
+        let maximumFramesPerSecond = Float(UIScreen.main.maximumFramesPerSecond)
+        return isHighRefreshEnabled
+            ? max(60, maximumFramesPerSecond)
+            : min(Float(targetFrameRate), maximumFramesPerSecond)
+    }
+
+    static var customValues: FrameRateExperimentCustomValues {
+        let defaults = UserDefaults.standard
+        let minimum = defaults.object(forKey: customMinimumKey) as? Float ?? 30
+        let maximum = defaults.object(forKey: customMaximumKey) as? Float ?? 120
+        let preferred = defaults.object(forKey: customPreferredKey) as? Float ?? 0
+        return FrameRateExperimentCustomValues(
+            minimum: minimum,
+            maximum: maximum,
+            preferred: preferred
+        )
+    }
+
+    static func cycleCustomValue(_ field: FrameRateExperimentCustomField) {
+        let values = customValues
+        switch field {
+        case .minimum:
+            let next = field.nextValue(after: values.minimum)
+            saveCustomValues(FrameRateExperimentCustomValues(
+                minimum: next,
+                maximum: values.maximum,
+                preferred: values.preferred
+            ))
+        case .maximum:
+            let next = field.nextValue(after: values.maximum)
+            saveCustomValues(FrameRateExperimentCustomValues(
+                minimum: values.minimum,
+                maximum: next,
+                preferred: values.preferred
+            ))
+        case .preferred:
+            let next = field.nextValue(after: values.preferred)
+            saveCustomValues(FrameRateExperimentCustomValues(
+                minimum: values.minimum,
+                maximum: values.maximum,
+                preferred: next
+            ))
+        }
+        NotificationCenter.default.post(name: didChangeNotification, object: nil)
+    }
+
+    private static func saveCustomValues(_ values: FrameRateExperimentCustomValues) {
+        UserDefaults.standard.set(values.minimum, forKey: customMinimumKey)
+        UserDefaults.standard.set(values.maximum, forKey: customMaximumKey)
+        UserDefaults.standard.set(values.preferred, forKey: customPreferredKey)
+    }
+}
+
+enum FrameRateExperimentProfile: String, CaseIterable {
+    case followSwitch
+    case min0Max120Preferred0
+    case min30Max120Preferred0
+    case min0Max120Preferred120
+    case min30Max120Preferred120
+    case min0Max80Preferred0
+    case min30Max80Preferred0
+    case custom
+
+    var title: String {
+        switch self {
+        case .followSwitch:
+            return L10n.text("跟随强制120开关", "Follow Force-120 Switch")
+        case .min0Max120Preferred0:
+            return "minimum 0 / maximum 120 / preferred 0"
+        case .min30Max120Preferred0:
+            return "minimum 30 / maximum 120 / preferred 0"
+        case .min0Max120Preferred120:
+            return "minimum 0 / maximum 120 / preferred 120"
+        case .min30Max120Preferred120:
+            return "minimum 30 / maximum 120 / preferred 120"
+        case .min0Max80Preferred0:
+            return "minimum 0 / maximum 80 / preferred 0"
+        case .min30Max80Preferred0:
+            return "minimum 30 / maximum 80 / preferred 0"
+        case .custom:
+            return L10n.text("自定义字段", "Custom Fields")
+        }
+    }
+
+    var shortTitle: String {
+        switch self {
+        case .followSwitch:
+            return L10n.text("默认", "Default")
+        case .min0Max120Preferred0:
+            return "0/120/0"
+        case .min30Max120Preferred0:
+            return "30/120/0"
+        case .min0Max120Preferred120:
+            return "0/120/120"
+        case .min30Max120Preferred120:
+            return "30/120/120"
+        case .min0Max80Preferred0:
+            return "0/80/0"
+        case .min30Max80Preferred0:
+            return "30/80/0"
+        case .custom:
+            let values = FrameRatePreference.customValues
+            return "\(values.display(values.minimum))/\(values.display(values.maximum))/\(values.display(values.preferred))"
+        }
+    }
+
+    var next: FrameRateExperimentProfile {
+        let profiles = Self.allCases
+        guard let index = profiles.firstIndex(of: self) else { return .followSwitch }
+        return profiles[profiles.index(after: index) == profiles.endIndex ? profiles.startIndex : profiles.index(after: index)]
+    }
+
+    @available(iOS 15.0, *)
+    func frameRateRange(
+        target: Float,
+        isHighRefreshEnabled: Bool,
+        customValues: FrameRateExperimentCustomValues
+    ) -> CAFrameRateRange {
+        switch self {
+        case .followSwitch:
+            return CAFrameRateRange(
+                minimum: 30,
+                maximum: target,
+                preferred: isHighRefreshEnabled ? target : 0
+            )
+        case .min0Max120Preferred0:
+            return CAFrameRateRange(minimum: 1, maximum: 120, preferred: 0)
+        case .min30Max120Preferred0:
+            return CAFrameRateRange(minimum: 30, maximum: 120, preferred: 0)
+        case .min0Max120Preferred120:
+            return CAFrameRateRange(minimum: 1, maximum: 120, preferred: 120)
+        case .min30Max120Preferred120:
+            return CAFrameRateRange(minimum: 30, maximum: 120, preferred: 120)
+        case .min0Max80Preferred0:
+            return CAFrameRateRange(minimum: 1, maximum: 80, preferred: 0)
+        case .min30Max80Preferred0:
+            return CAFrameRateRange(minimum: 30, maximum: 80, preferred: 0)
+        case .custom:
+            let values = customValues.effective(defaultTarget: target)
+            return CAFrameRateRange(
+                minimum: values.minimum,
+                maximum: values.maximum,
+                preferred: values.preferred
+            )
+        }
+    }
+}
+
+struct FrameRateExperimentCustomValues: Equatable {
+    static let targetSentinel: Float = -1
+
+    var minimum: Float
+    var maximum: Float
+    var preferred: Float
+
+    func effective(defaultTarget: Float) -> FrameRateExperimentCustomValues {
+        var values = self
+        values.minimum = resolved(values.minimum, target: defaultTarget)
+        values.maximum = resolved(values.maximum, target: defaultTarget)
+        values.preferred = values.preferred == 0 ? 0 : resolved(values.preferred, target: defaultTarget)
+        // CAFrameRateRange(minimum: 0, ...) can crash on device. Use 1 fps as
+        // the lowest safe approximation of "system decides as low as possible".
+        values.minimum = max(1, values.minimum)
+        values.maximum = max(1, values.maximum)
+        if values.minimum > values.maximum {
+            values.minimum = values.maximum
+        }
+        if values.preferred != 0 {
+            values.preferred = min(max(values.preferred, values.minimum), values.maximum)
+        }
+        return values
+    }
+
+    var detailText: String {
+        let requested = "请求 \(display(minimum))/\(display(maximum))/\(display(preferred))"
+        let effectiveTarget = FrameRatePreference.previewTarget
+        let effectiveValues = effective(defaultTarget: effectiveTarget)
+        let applied = "实际 T\(display(effectiveTarget))/\(display(effectiveValues.minimum))/\(display(effectiveValues.maximum))/\(display(effectiveValues.preferred))"
+        return "\(requested)，\(applied)"
+    }
+
+    func display(_ value: Float) -> String {
+        if value == Self.targetSentinel {
+            return "target"
+        }
+        if value == 0 {
+            return L10n.text("自适应", "Auto")
+        }
+        return value.rounded() == value ? String(Int(value)) : String(format: "%.1f", value)
+    }
+
+    private func resolved(_ value: Float, target: Float) -> Float {
+        value == Self.targetSentinel ? target : value
+    }
+}
+
+enum FrameRateExperimentCustomField: CaseIterable {
+    case minimum
+    case maximum
+    case preferred
+
+    var title: String {
+        switch self {
+        case .minimum:
+            return "MIN"
+        case .maximum:
+            return "MAX"
+        case .preferred:
+            return "PREF"
+        }
+    }
+
+    private var candidates: [Float] {
+        switch self {
+        case .minimum:
+            return [FrameRateExperimentCustomValues.targetSentinel, 1, 30, 60, 80, 90, 120]
+        case .maximum:
+            return [FrameRateExperimentCustomValues.targetSentinel, 1, 60, 80, 90, 120]
+        case .preferred:
+            return [FrameRateExperimentCustomValues.targetSentinel, 0, 1, 60, 80, 90, 120]
+        }
+    }
+
+    func nextValue(after currentValue: Float) -> Float {
+        guard let index = candidates.firstIndex(of: currentValue) else {
+            return candidates.first ?? currentValue
+        }
+        let nextIndex = candidates.index(after: index)
+        return candidates[nextIndex == candidates.endIndex ? candidates.startIndex : nextIndex]
     }
 }
 
@@ -100,6 +344,7 @@ private struct FrameRateTestPageView: View {
     @State private var isSearchVisible = false
     @State private var searchText = ""
     @State private var frameTick = 0
+    @State private var isScrollActive = false
 
     var body: some View {
         ZStack {
@@ -111,11 +356,12 @@ private struct FrameRateTestPageView: View {
 
                 FrameRateScrollableListView(
                     contentPrefix: contentPrefix,
-                    isCollapsed: isCollapsed
+                    isCollapsed: isCollapsed,
+                    onScrollActivityChange: { isScrollActive = $0 }
                 )
             }
         }
-        .background(FrameRateDriverView(frameTick: $frameTick, targetFrameRate: targetFrameRate))
+        .background(FrameRateDriverView(frameTick: $frameTick, targetFrameRate: isScrollActive ? targetFrameRate : 60))
     }
 
     private var topBar: some View {
@@ -180,6 +426,7 @@ private struct FrameRateTestPageView: View {
 struct RootFrameRateTestView: View {
     @AppStorage(FrameRatePreference.force120HzKey) private var isHighRefreshEnabled = true
     @State private var frameTick = 0
+    @State private var isScrollActive = false
 
     var body: some View {
         ZStack {
@@ -236,14 +483,15 @@ struct RootFrameRateTestView: View {
 
                 RootFrameRateListView(
                     contentPrefix: L10n.frameRateDemo,
-                    targetFrameRate: isHighRefreshEnabled ? 120 : 80
+                    targetFrameRate: isHighRefreshEnabled ? 120 : 80,
+                    onScrollActivityChange: { isScrollActive = $0 }
                 )
             }
         }
         .background(
             FrameRateDriverView(
                 frameTick: $frameTick,
-                targetFrameRate: isHighRefreshEnabled ? 120 : 80
+                targetFrameRate: isHighRefreshEnabled ? 120 : (isScrollActive ? 80 : 60)
             )
         )
     }
@@ -286,6 +534,10 @@ struct RootFrameRateTestView: View {
 private struct RootFrameRateListView: View {
     let contentPrefix: String
     let targetFrameRate: Int
+    let onScrollActivityChange: (Bool) -> Void
+    @State private var lastScrollOffset: CGFloat?
+    @State private var scrollIdleWorkItem: DispatchWorkItem?
+    private let scrollCoordinateSpace = "RootFrameRateScroll"
 
     var body: some View {
         ScrollView {
@@ -297,7 +549,35 @@ private struct RootFrameRateListView: View {
             .padding(.horizontal, 16)
             .padding(.top, 12)
             .padding(.bottom, 28)
+            .background(scrollOffsetReader)
         }
+        .coordinateSpace(name: scrollCoordinateSpace)
+        .onPreferenceChange(FrameRateScrollOffsetPreferenceKey.self, perform: handleScrollOffsetChange)
+        .onDisappear {
+            scrollIdleWorkItem?.cancel()
+            onScrollActivityChange(false)
+        }
+    }
+
+    private var scrollOffsetReader: some View {
+        GeometryReader { proxy in
+            Color.clear.preference(
+                key: FrameRateScrollOffsetPreferenceKey.self,
+                value: proxy.frame(in: .named(scrollCoordinateSpace)).minY
+            )
+        }
+    }
+
+    private func handleScrollOffsetChange(_ offset: CGFloat) {
+        defer { lastScrollOffset = offset }
+        guard let lastScrollOffset, abs(offset - lastScrollOffset) > 0.5 else { return }
+        onScrollActivityChange(true)
+        scrollIdleWorkItem?.cancel()
+        let workItem = DispatchWorkItem {
+            onScrollActivityChange(false)
+        }
+        scrollIdleWorkItem = workItem
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.25, execute: workItem)
     }
 
     private func twoLineItem(index: Int) -> some View {
@@ -342,6 +622,10 @@ private struct RootFrameRateListView: View {
 struct FrameRateScrollableListView: View {
     let contentPrefix: String
     let isCollapsed: Bool
+    let onScrollActivityChange: (Bool) -> Void
+    @State private var lastScrollOffset: CGFloat?
+    @State private var scrollIdleWorkItem: DispatchWorkItem?
+    private let scrollCoordinateSpace = "FrameRateScrollableList"
 
     var body: some View {
         ScrollView {
@@ -353,11 +637,39 @@ struct FrameRateScrollableListView: View {
             .padding(.horizontal, 16)
             .padding(.top, 12)
             .padding(.bottom, 28)
+            .background(scrollOffsetReader)
+        }
+        .coordinateSpace(name: scrollCoordinateSpace)
+        .onPreferenceChange(FrameRateScrollOffsetPreferenceKey.self, perform: handleScrollOffsetChange)
+        .onDisappear {
+            scrollIdleWorkItem?.cancel()
+            onScrollActivityChange(false)
         }
     }
 
     private var visibleRows: Range<Int> {
         isCollapsed ? 0..<1 : 0..<36
+    }
+
+    private var scrollOffsetReader: some View {
+        GeometryReader { proxy in
+            Color.clear.preference(
+                key: FrameRateScrollOffsetPreferenceKey.self,
+                value: proxy.frame(in: .named(scrollCoordinateSpace)).minY
+            )
+        }
+    }
+
+    private func handleScrollOffsetChange(_ offset: CGFloat) {
+        defer { lastScrollOffset = offset }
+        guard let lastScrollOffset, abs(offset - lastScrollOffset) > 0.5 else { return }
+        onScrollActivityChange(true)
+        scrollIdleWorkItem?.cancel()
+        let workItem = DispatchWorkItem {
+            onScrollActivityChange(false)
+        }
+        scrollIdleWorkItem = workItem
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.25, execute: workItem)
     }
 
     private func testTextField(index: Int) -> some View {
@@ -376,6 +688,14 @@ struct FrameRateScrollableListView: View {
                     .stroke(Color(UIColor.separator).opacity(0.35), lineWidth: 1)
             )
             .textFieldStyle(.plain)
+    }
+}
+
+private struct FrameRateScrollOffsetPreferenceKey: PreferenceKey {
+    static var defaultValue: CGFloat = 0
+
+    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
+        value = nextValue()
     }
 }
 
@@ -419,9 +739,13 @@ private struct FrameRateDriverView: UIViewRepresentable {
 
     private func configure(_ displayLink: CADisplayLink) {
         let maximumFramesPerSecond = UIScreen.main.maximumFramesPerSecond
-        let targetFramesPerSecond = min(targetFrameRate, maximumFramesPerSecond)
+        let requestedFrameRate = FrameRatePreference.isHighRefreshEnabled
+            ? targetFrameRate
+            : min(targetFrameRate, FrameRatePreference.targetFrameRate)
+        let targetFramesPerSecond = min(requestedFrameRate, maximumFramesPerSecond)
         if #available(iOS 15.0, *) {
             let target = Float(targetFramesPerSecond)
+            // 1.0.8 fix2: 演示页要稳定跑到页面目标帧率；关闭强制120时目标会先被限制到80。
             displayLink.preferredFrameRateRange = CAFrameRateRange(
                 minimum: 30,
                 maximum: target,
