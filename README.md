@@ -51,6 +51,49 @@
 
 ![使用演示](assets/demo.gif)
 
+## 开发者参考
+
+如果你只是想借用默认 `VideoCall` 方案实现一个可自定义高度的画中画悬浮窗，而不需要本项目的“强拉 120Hz”能力，可以保留 `AVPictureInPictureVideoCallViewController` + `AVPictureInPictureController.ContentSource` 这条路线。
+
+核心思路是创建一个透明的 `AVPictureInPictureVideoCallViewController`，通过 `preferredContentSize` 控制悬浮窗尺寸，再把自己的自定义 View 挂到这个 content view 里：
+
+```swift
+let contentController = AVPictureInPictureVideoCallViewController()
+contentController.preferredContentSize = CGSize(width: 300, height: customHeight)
+contentController.view.backgroundColor = .clear
+contentController.view.isOpaque = false
+
+let contentSource = AVPictureInPictureController.ContentSource(
+    activeVideoCallSourceView: sourceView,
+    contentViewController: contentController
+)
+
+let pipController = AVPictureInPictureController(contentSource: contentSource)
+```
+
+后续调节高度时，同步更新 `preferredContentSize` 和你自己的内容 View 约束即可。需要视觉隐藏时，可以把高度调到很小，例如 `0.1pt`；如果不需要完全隐藏，也可以使用更保守的高度。
+
+如果不需要强拉 120Hz，建议不要复制本项目的高刷驱动字段：
+
+- 不需要在 `Info.plist` 中启用 `CADisableMinimumFrameDurationOnPhone`
+- 不要把 `CADisplayLink.preferredFrameRateRange` 固定为 `minimum = maximum = preferred = 120`
+- 不要把 `preferredFramesPerSecond` 固定为 `120`
+- 如需保留 DisplayLink，用系统自适应即可，例如：
+
+```swift
+if #available(iOS 15.0, *) {
+    displayLink.preferredFrameRateRange = CAFrameRateRange(
+        minimum: 30,
+        maximum: Float(UIScreen.main.maximumFramesPerSecond),
+        preferred: 0
+    )
+} else {
+    displayLink.preferredFramesPerSecond = 0
+}
+```
+
+简单来说：只做自定义高度时，保留 `VideoCall` 的 PiP 容器和 `preferredContentSize`；关闭强制 120Hz 相关字段，让系统自己决定刷新率。
+
 ## 自签安装
 
 项目导出的通用未签名 IPA 可通过以下工具自行签名安装：
