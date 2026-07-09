@@ -4,7 +4,9 @@
 
 # Global Refresh PiP
 
-[Simplified Chinese](README.md) | **English**
+<h3 align="center">
+  <a href="README.md">Simplified Chinese</a> | English
+</h3>
 
 > An experimental iOS Picture-in-Picture overlay for ProMotion behavior, custom PiP sizing, and background keep-alive testing.
 

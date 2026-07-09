@@ -4,7 +4,9 @@
 
 # 全局高刷悬浮窗
 
-**简体中文** | [English](README_EN.md)
+<h3 align="center">
+  简体中文 | <a href="README_EN.md">English</a>
+</h3>
 
 > 基于 [CaiWanFeng/PiP](https://github.com/CaiWanFeng/PiP) 修改的个人学习与测试版本。
 
