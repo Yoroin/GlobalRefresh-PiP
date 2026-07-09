@@ -4,7 +4,7 @@
 
 # Global Refresh PiP
 
-<h3 align="center">
+<h3>
   <a href="README.md">Simplified Chinese</a> | English
 </h3>
 

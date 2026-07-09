@@ -4,7 +4,7 @@
 
 # 全局高刷悬浮窗
 
-<h3 align="center">
+<h3>
   简体中文 | <a href="README_EN.md">English</a>
 </h3>
 
