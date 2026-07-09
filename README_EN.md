@@ -6,13 +6,23 @@
 
 [Simplified Chinese](README.md) | **English**
 
-> A personal learning and testing fork based on [CaiWanFeng/PiP](https://github.com/CaiWanFeng/PiP).
+> An experimental iOS Picture-in-Picture overlay for ProMotion behavior, custom PiP sizing, and background keep-alive testing.
 
-Global Refresh uses the system Picture in Picture floating window to help some iOS apps regain higher adaptive refresh-rate behavior, from 1 Hz to 120 Hz. After docking the floating window to the side of the screen, it can improve some scenes that are otherwise limited to 1-80 Hz.
+GlobalRefresh PiP explores a practical iOS behavior: on some ProMotion iPhones, certain apps or system scenes may fall back to around 80 Hz even though the hardware can refresh at 120 Hz. A tiny docked Picture-in-Picture window can sometimes keep iOS in a higher-refresh scheduling path, improving scrolling and animation smoothness in those scenes.
+
+The project is also useful as a reference for developers who want to build a custom-height PiP overlay using `AVPictureInPictureVideoCallViewController`, without necessarily enabling any forced 120 Hz behavior.
 
 ## Overview
 
-This project continues development on top of the original PiP sample by CaiWanFeng. The current version is maintained by Yoroin and mainly adds background keep-alive, adjustable floating-window height, near-invisible PiP height, iOS 26 Liquid Glass-style UI adaptation, older iOS compatibility handling, and diagnostic logging.
+This project continues development on top of the original PiP sample by CaiWanFeng. The current version is maintained by Yoroin and focuses on:
+
+- custom-height iOS Picture-in-Picture overlays
+- near-invisible docked PiP windows
+- PiP-based background keep-alive experiments
+- ProMotion refresh-rate behavior testing
+- VideoCall and PlayerLayer PiP route comparison
+- iOS 15+ compatibility and iOS 26-style UI adaptation
+- diagnostic logging for PiP, background state, and frame-rate behavior
 
 Please note:
 
@@ -21,11 +31,28 @@ Please note:
 - A 60 Hz device, or an app that is strictly locked to 60 Hz, cannot become 120 Hz just because of this project.
 - Background keep-alive is not a permanent system-level background permission. It may still be affected by memory pressure, system policy, or other PiP apps.
 
-Engine route notes:
+## What This Project Is Useful For
+
+- Building a custom-height iOS PiP overlay
+- Studying `AVPictureInPictureVideoCallViewController` as a PiP content route
+- Comparing VideoCall and PlayerLayer based PiP behavior
+- Testing how `CADisplayLink` frame-rate hints affect ProMotion devices
+- Keeping a tiny PiP window docked and quickly shrinking it to a near-invisible height
+- Investigating PiP-based background keep-alive behavior and its limits
+
+## What It Does Not Guarantee
+
+- It does not turn 60 Hz hardware into 120 Hz hardware.
+- It cannot override every app's own frame-rate policy.
+- It does not provide a permanent background execution entitlement.
+- Results may differ across iOS versions, devices, and foreground apps.
+- The PlayerLayer route cannot fully hide because its underlying PiP surface has a 1 pt minimum.
+
+## PiP Route Comparison
 
 | Route | Advantages | Limitations | Recommended Use |
 | --- | --- | --- | --- |
-| Default: VideoCall | Supports a minimum height of 0.1 pt and can be visually hidden; better compatibility; more stable for daily use | Forces system-wide 120 Hz, so some games or danmaku scenes locked to 60 Hz may stutter because of refresh-rate mismatch | Most apps, 80 Hz locked scenes, and users who need the floating window to fully hide |
+| Default: VideoCall | Supports a minimum height of 0.1 pt and can be visually hidden; better compatibility; more stable for daily use | Requests high-refresh behavior aggressively, so some 60 Hz locked games or danmaku scenes may stutter because of refresh-rate mismatch | Most apps, 80 Hz fallback scenes, and users who need the floating window to fully hide |
 | New: PlayerLayer | Can improve stutter caused by some 60 Hz locked apps becoming unsynchronized with 120 Hz, such as Bilibili danmaku speed fluctuation or occasional Brawl Stars lobby drops | Limited by the underlying route to a minimum of 1 pt, so it cannot fully hide and may leave a thin visible line; this is a testing entry | Only try this route when you encounter 60 Hz locked scene stutter |
 
 In short: the default route hides better and is recommended for most users. The new route is mainly for specific 60 Hz locked stutter cases, but it cannot fully hide at 0.1 pt.
