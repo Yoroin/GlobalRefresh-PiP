@@ -127,6 +127,63 @@ Use your own Apple ID, certificate, or device environment to sign and install th
 - Added manual height input.
 - Known issue: using a Shortcut to open and hide PiP in one step may leave the floating window undocked, which can prevent auto-lock. It is generally recommended to enable PiP first, drag it to the side until it docks, then tap "One-tap 0.1 pt".
 
+### 1.0.8 (2026.6.19)
+
+- Built with Xcode 27 beta, compatible with iOS 15 through iOS 27.
+- Added PiP clock, network speed, and frame-rate detection. Because opening PiP can enable global 120 Hz by default, temporarily turn off the Frame Rate Demo force-120 switch before using frame-rate detection.
+- Clock PiP is forcibly disabled below iOS 26 to avoid breaking global 120 Hz on older systems. Text PiP is unaffected.
+- Added a Dark Mode switch in Home > More Settings. When off, the app follows the system appearance; when on, it stays in dark mode.
+- Added separate PiP Conflict Alert and Background Interruption Alert beta switches in Home > More Settings. PiP Conflict Alert notifies you when another Picture in Picture app pushes this PiP away. Background Interruption Alert beta is off by default and uses polling plus scheduled local notifications to help detect whether the app is still alive in the background. The frequency mainly affects detection speed and false-positive risk; it does not mean battery use increases linearly.
+- Improved home layout stability and fixed slight page shifts after some state changes.
+- Added system Shortcuts: Open and Hide PiP, Open PiP, and Hide PiP, for one-tap Control Center actions. To add them, long-press Control Center, add a Shortcut, then select Global Refresh. Control Center Shortcut tiles require iOS 18+. If two dots appear on screen, it means the PiP close button was not hidden; restore the PiP window to normal size and tap it once, and it will auto-hide next time.
+- Added a persistent PiP status switch for checking runtime.
+- Added dark-mode app icon support.
+- Improved the PiP stop flow.
+- Improved the force-refresh demo description. This switch currently affects PiP 120 Hz behavior both when enabled and disabled.
+
+### 1.0.7 (2026.6.8)
+
+- To reduce power usage, the app now defaults to a more power-efficient PiP-only keep-alive route after testing. Background keep-alive remains strong, and this also resolves some audio-conflict cases.
+- The current keep-alive mode can be checked below the version number or on the home page.
+- The old route is no longer recommended, but it can still be switched manually in Debug Mode if needed.
+- Added PiP status detection on the home page, making it easier to check whether PiP is active, hidden, or killed in the background. Tap it to view each session's runtime and last stop time, which helps estimate background retention.
+- Moved the Stop Scrolling button into a secondary menu to avoid confusion.
+
+### 1.0.6 (2026.6.6)
+
+- Added a keep-alive route switch in Debug Mode. You can try switching to the more power-efficient PiP-only keep-alive route, though background retention may decrease and lower iOS versions may have compatibility issues.
+- Fixed an issue where PiP could reopen automatically after being closed and then sent to the background.
+- Added a copy diagnostics log feature in Debug Mode to help investigate power changes and infer background keep-alive interruption periods.
+
+### 1.0.5 (2026.6.6)
+
+- Fixed stutter for some iOS 16 users, a possible camera-related crash for some iOS 16 users, and an issue where custom PiP height did not take effect. Thanks to the testers who provided crash logs and helped verify the fix.
+- Fixed audio-conflict issues reported by some users.
+- Improved the UI on older iOS versions. Components that do not support Liquid Glass use Gaussian blur instead.
+
+### 1.0.4 (2026.6.4)
+
+- Fixed crashes on older iOS devices. Verified on iOS 15.8.
+
+### 1.0.3 (2026.6.4)
+
+- Added remembered default behavior for scrolling PiP. Added a Remember PiP Height switch on the home page.
+- Attempted to fix an issue where lower iOS 16 versions could not open PiP.
+
+### 1.0.2 (2026.6.3)
+
+- Changed the minimum custom PiP height to 0.1 pt, allowing the floating window to be fully hidden visually.
+
+### 1.0.1 (2026.5.27)
+
+- Removed the rotate-window feature.
+- Added custom PiP height adjustment with a continuous slider.
+- Added start/stop scrolling controls.
+
+### 1.0.0 (2026.5.26)
+
+- Added background keep-alive and floating-window size changes on top of the original project.
+
 ## Debug Logs
 
 The About page provides a Debug Mode switch. When enabled, it can copy recent diagnostic logs for checking:
