@@ -5,7 +5,7 @@
 # Global Refresh PiP
 
 <h3>
-  <a href="README.md">Simplified Chinese</a> | English
+  <a href="README.md">Simplified Chinese</a> | English | <a href="DEVELOPMENT_PRD.md">开发文档 PRD</a> | <a href="DEVELOPMENT_PRD_EN.md">Development Document PRD</a>
 </h3>
 
 > An experimental iOS Picture-in-Picture overlay for ProMotion behavior, custom PiP sizing, and background keep-alive testing.
@@ -138,6 +138,13 @@ The exported unsigned IPA can be signed and installed with tools such as:
 Use your own Apple ID, certificate, or device environment to sign and install the app.
 
 ## Changelog
+
+### 1.0.9 fix1 (2026.7.13)
+
+- Fixed an issue where interface icons could disappear after switching appearance on iOS versions below 26.
+- Appearance detection now runs only in the foreground and stops polling when the app enters the background.
+- Debug Mode is now disabled after an app update, and old diagnostics are cleared to prevent monitors and retained logs from continuing to use memory.
+- Cleaned up and limited generated floating-window video caches to prevent storage usage from continuously growing for some users.
 
 ### 1.0.9 (2026.7.8)
 

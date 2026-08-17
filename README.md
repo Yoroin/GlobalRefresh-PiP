@@ -5,7 +5,7 @@
 # 全局高刷悬浮窗
 
 <h3>
-  简体中文 | <a href="README_EN.md">English</a>
+  简体中文 | <a href="README_EN.md">English</a> | <a href="DEVELOPMENT_PRD.md">开发文档 PRD</a> | <a href="DEVELOPMENT_PRD_EN.md">Development Document PRD</a>
 </h3>
 
 > 基于 [CaiWanFeng/PiP](https://github.com/CaiWanFeng/PiP) 修改的个人学习与测试版本。
@@ -112,6 +112,13 @@ if #available(iOS 15.0, *) {
 请使用自己的 Apple ID、证书或设备环境完成签名安装。
 
 ## 版本日志
+
+### 1.0.9 fix1（26.7.13）
+
+- 修复 iOS 26 以下切换深浅色模式后界面图标可能消失的问题
+- 深浅色模式检测仅在 App 前台运行，进入后台后停止轮询
+- 覆盖更新后默认关闭调试模式并清理历史诊断数据，避免后台监控和旧日志继续占用内存
+- 清理并限制动态悬浮窗视频缓存，修复部分用户存储占用持续增长的问题
 
 ### 1.0.9（26.7.8）
 
