@@ -141,6 +141,7 @@ Use your own Apple ID, certificate, or device environment to sign and install th
 
 ### 1.1.0 (2026.8.22)
 
+- Added Lock-screen Audio Boost beta: it stays PiP-only while the screen is on so media playback is unaffected, then automatically enables Audio Keep-alive after lock for users who need stronger background retention. The existing always-on Audio Keep-alive remains available.
 - Added manual cache cleanup on the Version page, including released-space details. Long press to reset all app data and return to first-time setup.
 - Added automatic cleanup of leftover temporary assets and expired caches on first install, app updates, and normal launches.
 - Cleaned up and limited generated floating-window video caches to prevent storage usage from continuously growing for some users.
