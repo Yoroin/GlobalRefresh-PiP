@@ -89,7 +89,7 @@ enum L10n {
     }
 
     static var versionDisplay: String {
-        Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "1.0.9"
+        Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "1.1.0"
     }
 
     static var isBetaBuild: Bool {
@@ -108,6 +108,15 @@ enum L10n {
     static var about: String { text("关于", "About") }
     static var changelog: String { text("更新日志", "Changelog") }
     static var faq: String { text("常见问题", "FAQ") }
+    static var cacheCleanupTitle: String { text("清理缓存", "Clear Cache") }
+    static var cacheCleanupMessage: String {
+        text(
+            "将删除 App 缓存和历史临时视频，不会清理设置、内置素材或诊断日志。正在运行的悬浮窗会保留当前媒体缓存。",
+            "This removes app caches and old temporary videos. Settings, bundled assets, and diagnostic logs are kept. The active PiP media cache is preserved."
+        )
+    }
+    static var cacheCleanupConfirm: String { text("清理", "Clear") }
+    static var cacheCleanupCompleted: String { text("缓存清理完成", "Cache Cleared") }
     static var ok: String { text("确定", "OK") }
     static var cancel: String { text("取消", "Cancel") }
 }
