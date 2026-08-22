@@ -117,17 +117,6 @@ enum AppAppearancePreference {
             .compactMap { $0 as? UIWindowScene }
             .flatMap(\.windows)
 
-        // iOS 15-25 may leave an existing SwiftUI hierarchy with stale
-        // appearance-dependent symbols after changing overrideUserInterfaceStyle.
-        // Rebuilding the hosting hierarchy is handled by ViewController below;
-        // keep this pass free of animated snapshots on those systems.
-        if #unavailable(iOS 26.0) {
-            UIView.performWithoutAnimation {
-                windows.forEach { apply(to: $0) }
-            }
-            return
-        }
-
         guard animated else {
             UIView.performWithoutAnimation {
                 windows.forEach { apply(to: $0) }
@@ -405,15 +394,6 @@ class ViewController: UIViewController, AVPictureInPictureControllerDelegate {
             updateHomeView()
         }
     }
-    private var requiresPiPCloseConfirmation = false {
-        didSet {
-            guard oldValue != requiresPiPCloseConfirmation else { return }
-            if !isLoadingHomePreferences {
-                UserDefaults.standard.set(requiresPiPCloseConfirmation, forKey: userDefaultsPiPCloseConfirmationKey)
-            }
-            updateHomeView()
-        }
-    }
     private var hidesPiPWhenDocked = false {
         didSet {
             guard oldValue != hidesPiPWhenDocked else { return }
@@ -591,7 +571,6 @@ class ViewController: UIViewController, AVPictureInPictureControllerDelegate {
     private let userDefaultsExtremeSilentModeEnabledKey = "pip.home.extremeSilentModeEnabled"
     private let userDefaultsContentExtremeModeEnabledKey = "pip.home.contentExtremeModeEnabled"
     private let userDefaultsHidePiPWhenDockedKey = "pip.home.hideWhenDocked"
-    private let userDefaultsPiPCloseConfirmationKey = "pip.home.confirmBeforeClosing"
     static let userDefaultsIOS26AudioKeepAliveKey = "pip.keepAlive.iOS26AudioEnabled"
     static let userDefaultsIOS26PiPOnlyKeepAliveKey = "pip.keepAlive.iOS26PiPOnlyEnabled"
     static let iOS26KeepAliveModeDidChangeNotification = Notification.Name("pip.iOS26KeepAliveModeDidChange")
@@ -690,7 +669,7 @@ class ViewController: UIViewController, AVPictureInPictureControllerDelegate {
     override func viewDidLoad() {
         super.viewDidLoad()
 
-        AppDebugLogger.log("画中画初始化前，应用窗口数：\(allApplicationWindows().count)")
+        print("画中画初始化前：\(UIApplication.shared.windows)")
         DiagnosticsRuntimeState.updateCurrentPage("悬浮窗")
         AppDebugLogger.trimOnLaunch()
         AppDebugLogger.registerBackgroundFlush()
@@ -760,7 +739,7 @@ class ViewController: UIViewController, AVPictureInPictureControllerDelegate {
         }
         playerPauseObserver?.invalidate()
         playerLayerTimeControlObserver?.invalidate()
-        stopSystemAppearanceFollowTimer()
+        systemAppearanceFollowTimer?.invalidate()
         stopPiPRuntimeTimer()
         NotificationCenter.default.removeObserver(self)
         pendingPiPStartWorkItem?.cancel()
@@ -788,13 +767,10 @@ class ViewController: UIViewController, AVPictureInPictureControllerDelegate {
             ),
             pipHeight: pipHeightForDisplay,
             keepAliveMode: KeepAliveModeText.current,
-            keepAliveModeDescription: KeepAliveModeText.currentDescription,
             pipStatusTitle: pipStatusTitle,
             pipStatusColor: pipStatusColor,
             pipRunningDuration: pipRuntimeDurationForDisplay,
             pipStoppedAtText: pipRuntimeStoppedAtText,
-            pipRuntimeLabel: L10n.text("已运行时间：", "Runtime: "),
-            pipStoppedAtLabel: L10n.text("上次关闭时间：", "Last stopped: "),
             pipRuntimeStartedAt: pipRuntimeStartedAt,
             overlayResetToken: overlayResetToken,
             isScrollingEnabled: isScrollingEnabled,
@@ -807,7 +783,6 @@ class ViewController: UIViewController, AVPictureInPictureControllerDelegate {
             keepAliveNotificationFrequency: keepAliveNotificationFrequency,
             keepsPiPStatusInfoPersistent: keepsPiPStatusInfoPersistent,
             remembersPiPHeight: remembersPiPHeight,
-            requiresPiPCloseConfirmation: requiresPiPCloseConfirmation,
             hidesPiPWhenDocked: hidesPiPWhenDocked,
             pipEngineRoute: pipEngineRoute,
             isExtremeSilentModeEnabled: isExtremeSilentModeEnabled,
@@ -828,7 +803,6 @@ class ViewController: UIViewController, AVPictureInPictureControllerDelegate {
             onToggleSettings: { [weak self] in self?.toggleSettingsPanel() },
             onDismissSettings: { [weak self] in self?.dismissSettingsPanel() },
             onSetRememberPiPHeight: { [weak self] newValue in self?.setRememberPiPHeight(newValue) },
-            onSetPiPCloseConfirmationRequired: { [weak self] newValue in self?.setPiPCloseConfirmationRequired(newValue) },
             onSetHidePiPWhenDocked: { [weak self] newValue in self?.setHidePiPWhenDocked(newValue) },
             onSetPiPEngineRoute: { [weak self] route in self?.setPiPEngineRoute(route) },
             onSetExtremeSilentModeEnabled: { [weak self] newValue in self?.setExtremeSilentModeEnabled(newValue) },
@@ -846,20 +820,6 @@ class ViewController: UIViewController, AVPictureInPictureControllerDelegate {
         hostingController.didMove(toParent: self)
     }
 
-    private func rebuildHomeHostingControllerForLegacyAppearance() {
-        guard #unavailable(iOS 26.0) else { return }
-        guard let hostingController else { return }
-
-        UIView.performWithoutAnimation {
-            hostingController.willMove(toParent: nil)
-            hostingController.view.removeFromSuperview()
-            hostingController.removeFromParent()
-            self.hostingController = nil
-            setupSwiftUI()
-            view.layoutIfNeeded()
-        }
-    }
-
     private func updateHomeView() {
         recoverStalePiPStopTransitionIfNeeded(reason: "刷新首页")
         syncPiPRuntimeDisplayState()
@@ -875,13 +835,10 @@ class ViewController: UIViewController, AVPictureInPictureControllerDelegate {
             ),
             pipHeight: pipHeightForDisplay,
             keepAliveMode: KeepAliveModeText.current,
-            keepAliveModeDescription: KeepAliveModeText.currentDescription,
             pipStatusTitle: pipStatusTitle,
             pipStatusColor: pipStatusColor,
             pipRunningDuration: pipRuntimeDurationForDisplay,
             pipStoppedAtText: pipRuntimeStoppedAtText,
-            pipRuntimeLabel: L10n.text("已运行时间：", "Runtime: "),
-            pipStoppedAtLabel: L10n.text("上次关闭时间：", "Last stopped: "),
             pipRuntimeStartedAt: pipRuntimeStartedAt,
             overlayResetToken: overlayResetToken,
             isScrollingEnabled: isScrollingEnabled,
@@ -894,7 +851,6 @@ class ViewController: UIViewController, AVPictureInPictureControllerDelegate {
             keepAliveNotificationFrequency: keepAliveNotificationFrequency,
             keepsPiPStatusInfoPersistent: keepsPiPStatusInfoPersistent,
             remembersPiPHeight: remembersPiPHeight,
-            requiresPiPCloseConfirmation: requiresPiPCloseConfirmation,
             hidesPiPWhenDocked: hidesPiPWhenDocked,
             pipEngineRoute: pipEngineRoute,
             isExtremeSilentModeEnabled: isExtremeSilentModeEnabled,
@@ -915,7 +871,6 @@ class ViewController: UIViewController, AVPictureInPictureControllerDelegate {
             onToggleSettings: { [weak self] in self?.toggleSettingsPanel() },
             onDismissSettings: { [weak self] in self?.dismissSettingsPanel() },
             onSetRememberPiPHeight: { [weak self] newValue in self?.setRememberPiPHeight(newValue) },
-            onSetPiPCloseConfirmationRequired: { [weak self] newValue in self?.setPiPCloseConfirmationRequired(newValue) },
             onSetHidePiPWhenDocked: { [weak self] newValue in self?.setHidePiPWhenDocked(newValue) },
             onSetPiPEngineRoute: { [weak self] route in self?.setPiPEngineRoute(route) },
             onSetExtremeSilentModeEnabled: { [weak self] newValue in self?.setExtremeSilentModeEnabled(newValue) },
@@ -987,7 +942,6 @@ class ViewController: UIViewController, AVPictureInPictureControllerDelegate {
         remembersPiPHeight = UserDefaults.standard.object(forKey: userDefaultsRememberPiPHeightKey) == nil
             ? true
             : UserDefaults.standard.bool(forKey: userDefaultsRememberPiPHeightKey)
-        requiresPiPCloseConfirmation = UserDefaults.standard.bool(forKey: userDefaultsPiPCloseConfirmationKey)
         UserDefaults.standard.set(false, forKey: userDefaultsHidePiPWhenDockedKey)
         hidesPiPWhenDocked = false
         let hasRememberedPiPHeight = UserDefaults.standard.object(forKey: userDefaultsPiPHeightKey) != nil
@@ -1053,12 +1007,6 @@ class ViewController: UIViewController, AVPictureInPictureControllerDelegate {
         remembersPiPHeight = isEnabled
     }
 
-    private func setPiPCloseConfirmationRequired(_ isEnabled: Bool) {
-        DiagnosticsRuntimeState.recordUserAction(isEnabled ? "开启防误触关闭确认" : "关闭防误触关闭确认")
-        AppDebugLogger.log("防误触关闭确认已\(isEnabled ? "开启" : "关闭")")
-        requiresPiPCloseConfirmation = isEnabled
-    }
-
     private func setHidePiPWhenDocked(_ isEnabled: Bool) {
         DiagnosticsRuntimeState.recordUserAction(isEnabled ? "开启检测吸附后隐藏" : "关闭检测吸附后隐藏")
         // Disabled for now: dock detection is not stable enough for automatic height changes.
@@ -1074,21 +1022,6 @@ class ViewController: UIViewController, AVPictureInPictureControllerDelegate {
     }
 
     private func toggleAppearanceMode() {
-        if #unavailable(iOS 26.0) {
-            let shouldForceDark = !AppAppearancePreference.isDarkModeForced
-            DiagnosticsRuntimeState.recordUserAction(shouldForceDark ? "切换深色模式" : "恢复跟随系统")
-            UIView.performWithoutAnimation {
-                isDarkModeForced = shouldForceDark
-                view.layoutIfNeeded()
-            }
-            lastObservedSystemAppearance = currentSystemAppearance
-            startSystemAppearanceFollowTimerIfNeeded()
-            DispatchQueue.main.async { [weak self] in
-                self?.rebuildHomeHostingControllerForLegacyAppearance()
-            }
-            return
-        }
-
         let targetStyle: UIUserInterfaceStyle
         if AppAppearancePreference.isDarkModeForced {
             targetStyle = .light
@@ -1108,8 +1041,8 @@ class ViewController: UIViewController, AVPictureInPictureControllerDelegate {
     }
 
     private func startSystemAppearanceFollowTimerIfNeeded() {
-        stopSystemAppearanceFollowTimer()
-        guard UIApplication.shared.applicationState != .background else { return }
+        systemAppearanceFollowTimer?.invalidate()
+        systemAppearanceFollowTimer = nil
         guard AppAppearancePreference.isStyleForced else { return }
         let timer = Timer(timeInterval: 0.8, repeats: true) { [weak self] _ in
             self?.handleSystemAppearanceFollowTick()
@@ -1118,14 +1051,10 @@ class ViewController: UIViewController, AVPictureInPictureControllerDelegate {
         systemAppearanceFollowTimer = timer
     }
 
-    private func stopSystemAppearanceFollowTimer() {
-        systemAppearanceFollowTimer?.invalidate()
-        systemAppearanceFollowTimer = nil
-    }
-
     private func handleSystemAppearanceFollowTick() {
         guard AppAppearancePreference.isStyleForced else {
-            stopSystemAppearanceFollowTimer()
+            systemAppearanceFollowTimer?.invalidate()
+            systemAppearanceFollowTimer = nil
             lastObservedSystemAppearance = currentSystemAppearance
             return
         }
@@ -1142,7 +1071,8 @@ class ViewController: UIViewController, AVPictureInPictureControllerDelegate {
         DiagnosticsRuntimeState.recordUserAction("系统外观变化，恢复跟随系统")
         AppAppearancePreference.clearForcedStyle(animated: true)
         isDarkModeForced = AppAppearancePreference.isDarkModeForced
-        stopSystemAppearanceFollowTimer()
+        systemAppearanceFollowTimer?.invalidate()
+        systemAppearanceFollowTimer = nil
         updateHomeView()
     }
 
@@ -1372,19 +1302,6 @@ class ViewController: UIViewController, AVPictureInPictureControllerDelegate {
         } else {
             updateHomeView()
         }
-    }
-
-    func stopForFullDataReset() {
-        wantsPiPActive = false
-        isPiPActiveForUI = false
-        guard pipController?.isPictureInPictureActive == true || isPiPTransitioning else {
-            if pipEngineRoute.usesPlayerLayer, hasPreparedPiPInfrastructure {
-                teardownPiPInfrastructure()
-            }
-            return
-        }
-        AppDebugLogger.log("清空全部数据前停止悬浮窗")
-        stopPiPSmoothly()
     }
 
     private func saveCurrentPiPHeightPreference() {
@@ -1952,11 +1869,14 @@ class ViewController: UIViewController, AVPictureInPictureControllerDelegate {
         }
 
         if pipController.isPictureInPictureActive {
-            if requiresPiPCloseConfirmation {
-                presentPiPCloseConfirmation()
-            } else {
-                performHomePiPClose(reason: "首页直接关闭")
-            }
+            AppDebugLogger.log("Stop PiP requested")
+            wantsPiPActive = false
+            cancelDelayedPiPHideCountdown(reason: "首页关闭悬浮窗")
+            updatePiPAutomaticStartPolicy()
+            pendingPiPStartWorkItem?.cancel()
+            pipStartTimeoutWorkItem?.cancel()
+            isPiPActiveForUI = false
+            stopPiPSmoothly()
         } else {
             AppDebugLogger.log("Start PiP requested")
             cancelDelayedPiPHideCountdown(reason: "首页普通开启悬浮窗")
@@ -1968,35 +1888,6 @@ class ViewController: UIViewController, AVPictureInPictureControllerDelegate {
             configureRunningText()
             startPiPSmoothly()
         }
-    }
-
-    private func presentPiPCloseConfirmation() {
-        let alert = UIAlertController(
-            title: L10n.text("关闭悬浮窗？", "Close floating window?"),
-            message: L10n.text("当前已开启防误触保护，请确认是否关闭悬浮窗。", "Confirm that you want to close the floating window."),
-            preferredStyle: .alert
-        )
-        alert.addAction(UIAlertAction(title: L10n.cancel, style: .cancel) { _ in
-            DiagnosticsRuntimeState.recordUserAction("取消关闭悬浮窗")
-            AppDebugLogger.log("用户取消关闭悬浮窗")
-        })
-        alert.addAction(UIAlertAction(title: L10n.text("确认关闭", "Close"), style: .destructive) { [weak self] _ in
-            DiagnosticsRuntimeState.recordUserAction("确认关闭悬浮窗")
-            self?.performHomePiPClose(reason: "防误触确认后关闭")
-        })
-        present(alert, animated: true)
-    }
-
-    private func performHomePiPClose(reason: String) {
-        guard pipController?.isPictureInPictureActive == true else { return }
-        AppDebugLogger.log("Stop PiP requested: \(reason)")
-        wantsPiPActive = false
-        cancelDelayedPiPHideCountdown(reason: reason)
-        updatePiPAutomaticStartPolicy()
-        pendingPiPStartWorkItem?.cancel()
-        pipStartTimeoutWorkItem?.cancel()
-        isPiPActiveForUI = false
-        stopPiPSmoothly()
     }
 
     private func startPiPAndHideFromHome() {
@@ -2996,9 +2887,8 @@ class ViewController: UIViewController, AVPictureInPictureControllerDelegate {
             height: evenVideoDimension(max(currentPiPSize.height * videoScale, 2))
         )
         let videoText = shouldRenderClockMode ? "" : L10n.text("悬浮窗运行中", "Floating window running")
-        let url = GeneratedPiPVideoCache.videoURL(
-            named: "pip-static-h264-clear-v3-\(Int(backingVideoSize.width))x\(Int(backingVideoSize.height))-\(videoText.isEmpty ? "blank" : "text").mov"
-        )
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent("pip-static-h264-clear-v3-\(Int(backingVideoSize.width))x\(Int(backingVideoSize.height))-\(videoText.isEmpty ? "blank" : "text").mov")
         if !FileManager.default.fileExists(atPath: url.path) {
             do {
                 try PlaceholderVideoFactory.makeBackingVideo(
@@ -3012,7 +2902,6 @@ class ViewController: UIViewController, AVPictureInPictureControllerDelegate {
                 return nil
             }
         }
-        GeneratedPiPVideoCache.trim(excluding: [url])
         let asset = AVAsset(url: url)
         let item = AVPlayerItem(asset: asset)
         return item
@@ -3025,9 +2914,8 @@ class ViewController: UIViewController, AVPictureInPictureControllerDelegate {
             height: evenVideoDimension(max(currentPiPSize.height * videoScale, 2))
         )
         let videoText = L10n.text("悬浮窗运行中", "Floating window running")
-        let url = GeneratedPiPVideoCache.videoURL(
-            named: "pip-playerlayer-long-h264-v1-\(Int(backingVideoSize.width))x\(Int(backingVideoSize.height))-\(videoText.isEmpty ? "blank" : "text").mov"
-        )
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent("pip-playerlayer-long-h264-v1-\(Int(backingVideoSize.width))x\(Int(backingVideoSize.height))-\(videoText.isEmpty ? "blank" : "text").mov")
 
         if !FileManager.default.fileExists(atPath: url.path) {
             do {
@@ -3041,7 +2929,6 @@ class ViewController: UIViewController, AVPictureInPictureControllerDelegate {
                 return nil
             }
         }
-        GeneratedPiPVideoCache.trim(excluding: [url])
 
         return AVPlayerItem(asset: AVAsset(url: url))
     }
@@ -3067,9 +2954,8 @@ class ViewController: UIViewController, AVPictureInPictureControllerDelegate {
             height: evenVideoDimensionFloor(max(currentPiPSize.height * videoScale, 2))
         )
         let statusText = L10n.text("悬浮窗运行中", "Floating window running")
-        let url = GeneratedPiPVideoCache.videoURL(
-            named: "pip-playerlayer-status-v2-\(Int(backingVideoSize.width))x\(Int(backingVideoSize.height)).mov"
-        )
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent("pip-playerlayer-status-v2-\(Int(backingVideoSize.width))x\(Int(backingVideoSize.height)).mov")
 
         if !FileManager.default.fileExists(atPath: url.path) {
             do {
@@ -3083,7 +2969,6 @@ class ViewController: UIViewController, AVPictureInPictureControllerDelegate {
                 return nil
             }
         }
-        GeneratedPiPVideoCache.trim(excluding: [url])
 
         let sourceAsset = AVAsset(url: url)
         guard let timelineAsset = makeReferenceIPATimelineAsset(from: sourceAsset) else {
@@ -4387,9 +4272,13 @@ class ViewController: UIViewController, AVPictureInPictureControllerDelegate {
     }
 
     private func allApplicationWindows() -> [UIWindow] {
-        UIApplication.shared.connectedScenes
+        var windows = UIApplication.shared.connectedScenes
             .compactMap { $0 as? UIWindowScene }
             .flatMap(\.windows)
+        for window in UIApplication.shared.windows where !windows.contains(where: { $0 === window }) {
+            windows.append(window)
+        }
+        return windows
     }
 
     private func candidatePiPHostViewForCustomView() -> UIView? {
@@ -4987,7 +4876,6 @@ class ViewController: UIViewController, AVPictureInPictureControllerDelegate {
 
     @objc private func handleEnterForeground() {
         print("进入前台")
-        startSystemAppearanceFollowTimerIfNeeded()
         if shouldResignForegroundAfterPiPClose {
             DiagnosticsRuntimeState.updateAppState("PiP关闭后阻止回前台")
             AppDebugLogger.log("Suppress foreground restore after PiP close: willEnterForeground")
@@ -5035,7 +4923,6 @@ class ViewController: UIViewController, AVPictureInPictureControllerDelegate {
 
     @objc private func handleEnterBackground() {
         print("进入后台")
-        stopSystemAppearanceFollowTimer()
         if shouldResignForegroundAfterPiPClose {
             shouldResignForegroundAfterPiPClose = false
         }
@@ -5135,7 +5022,7 @@ class ViewController: UIViewController, AVPictureInPictureControllerDelegate {
     }
 
     func pictureInPictureControllerWillStartPictureInPicture(_ pictureInPictureController: AVPictureInPictureController) {
-        AppDebugLogger.log("画中画初始化后，应用窗口数：\(allApplicationWindows().count)")
+        print("画中画初始化后：\(UIApplication.shared.windows)")
         updateDiagnosticsPiPState()
         AppDebugLogger.log("PiP will start")
         prepareCustomViewForPiPStart()
@@ -5176,7 +5063,7 @@ class ViewController: UIViewController, AVPictureInPictureControllerDelegate {
         hidePiPForCurrentSuspendedStateIfNeeded(reason: "PiP启动后已吸附")
         performDeferredShortcutPiPStopIfNeeded(reason: "PiP启动完成")
         AppDebugLogger.log("PiP did start")
-        AppDebugLogger.log("画中画弹出后，应用窗口数：\(allApplicationWindows().count)")
+        print("画中画弹出后：\(UIApplication.shared.windows)")
     }
 
     private func scheduleSystemPiPDirectCloseGestureRetries(reason: String) {

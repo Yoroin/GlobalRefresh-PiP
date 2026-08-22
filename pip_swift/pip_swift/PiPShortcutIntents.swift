@@ -12,42 +12,12 @@ enum PiPShortcutAction: String {
     case startAndHideFloatingWindow
 }
 
-enum PiPShortcutFeatureAccess {
-    static let enabledKey = "pip.shortcut.featureEnabled.v1"
-    private static let pendingBlockedNoticeKey = "pip.shortcut.pendingBlockedNotice.v1"
-
-    static var isEnabled: Bool {
-        UserDefaults.standard.bool(forKey: enabledKey)
-    }
-
-    static func setEnabled(_ enabled: Bool) {
-        let defaults = UserDefaults.standard
-        defaults.set(enabled, forKey: enabledKey)
-        if !enabled {
-            PiPShortcutActionCenter.discardPendingAction(reason: "shortcut features disabled")
-        }
-        defaults.synchronize()
-        PiPShortcutRuntimeRegistration.refreshProviderIfAvailable()
-    }
-
-    static func recordBlockedAttempt() {
-        UserDefaults.standard.set(true, forKey: pendingBlockedNoticeKey)
-    }
-
-    static func consumeBlockedAttempt() -> Bool {
-        let defaults = UserDefaults.standard
-        guard defaults.bool(forKey: pendingBlockedNoticeKey) else { return false }
-        defaults.removeObject(forKey: pendingBlockedNoticeKey)
-        return true
-    }
-}
-
 enum PiPShortcutInstallLinks {
     // Fill these after sharing the matching shortcuts from the Shortcuts app.
     // Example: "https://www.icloud.com/shortcuts/xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
     private static let startAndHideICloudLink = "https://www.icloud.com/shortcuts/5101796358454ce8a5fadc0c41cf51c7"
     private static let startICloudLink = "https://www.icloud.com/shortcuts/52566891402d4028b6c2ce511ab4eb6b"
-    private static let hideICloudLink = "https://www.icloud.com/shortcuts/cc90abcb853a43e9be3db938e030a6eb"
+    private static let hideICloudLink = "https://www.icloud.com/shortcuts/52566891402d4028b6c2ce511ab4eb6b"
 
     static let primaryScheme = "globalrefresh"
 
@@ -100,24 +70,16 @@ enum PiPShortcutActionCenter {
     private static let pendingActionMaximumAge: TimeInterval = 120
     private static let supportedURLSchemes: Set<String> = ["globalrefresh", "quanjiagaoshua", "pipshortcut"]
 
-    @discardableResult
-    static func request(_ action: PiPShortcutAction) -> Bool {
-        guard PiPShortcutFeatureAccess.isEnabled else {
-            PiPShortcutFeatureAccess.recordBlockedAttempt()
-            AppDebugLogger.log("Shortcut action blocked because shortcut features are disabled: \(action.rawValue)")
-            return false
-        }
+    static func request(_ action: PiPShortcutAction) {
         UserDefaults.standard.set(action.rawValue, forKey: pendingActionKey)
         UserDefaults.standard.set(Date().timeIntervalSince1970, forKey: pendingActionTimestampKey)
         UserDefaults.standard.synchronize()
         AppDebugLogger.log("Shortcut intent requested: \(action.rawValue)")
         NotificationCenter.default.post(name: didRequestActionNotification, object: action.rawValue)
         postDarwinNotification()
-        return true
     }
 
     static var hasPendingAction: Bool {
-        guard PiPShortcutFeatureAccess.isEnabled else { return false }
         let defaults = UserDefaults.standard
         defaults.synchronize()
         guard let rawValue = defaults.string(forKey: pendingActionKey) else { return false }
@@ -125,7 +87,6 @@ enum PiPShortcutActionCenter {
     }
 
     static var pendingAction: PiPShortcutAction? {
-        guard PiPShortcutFeatureAccess.isEnabled else { return nil }
         let defaults = UserDefaults.standard
         defaults.synchronize()
         guard let rawValue = validPendingActionRawValue(defaults: defaults, shouldRemoveExpired: true) else { return nil }
@@ -133,7 +94,6 @@ enum PiPShortcutActionCenter {
     }
 
     static func notifyPendingActionIfNeeded() {
-        guard PiPShortcutFeatureAccess.isEnabled else { return }
         let defaults = UserDefaults.standard
         defaults.synchronize()
         guard let rawValue = validPendingActionRawValue(defaults: defaults, shouldRemoveExpired: true) else { return }
@@ -141,10 +101,6 @@ enum PiPShortcutActionCenter {
     }
 
     static func consumePendingAction() -> PiPShortcutAction? {
-        guard PiPShortcutFeatureAccess.isEnabled else {
-            discardPendingAction(reason: "shortcut features disabled before consumption")
-            return nil
-        }
         let defaults = UserDefaults.standard
         defaults.synchronize()
         guard
@@ -186,10 +142,6 @@ enum PiPShortcutActionCenter {
         defaults.synchronize()
     }
 
-    static func discardPendingAction(reason: String) {
-        discardPendingAction(defaults: .standard, reason: reason, shouldRemove: true)
-    }
-
     @discardableResult
     static func request(from url: URL) -> Bool {
         guard
@@ -201,7 +153,8 @@ enum PiPShortcutActionCenter {
             return false
         }
 
-        return request(action)
+        request(action)
+        return true
     }
 
     private static func action(from url: URL) -> PiPShortcutAction? {
@@ -261,7 +214,7 @@ public struct StartFloatingWindowIntent: AppIntent {
     public static var title: LocalizedStringResource = "打开悬浮窗"
     public static var description = IntentDescription("打开全局高刷悬浮窗")
     public static var openAppWhenRun: Bool = true
-    public static var isDiscoverable: Bool { PiPShortcutFeatureAccess.isEnabled }
+    public static var isDiscoverable: Bool = true
     public static var authenticationPolicy: IntentAuthenticationPolicy = .alwaysAllowed
 
     public static var supportedModes: IntentModes {
@@ -281,7 +234,7 @@ public struct HideFloatingWindowIntent: AppIntent {
     public static var title: LocalizedStringResource = "一键0.1pt"
     public static var description = IntentDescription("将已吸附的悬浮窗缩小到0.1pt")
     public static var openAppWhenRun: Bool = true
-    public static var isDiscoverable: Bool { PiPShortcutFeatureAccess.isEnabled }
+    public static var isDiscoverable: Bool = true
     public static var authenticationPolicy: IntentAuthenticationPolicy = .alwaysAllowed
 
     public static var supportedModes: IntentModes {
@@ -301,7 +254,7 @@ public struct StartAndHideFloatingWindowIntent: AppIntent {
     public static var title: LocalizedStringResource = "打开并一键0.1pt"
     public static var description = IntentDescription("打开全局高刷悬浮窗并缩小到0.1pt")
     public static var openAppWhenRun: Bool = true
-    public static var isDiscoverable: Bool { PiPShortcutFeatureAccess.isEnabled }
+    public static var isDiscoverable: Bool = true
     public static var authenticationPolicy: IntentAuthenticationPolicy = .alwaysAllowed
 
     public static var supportedModes: IntentModes {
@@ -355,10 +308,6 @@ public struct AppShortcuts: AppShortcutsProvider {
 
 enum PiPShortcutRuntimeRegistration {
     static func warmUpProviderIfAvailable() {
-        refreshProviderIfAvailable()
-    }
-
-    static func refreshProviderIfAvailable() {
         guard #available(iOS 26.0, *) else { return }
         _ = AppShortcuts.appShortcuts.count
         AppShortcuts.updateAppShortcutParameters()

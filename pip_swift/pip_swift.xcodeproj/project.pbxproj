@@ -27,8 +27,7 @@
 			D950ED11265E319D006DD1A6 /* SceneDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = D950ED10265E319D006DD1A6 /* SceneDelegate.swift */; };
 			D950ED13265E319D006DD1A6 /* ViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = D950ED12265E319D006DD1A6 /* ViewController.swift */; };
 			AA50ED22265E319E006DD1A6 /* MainTabBarController.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA50ED20265E319E006DD1A6 /* MainTabBarController.swift */; };
-		AA50ED23265E319E006DD1A6 /* PiPViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA50ED21265E319E006DD1A6 /* PiPViews.swift */; };
-		A2200003265E319E006DD1A6 /* GlobalRefresh2LaunchCelebration.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2200002265E319E006DD1A6 /* GlobalRefresh2LaunchCelebration.swift */; };
+			AA50ED23265E319E006DD1A6 /* PiPViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA50ED21265E319E006DD1A6 /* PiPViews.swift */; };
 				AA50ED25265E319E006DD1A6 /* TutorialTabBarController.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA50ED24265E319E006DD1A6 /* TutorialTabBarController.swift */; };
 				AA50ED27265E319E006DD1A6 /* FrameRateTestTabBarController.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA50ED26265E319E006DD1A6 /* FrameRateTestTabBarController.swift */; };
 				AA50ED29265E319E006DD1A6 /* VersionViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA50ED28265E319E006DD1A6 /* VersionViewController.swift */; };
@@ -60,8 +59,7 @@
 			D950ED10265E319D006DD1A6 /* SceneDelegate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SceneDelegate.swift; sourceTree = "<group>"; };
 			D950ED12265E319D006DD1A6 /* ViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ViewController.swift; sourceTree = "<group>"; };
 			AA50ED20265E319E006DD1A6 /* MainTabBarController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MainTabBarController.swift; sourceTree = "<group>"; };
-		AA50ED21265E319E006DD1A6 /* PiPViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PiPViews.swift; sourceTree = "<group>"; };
-		A2200002265E319E006DD1A6 /* GlobalRefresh2LaunchCelebration.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GlobalRefresh2LaunchCelebration.swift; sourceTree = "<group>"; };
+			AA50ED21265E319E006DD1A6 /* PiPViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PiPViews.swift; sourceTree = "<group>"; };
 				AA50ED24265E319E006DD1A6 /* TutorialTabBarController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TutorialTabBarController.swift; sourceTree = "<group>"; };
 				AA50ED26265E319E006DD1A6 /* FrameRateTestTabBarController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FrameRateTestTabBarController.swift; sourceTree = "<group>"; };
 				AA50ED28265E319E006DD1A6 /* VersionViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VersionViewController.swift; sourceTree = "<group>"; };
@@ -162,8 +160,7 @@
 					D93F3C1128BF34B800BB696D /* BackgroundTaskManager */,
 						D950ED12265E319D006DD1A6 /* ViewController.swift */,
 						AA50ED20265E319E006DD1A6 /* MainTabBarController.swift */,
-					AA50ED21265E319E006DD1A6 /* PiPViews.swift */,
-					A2200002265E319E006DD1A6 /* GlobalRefresh2LaunchCelebration.swift */,
+						AA50ED21265E319E006DD1A6 /* PiPViews.swift */,
 								AA50ED24265E319E006DD1A6 /* TutorialTabBarController.swift */,
 								AA50ED26265E319E006DD1A6 /* FrameRateTestTabBarController.swift */,
 								AA50ED28265E319E006DD1A6 /* VersionViewController.swift */,
@@ -364,7 +361,6 @@
 					D950ED13265E319D006DD1A6 /* ViewController.swift in Sources */,
 					AA50ED22265E319E006DD1A6 /* MainTabBarController.swift in Sources */,
 					AA50ED23265E319E006DD1A6 /* PiPViews.swift in Sources */,
-					A2200003265E319E006DD1A6 /* GlobalRefresh2LaunchCelebration.swift in Sources */,
 						AA50ED25265E319E006DD1A6 /* TutorialTabBarController.swift in Sources */,
 						AA50ED27265E319E006DD1A6 /* FrameRateTestTabBarController.swift in Sources */,
 						AA50ED29265E319E006DD1A6 /* VersionViewController.swift in Sources */,

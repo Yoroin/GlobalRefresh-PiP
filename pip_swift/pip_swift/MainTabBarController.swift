@@ -48,109 +48,12 @@ final class MainTabBarController: UITabBarController, UITabBarControllerDelegate
 
     private var refreshDisplayLink: CADisplayLink?
     private var pendingShortcutRetryWorkItems: [DispatchWorkItem] = []
-    private var launchCelebrationController: UIHostingController<GlobalRefresh2LaunchCelebrationView>?
-    private var latestChangelogController: LatestChangelogViewController?
-    private var isShortcutDisabledAlertPending = false
     private let tabContentFadeAnimator = TabContentFadeAnimator()
-    private weak var floatingWindowController: ViewController?
     private static let shortcutDarwinNotificationCallback: CFNotificationCallback = { _, observer, _, _, _ in
         guard let observer else { return }
         let controller = Unmanaged<MainTabBarController>.fromOpaque(observer).takeUnretainedValue()
         DispatchQueue.main.async {
             controller.handleShortcutDarwinNotification()
-        }
-    }
-
-    override func viewDidAppear(_ animated: Bool) {
-        super.viewDidAppear(animated)
-        if GlobalRefresh2LaunchCelebration.shouldPresent {
-            presentLaunchCelebrationIfNeeded()
-        } else if GlobalRefresh2LaunchCelebration.shouldPresentLatestChangelog {
-            scheduleLatestChangelogPresentation()
-        }
-    }
-
-    private func presentLaunchCelebrationIfNeeded() {
-        guard launchCelebrationController == nil else { return }
-        guard GlobalRefresh2LaunchCelebration.shouldPresent else { return }
-
-        GlobalRefresh2LaunchCelebration.markPresented()
-        let celebration = GlobalRefresh2LaunchCelebrationView { [weak self] in
-            self?.dismissLaunchCelebration()
-        }
-        let controller = UIHostingController(rootView: celebration)
-        controller.view.backgroundColor = .clear
-        launchCelebrationController = controller
-
-        addChild(controller)
-        view.addSubview(controller.view)
-        controller.view.translatesAutoresizingMaskIntoConstraints = false
-        NSLayoutConstraint.activate([
-            controller.view.leadingAnchor.constraint(equalTo: view.leadingAnchor),
-            controller.view.trailingAnchor.constraint(equalTo: view.trailingAnchor),
-            controller.view.topAnchor.constraint(equalTo: view.topAnchor),
-            controller.view.bottomAnchor.constraint(equalTo: view.bottomAnchor)
-        ])
-        controller.didMove(toParent: self)
-        controller.view.alpha = 0
-        UIView.animate(withDuration: 0.22) {
-            controller.view.alpha = 1
-        }
-    }
-
-    private func dismissLaunchCelebration() {
-        guard let controller = launchCelebrationController else { return }
-        controller.willMove(toParent: nil)
-        controller.view.removeFromSuperview()
-        controller.removeFromParent()
-        launchCelebrationController = nil
-        GlobalRefresh2LaunchCelebration.markFinished()
-        scheduleLatestChangelogPresentation()
-    }
-
-    private func scheduleLatestChangelogPresentation() {
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.42) { [weak self] in
-            self?.presentLatestChangelogIfPossible()
-        }
-    }
-
-    private func presentLatestChangelogIfPossible() {
-        guard latestChangelogController == nil else { return }
-        guard viewIfLoaded?.window != nil else { return }
-
-        if presentedViewController != nil {
-            scheduleLatestChangelogPresentation()
-            return
-        }
-
-        let controller = LatestChangelogViewController(
-            onDismiss: { [weak self] in
-                self?.dismissLatestChangelog()
-            },
-            onOpenFullChangelog: { [weak self] in
-                self?.openFullChangelogFromLatestPopup()
-            }
-        )
-        latestChangelogController = controller
-        GlobalRefresh2LaunchCelebration.markLatestChangelogPresented()
-        present(controller, animated: true)
-    }
-
-    private func dismissLatestChangelog() {
-        guard latestChangelogController != nil else { return }
-        dismiss(animated: true) { [weak self] in
-            self?.latestChangelogController = nil
-        }
-    }
-
-    private func openFullChangelogFromLatestPopup() {
-        guard latestChangelogController != nil else { return }
-        latestChangelogController = nil
-        dismiss(animated: true) { [weak self] in
-            guard let self else { return }
-            let changelogController = ChangelogViewController()
-            changelogController.configureAdaptivePageSheet(preferredHeightRatio: 0.58)
-            self.present(changelogController, animated: true)
         }
     }
 
@@ -161,7 +64,6 @@ final class MainTabBarController: UITabBarController, UITabBarControllerDelegate
         DiagnosticsRuntimeState.updateCurrentPage("悬浮窗")
 
         let pipController = ViewController()
-        floatingWindowController = pipController
         pipController.tabBarItem = UITabBarItem(
             title: L10n.floatingWindow,
             image: TabIconFactory.icon120Hz(),
@@ -235,21 +137,8 @@ final class MainTabBarController: UITabBarController, UITabBarControllerDelegate
             name: NSLocale.currentLocaleDidChangeNotification,
             object: nil
         )
-        NotificationCenter.default.addObserver(
-            self,
-            selector: #selector(handleWillResetAllAppData),
-            name: CacheCleanupManager.willResetAllAppDataNotification,
-            object: nil
-        )
-        NotificationCenter.default.addObserver(
-            self,
-            selector: #selector(handleDidResetAllAppData),
-            name: CacheCleanupManager.didResetAllAppDataNotification,
-            object: nil
-        )
         DispatchQueue.main.async { [weak self] in
             self?.performPendingShortcutAction(reason: "主界面加载")
-            self?.presentShortcutDisabledAlertIfNeeded()
         }
     }
 
@@ -366,7 +255,6 @@ final class MainTabBarController: UITabBarController, UITabBarControllerDelegate
     @objc private func handleAppDidBecomeActive() {
         startRefreshDriver()
         schedulePendingShortcutActionChecks(reason: "App激活")
-        presentShortcutDisabledAlertIfNeeded()
     }
 
     @objc private func handleAppDidEnterBackground() {
@@ -380,18 +268,6 @@ final class MainTabBarController: UITabBarController, UITabBarControllerDelegate
 
     @objc private func handleSystemLocaleDidChange() {
         L10n.followSystemLanguageIfActuallyChanged()
-    }
-
-    @objc private func handleWillResetAllAppData() {
-        dismissVisibleTransientOverlays()
-        floatingWindowController?.stopForFullDataReset()
-    }
-
-    @objc private func handleDidResetAllAppData() {
-        selectedIndex = 0
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.16) { [weak self] in
-            self?.presentLaunchCelebrationIfNeeded()
-        }
     }
 
     private func updateTabBarItemTitles() {
@@ -427,31 +303,6 @@ final class MainTabBarController: UITabBarController, UITabBarControllerDelegate
             pendingShortcutRetryWorkItems.append(workItem)
             DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: workItem)
         }
-    }
-
-    private func presentShortcutDisabledAlertIfNeeded() {
-        if PiPShortcutFeatureAccess.consumeBlockedAttempt() {
-            isShortcutDisabledAlertPending = true
-        }
-        guard isShortcutDisabledAlertPending, viewIfLoaded?.window != nil else { return }
-        guard presentedViewController == nil, launchCelebrationController == nil else {
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
-                self?.presentShortcutDisabledAlertIfNeeded()
-            }
-            return
-        }
-
-        isShortcutDisabledAlertPending = false
-        let alert = UIAlertController(
-            title: L10n.text("快捷指令功能未启用", "Shortcuts Are Disabled"),
-            message: L10n.text(
-                "请先在首页的更多设置中打开“快捷指令功能”，阅读并确认无法自动熄屏的风险后再使用。",
-                "Enable Shortcuts in Home > More Settings and confirm the auto-lock risk before using shortcut actions."
-            ),
-            preferredStyle: .alert
-        )
-        alert.addAction(UIAlertAction(title: L10n.ok, style: .default))
-        present(alert, animated: true)
     }
 
     @discardableResult

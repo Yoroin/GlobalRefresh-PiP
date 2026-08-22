@@ -139,22 +139,12 @@ Use your own Apple ID, certificate, or device environment to sign and install th
 
 ## Changelog
 
-### 1.1.0 (2026.8.22)
+### 1.0.9 fix1 (2026.7.13)
 
-- Added manual cache cleanup on the Version page, including released-space details. Long press to reset all app data and return to first-time setup.
-- Added automatic cleanup of leftover temporary assets and expired caches on first install, app updates, and normal launches.
-- Cleaned up and limited generated floating-window video caches to prevent storage usage from continuously growing for some users.
-- Shortcuts are now an opt-in risk feature. Setup and actions become available only after confirming the possible auto-lock issue.
-- Added in-app update checking through the public GitHub Releases API. It compares the latest stable or beta version with the installed version and never downloads or modifies the app automatically. A selected update can be skipped until a newer version appears.
-- Added a slow, same-speed 80 Hz versus 120 Hz motion comparison while keeping vertical scrolling for a real feel of the current page refresh behavior.
-- Added a first-launch animation and tutorial. Notification permission is requested after onboarding finishes.
-- Added a What's New popup on Home with quick access to the full changelog.
-- Improved Liquid Glass backgrounds, corner treatment, and scrolling for Changelog and FAQ sheets on iOS 26 and later.
-- Improved Chinese and English status, runtime, and update messages across the app.
 - Fixed an issue where interface icons could disappear after switching appearance on iOS versions below 26.
 - Appearance detection now runs only in the foreground and stops polling when the app enters the background.
 - Debug Mode is now disabled after an app update, and old diagnostics are cleared to prevent monitors and retained logs from continuing to use memory.
-- Preserved the two stable 1.0.9 PiP routes for creation, height adjustment, and 120 Hz behavior; only resource cleanup and diagnostics were added around them.
+- Cleaned up and limited generated floating-window video caches to prevent storage usage from continuously growing for some users.
 
 ### 1.0.9 (2026.7.8)
 

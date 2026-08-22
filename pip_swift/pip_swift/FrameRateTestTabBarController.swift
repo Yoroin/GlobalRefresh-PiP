@@ -542,8 +542,6 @@ private struct RootFrameRateListView: View {
     var body: some View {
         ScrollView {
             LazyVStack(spacing: 12) {
-                FrameCadenceComparisonCard()
-
                 ForEach(0..<36, id: \.self) { index in
                     twoLineItem(index: index)
                 }
@@ -618,72 +616,6 @@ private struct RootFrameRateListView: View {
             RoundedRectangle(cornerRadius: 18, style: .continuous)
                 .stroke(Color(UIColor.separator).opacity(0.35), lineWidth: 1)
         )
-    }
-}
-
-private struct FrameCadenceComparisonCard: View {
-    var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            Text(L10n.text("80Hz / 120Hz 同速动画对比", "80 Hz / 120 Hz Same-Speed Comparison"))
-                .font(.system(size: 16, weight: .black))
-                .foregroundColor(Color(UIColor.label))
-
-            Text(L10n.text(
-                "两个蓝色球速度一致；80Hz按较低频率更新位置，120Hz移动更连续。",
-                "The two blue balls move at the same speed; 80 Hz updates position less often, while 120 Hz appears more continuous."
-            ))
-            .font(.system(size: 12, weight: .semibold))
-            .foregroundColor(Color(UIColor.secondaryLabel))
-            .fixedSize(horizontal: false, vertical: true)
-
-            TimelineView(.animation(minimumInterval: 1.0 / 120.0, paused: false)) { context in
-                VStack(spacing: 12) {
-                    cadenceLane(label: "80Hz", sampleRate: 80, date: context.date)
-                    cadenceLane(label: "120Hz", sampleRate: 120, date: context.date)
-                }
-            }
-            .frame(height: 76)
-        }
-        .padding(14)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(
-            RoundedRectangle(cornerRadius: 18, style: .continuous)
-                .fill(Color(UIColor.secondarySystemGroupedBackground))
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: 18, style: .continuous)
-                .stroke(Color(UIColor.separator).opacity(0.35), lineWidth: 1)
-        )
-    }
-
-    private func cadenceLane(label: String, sampleRate: Double, date: Date) -> some View {
-        HStack(spacing: 10) {
-            Text(label)
-                .font(.system(size: 12, weight: .black, design: .rounded))
-                .foregroundColor(Color(UIColor.systemBlue))
-                .frame(width: 44, alignment: .trailing)
-
-            GeometryReader { proxy in
-                let sampledTime = floor(date.timeIntervalSinceReferenceDate * sampleRate) / sampleRate
-                let cycle = sampledTime.truncatingRemainder(dividingBy: 4.0)
-                let progress = cycle <= 2.0 ? cycle / 2.0 : (4.0 - cycle) / 2.0
-                let travel = max(proxy.size.width - 22, 1)
-
-                ZStack(alignment: .leading) {
-                    Capsule()
-                        .fill(Color(UIColor.systemBlue).opacity(0.12))
-                        .frame(height: 7)
-
-                    Circle()
-                        .fill(Color(UIColor.systemBlue))
-                        .frame(width: 22, height: 22)
-                        .shadow(color: Color(UIColor.systemBlue).opacity(0.3), radius: 4, x: 0, y: 2)
-                        .offset(x: travel * CGFloat(progress))
-                }
-                .frame(maxHeight: .infinity)
-            }
-            .frame(height: 28)
-        }
     }
 }
 
