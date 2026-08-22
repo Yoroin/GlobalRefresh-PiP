@@ -4,6 +4,10 @@
 "将已开启并吸附到侧边的悬浮窗缩小到0.1pt" = "Shrink the active docked floating window to 0.1 pt";
 "打开并隐藏悬浮窗" = "Open and Hide Floating Window";
 "打开全局高刷悬浮窗后自动缩小到0.1pt" = "Open Global Refresh PiP, then shrink it to 0.1 pt";
+"一键0.1pt" = "One-tap 0.1 pt";
+"将已吸附的悬浮窗缩小到0.1pt" = "Shrink the docked floating window to 0.1 pt";
+"打开并一键0.1pt" = "Open and Set to 0.1 pt";
+"打开全局高刷悬浮窗并缩小到0.1pt" = "Open Global Refresh PiP and shrink it to 0.1 pt";
 "关闭悬浮窗" = "Stop Floating Window";
 "关闭全局高刷悬浮窗" = "Close Global Refresh PiP";
 "Open Floating Window" = "Open Floating Window";
@@ -15,6 +19,7 @@
 "Stop Floating Window" = "Stop Floating Window";
 "Close Global Refresh PiP" = "Close Global Refresh PiP";
 "%@打开并隐藏悬浮窗" = "%@ open and hide floating window";
+"%@打开并一键0.1pt" = "%@ open and set to 0.1 pt";
 "%@打开隐藏悬浮窗" = "%@ open hidden floating window";
 "打开并隐藏" = "Open and Hide";
 "Open and Hide" = "Open and Hide";
@@ -24,14 +29,17 @@
 "%@打开悬浮窗" = "%@ open floating window";
 "%@开启悬浮窗" = "%@ enable floating window";
 "%@隐藏悬浮窗" = "%@ hide floating window";
+"%@一键0.1pt" = "%@ set floating window to 0.1 pt";
 "%@缩小悬浮窗" = "%@ shrink floating window";
 "%@关闭悬浮窗" = "%@ stop floating window";
 "%@关闭画中画" = "%@ close floating window";
 "${applicationName}打开并隐藏悬浮窗" = "${applicationName} open and hide floating window";
+"${applicationName}打开并一键0.1pt" = "${applicationName} open and set to 0.1 pt";
 "${applicationName}打开隐藏悬浮窗" = "${applicationName} open hidden floating window";
 "${applicationName}打开悬浮窗" = "${applicationName} open floating window";
 "${applicationName}开启悬浮窗" = "${applicationName} enable floating window";
 "${applicationName}隐藏悬浮窗" = "${applicationName} hide floating window";
+"${applicationName}一键0.1pt" = "${applicationName} set floating window to 0.1 pt";
 "${applicationName}缩小悬浮窗" = "${applicationName} shrink floating window";
 "${applicationName}关闭悬浮窗" = "${applicationName} stop floating window";
 "${applicationName}关闭画中画" = "${applicationName} close floating window";

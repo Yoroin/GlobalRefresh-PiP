@@ -143,8 +143,11 @@ enum KeepAliveLogger {
     private static let sessionStartKey = "pip.keepAlive.sessionStart"
     private static let backgroundStartKey = "pip.keepAlive.backgroundStart"
     private static let lastHeartbeatKey = "pip.keepAlive.lastHeartbeat"
+    private static let lastHeartbeatSnapshotKey = "pip.keepAlive.lastHeartbeatSnapshot"
     private static let lastModeKey = "pip.keepAlive.lastMode"
-    private static let maximumEvents = 80
+    private static let lastInterruptionSummaryKey = "pip.keepAlive.lastInterruptionSummary"
+    private static let maximumEvents = 200
+    private static let maximumStoredTextBytes = 8 * 1024
 
     @discardableResult
     static func markAppLaunch() -> KeepAliveInterruptionNotice? {
@@ -155,7 +158,11 @@ enum KeepAliveLogger {
             let lastHeartbeat = storedTimestamp(lastHeartbeatKey)
             let heartbeatText = compactDateText(lastHeartbeat)
             let runtimeText = runtimeText(start: sessionStart, end: lastHeartbeat)
-            appendIfDebug("App重新启动：上次保活可能异常中断，最后心跳=\(storedDateText(lastHeartbeatKey))，持续运行=\(runtimeText)，本次启动=\(nowText)")
+            let lastSnapshot = UserDefaults.standard.string(forKey: lastHeartbeatSnapshotKey) ?? "无现场"
+            let summary = "上次保活可能异常中断，最后心跳=\(storedDateText(lastHeartbeatKey))，持续运行=\(runtimeText)，模式=\(UserDefaults.standard.string(forKey: lastModeKey) ?? "未知")，现场{\(lastSnapshot)}"
+            UserDefaults.standard.set(summary, forKey: lastInterruptionSummaryKey)
+            appendIfDebug("App重新启动：\(summary)，本次启动=\(nowText)")
+            AppDebugLogger.logCritical("保活异常中断推断：\(summary)")
             UserDefaults.standard.set(false, forKey: sessionActiveKey)
             UserDefaults.standard.removeObject(forKey: backgroundStartKey)
             return KeepAliveInterruptionNotice(interruptedAtText: heartbeatText, runtimeText: runtimeText)
@@ -199,9 +206,22 @@ enum KeepAliveLogger {
         KeepAliveNotificationTester.cancelBackgroundInterruptionProbe(reason: "回到前台")
     }
 
-    static func heartbeat() {
+    static func heartbeat(snapshot: String? = nil, persistImmediately: Bool = true) {
         guard shouldTrackState else { return }
-        UserDefaults.standard.set(Date().timeIntervalSince1970, forKey: lastHeartbeatKey)
+        let defaults = UserDefaults.standard
+        defaults.set(Date().timeIntervalSince1970, forKey: lastHeartbeatKey)
+        if let snapshot {
+            defaults.set(limitStoredText(snapshot), forKey: lastHeartbeatSnapshotKey)
+        }
+        if persistImmediately {
+            defaults.synchronize()
+        }
+    }
+
+    static var lastHeartbeatDate: Date? {
+        let timestamp = UserDefaults.standard.double(forKey: lastHeartbeatKey)
+        guard timestamp > 0 else { return nil }
+        return Date(timeIntervalSince1970: timestamp)
     }
 
     static func backgroundInterruptionProbeDecision(staleAfter: TimeInterval) -> (shouldNotify: Bool, reason: String) {
@@ -238,13 +258,18 @@ enum KeepAliveLogger {
         append("通知已暂停，原因=\(reason)")
     }
 
+    static func markNotificationLockProtectionBypassed(reason: String) {
+        guard shouldTrackState else { return }
+        append("BETA5通知锁屏保护已绕过，原因=\(reason)")
+    }
+
     static func copyToPasteboard() {
         UIPasteboard.general.string = exportText()
     }
 
     static func resetLogs() {
         let defaults = UserDefaults.standard
-        for key in [eventsKey, sessionActiveKey, sessionStartKey, backgroundStartKey, lastHeartbeatKey, lastModeKey] {
+        for key in [eventsKey, sessionActiveKey, sessionStartKey, backgroundStartKey, lastHeartbeatKey, lastHeartbeatSnapshotKey, lastModeKey, lastInterruptionSummaryKey] {
             defaults.removeObject(forKey: key)
         }
         KeepAliveNotificationTester.cancelAllTestingNotifications(reason: "保活日志清空")
@@ -273,6 +298,8 @@ enum KeepAliveLogger {
         保活开始时间：\(storedDateText(sessionStartKey))
         后台开始时间：\(storedDateText(backgroundStartKey))
         最后心跳时间：\(storedDateText(lastHeartbeatKey))
+        最后心跳现场：\(UserDefaults.standard.string(forKey: lastHeartbeatSnapshotKey) ?? "无")
+        上次异常中断摘要：\(UserDefaults.standard.string(forKey: lastInterruptionSummaryKey) ?? "无")
 
         说明：iOS 不会在 App 被杀死的瞬间通知普通 App；若下次启动时发现上次保活未正常停止，会用“最后心跳时间”到“本次启动时间”推断可能中断时间段。
 
@@ -283,11 +310,19 @@ enum KeepAliveLogger {
 
     private static func append(_ message: String) {
         var events = UserDefaults.standard.stringArray(forKey: eventsKey) ?? []
-        events.append("\(nowText) | \(message)")
+        events.append(limitStoredText("\(nowText) | \(message)"))
         if events.count > maximumEvents {
             events.removeFirst(events.count - maximumEvents)
         }
         UserDefaults.standard.set(events, forKey: eventsKey)
+        UserDefaults.standard.synchronize()
+    }
+
+    private static func limitStoredText(_ text: String) -> String {
+        guard text.utf8.count > maximumStoredTextBytes else { return text }
+        let marker = "\n[记录过长，已截断]"
+        let prefixByteCount = max(0, maximumStoredTextBytes - marker.utf8.count)
+        return String(decoding: text.utf8.prefix(prefixByteCount), as: UTF8.self) + marker
     }
 
     fileprivate static func appendIfDebug(_ message: String) {
@@ -618,7 +653,7 @@ enum KeepAliveNotificationTester {
 
             markForegroundTakeoverEndedIfNeeded(reason: "音频中断结束")
             guard isEnabled else { return }
-            guard let mode = activeBackgroundProbeMode else {
+            guard activeBackgroundProbeMode != nil else {
                 KeepAliveLogger.appendIfDebug("音频中断结束后无活动后台探测，跳过通知恢复")
                 return
             }
@@ -1369,10 +1404,15 @@ enum KeepAliveNotificationTester {
         }
     }
 
-    static func shouldSuppressPiPStoppedNotification(reason: String) -> Bool {
+    static func shouldSuppressPiPStoppedNotification(reason: String, allowWhileLocked: Bool = false) -> Bool {
         guard isPiPStoppedNotificationEnabled else { return false }
         let protectedByLock = isDeviceLocked || isForegroundLockProbeSuppressed || isForegroundLockTransition
         guard protectedByLock else { return false }
+        if allowWhileLocked {
+            KeepAliveLogger.markNotificationLockProtectionBypassed(reason: "确认PiP异常停止，锁屏期间仍发送通知：\(reason)")
+            AppDebugLogger.logCritical("BETA5异常PiP停止通知不再被锁屏保护拦截，原因=\(reason)")
+            return false
+        }
         let protectionReason = "锁屏保护"
         KeepAliveLogger.markNotificationPaused(reason: "悬浮窗停止通知被\(protectionReason)拦截：\(reason)")
         AppDebugLogger.log("悬浮窗停止通知已拦截，保护=\(protectionReason)，原因=\(reason)")

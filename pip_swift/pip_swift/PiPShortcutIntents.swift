@@ -325,7 +325,7 @@ public struct AppShortcuts: AppShortcutsProvider {
                 "\(.applicationName) 打开并一键0.1pt",
                 "\(.applicationName) 打开并隐藏悬浮窗"
             ],
-            shortTitle: "打开并隐藏",
+            shortTitle: "打开并一键0.1pt",
             systemImageName: "pip.remove"
         )
 

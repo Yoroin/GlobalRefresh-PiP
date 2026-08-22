@@ -24,6 +24,18 @@ enum DiagnosticsResetManager {
         PowerUsageLogger.resetStatistics()
         defaults.set(currentBuild, forKey: storedBuildKey)
     }
+
+    static func clearDiagnosticsIfDebugModeDisabled() {
+        guard !AppDebugLogger.isDebugModeEnabled else { return }
+
+        DiagnosticsRuntimeState.stopAppStateTracking()
+        MetricKitLogger.shared.stop()
+        DebugDiagnosticsMonitor.setEnabled(false)
+        AppDebugLogger.resetLogs()
+        KeepAliveLogger.resetLogs()
+        MetricKitLogger.shared.resetLogs()
+        PowerUsageLogger.resetStatistics()
+    }
 }
 
 struct CacheCleanupReport {
@@ -93,6 +105,8 @@ enum CacheCleanupManager {
         DiagnosticsRuntimeState.stopAppStateTracking()
         MetricKitLogger.shared.stop()
         DebugDiagnosticsMonitor.stop()
+        KeepAliveNotificationTester.cancelBackgroundProbeNotifications(reason: "清空全部数据")
+        KeepAliveNotificationTester.cancelPiPStoppedNotifications(reason: "清空全部数据")
 
         cleanupQueue.async {
             let fileManager = FileManager.default
@@ -107,10 +121,19 @@ enum CacheCleanupManager {
                 report = removeItem(directory, fileManager: fileManager, report: report)
                 try? fileManager.createDirectory(at: directory, withIntermediateDirectories: true)
             }
+            let temporaryEntries = (try? fileManager.contentsOfDirectory(
+                at: fileManager.temporaryDirectory,
+                includingPropertiesForKeys: [.isDirectoryKey, .fileSizeKey],
+                options: []
+            )) ?? []
+            for entry in temporaryEntries {
+                report = removeItem(entry, fileManager: fileManager, report: report)
+            }
             URLCache.shared.removeAllCachedResponses()
             if let bundleIdentifier = Bundle.main.bundleIdentifier {
                 UserDefaults.standard.removePersistentDomain(forName: bundleIdentifier)
             }
+            UserDefaults.standard.synchronize()
 
             DispatchQueue.main.async {
                 NotificationCenter.default.post(name: didResetAllAppDataNotification, object: report)
@@ -135,8 +158,11 @@ enum CacheCleanupManager {
             }
             let managedDirectory = cachesDirectory.appendingPathComponent(managedVideoDirectoryName, isDirectory: true)
             let managedEntries = (try? fileManager.contentsOfDirectory(at: managedDirectory, includingPropertiesForKeys: nil)) ?? []
-            for entry in managedEntries where entry.lastPathComponent.hasPrefix(".") && entry.pathExtension == "mov" {
-                report = removeItem(entry, fileManager: fileManager, report: report)
+            for entry in managedEntries {
+                let isAbandonedGeneration = entry.lastPathComponent.hasPrefix(".") && entry.pathExtension == "mov"
+                if fullCleanup || isAbandonedGeneration {
+                    report = removeItem(entry, fileManager: fileManager, report: report)
+                }
             }
         }
 

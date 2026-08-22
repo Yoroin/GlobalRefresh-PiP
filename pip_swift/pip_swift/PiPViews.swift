@@ -1582,7 +1582,7 @@ private struct VersionDescriptionFrameKey: PreferenceKey {
 struct VersionPageView: View {
     let isDebugModeEnabled: Bool
     @Binding var isDebugPanelVisible: Bool
-    let isIOS26AudioKeepAliveEnabled: Bool
+    let keepAlivePolicy: KeepAlivePolicy
     let isDebugDiagnosticsEnabled: Bool
     let debugPanelResetToken: Int
     let onShowChangelog: () -> Void
@@ -1598,14 +1598,14 @@ struct VersionPageView: View {
     let isBetaUpdateChannelEnabled: Bool
     let onSetDebugMode: (Bool) -> Void
     let onRequestEnableDebugMode: () -> Void
-    let onSetIOS26AudioKeepAlive: (Bool) -> Void
+    let onSetKeepAlivePolicy: (KeepAlivePolicy) -> Void
     let onSetBetaUpdateChannelEnabled: (Bool) -> Void
     @State private var isKeepAliveInfoVisible = false
     @State private var isBetaInfoVisible = false
     @State private var isDebugDiagnosticsInfoVisible = false
     @State private var isDebugPanelClosing = false
     @State private var displayedDebugModeEnabled: Bool
-    @State private var displayedIOS26AudioKeepAliveEnabled: Bool
+    @State private var displayedKeepAlivePolicy: KeepAlivePolicy
     @State private var displayedDebugDiagnosticsEnabled: Bool
     @State private var debugModeStatusLabelFrame: CGRect = .zero
     @State private var versionDescriptionFrame: CGRect = .zero
@@ -1616,7 +1616,7 @@ struct VersionPageView: View {
     init(
         isDebugModeEnabled: Bool,
         isDebugPanelVisible: Binding<Bool>,
-        isIOS26AudioKeepAliveEnabled: Bool,
+        keepAlivePolicy: KeepAlivePolicy,
         isDebugDiagnosticsEnabled: Bool,
         debugPanelResetToken: Int,
         onShowChangelog: @escaping () -> Void,
@@ -1632,12 +1632,12 @@ struct VersionPageView: View {
         isBetaUpdateChannelEnabled: Bool,
         onSetDebugMode: @escaping (Bool) -> Void,
         onRequestEnableDebugMode: @escaping () -> Void,
-        onSetIOS26AudioKeepAlive: @escaping (Bool) -> Void,
+        onSetKeepAlivePolicy: @escaping (KeepAlivePolicy) -> Void,
         onSetBetaUpdateChannelEnabled: @escaping (Bool) -> Void
     ) {
         self.isDebugModeEnabled = isDebugModeEnabled
         _isDebugPanelVisible = isDebugPanelVisible
-        self.isIOS26AudioKeepAliveEnabled = isIOS26AudioKeepAliveEnabled
+        self.keepAlivePolicy = keepAlivePolicy
         self.isDebugDiagnosticsEnabled = isDebugDiagnosticsEnabled
         self.debugPanelResetToken = debugPanelResetToken
         self.onShowChangelog = onShowChangelog
@@ -1653,10 +1653,10 @@ struct VersionPageView: View {
         self.isBetaUpdateChannelEnabled = isBetaUpdateChannelEnabled
         self.onSetDebugMode = onSetDebugMode
         self.onRequestEnableDebugMode = onRequestEnableDebugMode
-        self.onSetIOS26AudioKeepAlive = onSetIOS26AudioKeepAlive
+        self.onSetKeepAlivePolicy = onSetKeepAlivePolicy
         self.onSetBetaUpdateChannelEnabled = onSetBetaUpdateChannelEnabled
         _displayedDebugModeEnabled = State(initialValue: isDebugModeEnabled)
-        _displayedIOS26AudioKeepAliveEnabled = State(initialValue: isIOS26AudioKeepAliveEnabled)
+        _displayedKeepAlivePolicy = State(initialValue: keepAlivePolicy)
         _displayedDebugDiagnosticsEnabled = State(initialValue: isDebugDiagnosticsEnabled)
     }
 
@@ -1805,9 +1805,7 @@ struct VersionPageView: View {
                                 ? L10n.text("检查失败", "Check Failed")
                                 : hasAvailableUpdate
                                 ? L10n.text("检测到新版本", "New Version Available")
-                                : hasCompletedUpdateCheck
-                                ? L10n.text("当前已是最新版", "You're Up to Date")
-                                : L10n.text("尚未检查", "Not Checked")
+                                : L10n.text("当前已是最新版", "You're Up to Date")
 
                             HStack(spacing: 5) {
                                 Circle()
@@ -1920,9 +1918,9 @@ struct VersionPageView: View {
                 dismissDebugDiagnosticsInfoPanel()
             }
         }
-        .onChange(of: isIOS26AudioKeepAliveEnabled) { newValue in
-            guard newValue != displayedIOS26AudioKeepAliveEnabled else { return }
-            displayedIOS26AudioKeepAliveEnabled = newValue
+        .onChange(of: keepAlivePolicy) { newValue in
+            guard newValue != displayedKeepAlivePolicy else { return }
+            displayedKeepAlivePolicy = newValue
         }
         .onChange(of: isDebugDiagnosticsEnabled) { newValue in
             guard newValue != displayedDebugDiagnosticsEnabled else { return }
@@ -2018,13 +2016,13 @@ struct VersionPageView: View {
         }
     }
 
-    private func setIOS26AudioKeepAlive(_ isEnabled: Bool) {
+    private func setKeepAlivePolicy(_ policy: KeepAlivePolicy) {
         var transaction = Transaction()
         transaction.disablesAnimations = true
         withTransaction(transaction) {
-            displayedIOS26AudioKeepAliveEnabled = isEnabled
+            displayedKeepAlivePolicy = policy
         }
-        onSetIOS26AudioKeepAlive(isEnabled)
+        onSetKeepAlivePolicy(policy)
     }
 
     private func openGitHubLink() {
@@ -2039,13 +2037,11 @@ struct VersionPageView: View {
     }
 
     private var keepAliveModeTitle: String {
-        displayedIOS26AudioKeepAliveEnabled ? L10n.text("音频强保活", "Audio Keep-alive") : L10n.text("PiP保活-低功耗", "PiP Keep-alive")
+        displayedKeepAlivePolicy.title
     }
 
     private var keepAliveModeDescription: String {
-        displayedIOS26AudioKeepAliveEnabled
-            ? L10n.text("音频强保活，强力保活方案，缺点较为耗电，且小部分场景可能影响音频，已默认不再使用，仅适合超强保活且不在意耗电的需求用户", "Audio keep-alive is stronger but uses more power and may affect audio in some cases. It is no longer the default.")
-            : L10n.text("新方案仅PiP保活，经实测较老方案更为省电，保活效果一致，并且解决音频冲突问题，优先推荐", "Low-power PiP keep-alive is recommended. In testing it keeps the same background stability while using less power and avoiding audio conflicts.")
+        displayedKeepAlivePolicy.detail
     }
 
     private var fixedFAQButtons: some View {
@@ -2210,25 +2206,34 @@ struct VersionPageView: View {
     private var fixedDebugPanel: some View {
         GeometryReader { proxy in
             if isDebugPanelVisible || isDebugPanelClosing {
-                DebugModePanel(
-                    isEnabled: displayedDebugModeEnabled,
-                    isIOS26AudioKeepAliveEnabled: displayedIOS26AudioKeepAliveEnabled,
-                    isBetaUpdateChannelEnabled: isBetaUpdateChannelEnabled,
-                    onSetEnabled: setDebugMode,
-                    onSetIOS26AudioKeepAlive: setIOS26AudioKeepAlive,
-                    onSetBetaUpdateChannelEnabled: onSetBetaUpdateChannelEnabled,
-                    isClosing: isDebugPanelClosing
-                )
-                .scaleEffect(isDebugPanelVisible ? 1 : 0.985, anchor: .top)
+                VStack(spacing: 0) {
+                    Spacer(minLength: 0)
+
+                    DebugModePanel(
+                        isEnabled: displayedDebugModeEnabled,
+                        keepAlivePolicy: displayedKeepAlivePolicy,
+                        isBetaUpdateChannelEnabled: isBetaUpdateChannelEnabled,
+                        onSetEnabled: setDebugMode,
+                        onSetKeepAlivePolicy: setKeepAlivePolicy,
+                        onSetBetaUpdateChannelEnabled: onSetBetaUpdateChannelEnabled,
+                        isClosing: isDebugPanelClosing
+                    )
+                    .padding(.bottom, max(proxy.safeAreaInsets.bottom, 0) + 5)
+                }
+                .frame(width: proxy.size.width, height: proxy.size.height, alignment: .bottom)
+                .scaleEffect(isDebugPanelVisible ? 1 : 0.985, anchor: .bottom)
                 .opacity(isDebugPanelVisible ? 1 : 0)
                 .allowsHitTesting(isDebugPanelVisible && !isDebugPanelClosing)
                 .transition(
                     .asymmetric(
-                        insertion: .opacity.combined(with: .scale(scale: 0.985, anchor: .top)),
+                        insertion: .opacity.combined(with: .scale(scale: 0.985, anchor: .bottom)),
                         removal: .opacity
                     )
                 )
-                .position(x: proxy.size.width / 2, y: debugPanelCenterY)
+                .animation(
+                    .interpolatingSpring(mass: 0.45, stiffness: 420, damping: 36, initialVelocity: 0.12),
+                    value: isDebugPanelVisible
+                )
             }
         }
         .zIndex(5)
@@ -2403,17 +2408,6 @@ struct VersionPageView: View {
             return L10n.text("调试模式已开启，可复制诊断日志、切换保活方案。当前已合并记录线程与性能信息，会记录主线程响应、UI帧间隔异常、CPU、内存、线程状态、热状态、电量、当前页面、悬浮窗状态和最近操作，可帮助开发者分析卡死、发热和后台异常。关闭调试模式后会一起关闭。", "Debug mode is on. Diagnostics include thread and performance data for investigating freezes, heat, and background issues. Turning debug mode off disables this logging.")
         }
         return L10n.text("调试模式已开启，但诊断监控当前未运行。若不是刚切换状态，请关闭后重新开启调试模式。", "Debug mode is on, but diagnostics are not running. If this is not a transient state, turn Debug Mode off and on again.")
-    }
-
-    private var debugPanelCenterY: CGFloat {
-        let normalY = fixedFAQRowCenterY + 54 + debugPanelCenterOffset
-        guard layout.isCompact else { return normalY }
-        let maxY = layout.size.height - (displayedDebugModeEnabled ? 126 : 74)
-        return min(normalY, maxY)
-    }
-
-    private var debugPanelCenterOffset: CGFloat {
-        displayedDebugModeEnabled ? 92 : 48
     }
 
     private var versionFlagBackground: AnyView {
@@ -2717,34 +2711,34 @@ private struct BetaCapsuleBadge: View {
 
 private struct DebugModePanel: View {
     let isEnabled: Bool
-    let isIOS26AudioKeepAliveEnabled: Bool
+    let keepAlivePolicy: KeepAlivePolicy
     let isBetaUpdateChannelEnabled: Bool
     let onSetEnabled: (Bool) -> Void
-    let onSetIOS26AudioKeepAlive: (Bool) -> Void
+    let onSetKeepAlivePolicy: (KeepAlivePolicy) -> Void
     let onSetBetaUpdateChannelEnabled: (Bool) -> Void
     let isClosing: Bool
     @State private var displayedIsEnabled: Bool
-    @State private var displayedIOS26AudioKeepAliveEnabled: Bool
+    @State private var displayedKeepAlivePolicy: KeepAlivePolicy
     @State private var displayedBetaUpdateChannelEnabled: Bool
 
     init(
         isEnabled: Bool,
-        isIOS26AudioKeepAliveEnabled: Bool,
+        keepAlivePolicy: KeepAlivePolicy,
         isBetaUpdateChannelEnabled: Bool,
         onSetEnabled: @escaping (Bool) -> Void,
-        onSetIOS26AudioKeepAlive: @escaping (Bool) -> Void,
+        onSetKeepAlivePolicy: @escaping (KeepAlivePolicy) -> Void,
         onSetBetaUpdateChannelEnabled: @escaping (Bool) -> Void,
         isClosing: Bool = false
     ) {
         self.isEnabled = isEnabled
-        self.isIOS26AudioKeepAliveEnabled = isIOS26AudioKeepAliveEnabled
+        self.keepAlivePolicy = keepAlivePolicy
         self.isBetaUpdateChannelEnabled = isBetaUpdateChannelEnabled
         self.onSetEnabled = onSetEnabled
-        self.onSetIOS26AudioKeepAlive = onSetIOS26AudioKeepAlive
+        self.onSetKeepAlivePolicy = onSetKeepAlivePolicy
         self.onSetBetaUpdateChannelEnabled = onSetBetaUpdateChannelEnabled
         self.isClosing = isClosing
         _displayedIsEnabled = State(initialValue: isEnabled)
-        _displayedIOS26AudioKeepAliveEnabled = State(initialValue: isIOS26AudioKeepAliveEnabled)
+        _displayedKeepAlivePolicy = State(initialValue: keepAlivePolicy)
         _displayedBetaUpdateChannelEnabled = State(initialValue: isBetaUpdateChannelEnabled)
     }
 
@@ -2773,23 +2767,53 @@ private struct DebugModePanel: View {
                 Divider()
                     .opacity(0.42)
 
-                HStack(spacing: 10) {
-                    Image(systemName: "waveform")
+                HStack(spacing: 8) {
+                    Image(systemName: "waveform.path.ecg")
                         .font(.system(size: 18, weight: .bold))
                         .frame(width: 22, alignment: .center)
-                Text(L10n.text("保活方案切换", "Keep-alive Mode"))
+                    Text(L10n.text("保活方案切换", "Keep-alive Mode"))
                         .font(.system(size: 16, weight: .bold))
                         .lineLimit(1)
-                    Spacer(minLength: 10)
-                    Toggle("", isOn: lowPowerPiPBinding)
-                        .labelsHidden()
+                    Spacer(minLength: 4)
                 }
-                .frame(height: 32)
+                .frame(height: 26)
 
-                VStack(alignment: .leading, spacing: 4) {
-                    Text(L10n.text("开启：新方案仅PiP保活，经实测较老方案更为省电，保活效果一致，并且解决音频冲突问题，优先推荐", "On: low-power PiP keep-alive. Recommended."))
-                    Text(L10n.text("关闭：音频强保活，强力保活方案，缺点较为耗电，且小部分场景可能影响音频，已默认不再使用，仅适合超强保活且不在意耗电的需求用户", "Off: audio keep-alive. Stronger but uses more power and may affect audio."))
+                Menu {
+                    ForEach(KeepAlivePolicy.allCases) { policy in
+                        Button {
+                            guard policy != displayedKeepAlivePolicy else { return }
+                            displayedKeepAlivePolicy = policy
+                            onSetKeepAlivePolicy(policy)
+                        } label: {
+                            Label(
+                                policy.title + (policy.isExperimental ? " · beta" : ""),
+                                systemImage: policy == displayedKeepAlivePolicy ? "checkmark.circle.fill" : "circle"
+                            )
+                        }
+                    }
+                } label: {
+                    HStack(spacing: 6) {
+                        Text(displayedKeepAlivePolicy.title)
+                            .font(.system(size: 14, weight: .bold))
+                            .lineLimit(1)
+                            .minimumScaleFactor(0.78)
+                        if displayedKeepAlivePolicy.isExperimental {
+                            BetaCapsuleBadge()
+                        }
+                        Spacer(minLength: 4)
+                        Image(systemName: "chevron.up.chevron.down")
+                            .font(.system(size: 11, weight: .bold))
+                            .foregroundColor(Color(UIColor.secondaryLabel))
+                    }
+                    .padding(.horizontal, 12)
+                    .frame(height: 38)
+                    .background(
+                        RoundedRectangle(cornerRadius: 14, style: .continuous)
+                            .fill(Color(UIColor.tertiarySystemFill))
+                    )
                 }
+
+                Text(displayedKeepAlivePolicy.detail)
                 .font(.system(size: 12, weight: .semibold))
                 .foregroundColor(Color(UIColor.secondaryLabel))
                 .fixedSize(horizontal: false, vertical: true)
@@ -2836,9 +2860,9 @@ private struct DebugModePanel: View {
             guard newValue != displayedIsEnabled else { return }
             displayedIsEnabled = newValue
         }
-        .onChange(of: isIOS26AudioKeepAliveEnabled) { newValue in
-            guard newValue != displayedIOS26AudioKeepAliveEnabled else { return }
-            displayedIOS26AudioKeepAliveEnabled = newValue
+        .onChange(of: keepAlivePolicy) { newValue in
+            guard newValue != displayedKeepAlivePolicy else { return }
+            displayedKeepAlivePolicy = newValue
         }
         .onChange(of: isBetaUpdateChannelEnabled) { newValue in
             guard newValue != displayedBetaUpdateChannelEnabled else { return }
@@ -2852,18 +2876,6 @@ private struct DebugModePanel: View {
             set: { newValue in
                 guard newValue != displayedIsEnabled else { return }
                 onSetEnabled(newValue)
-            }
-        )
-    }
-
-    private var lowPowerPiPBinding: Binding<Bool> {
-        Binding(
-            get: { !displayedIOS26AudioKeepAliveEnabled },
-            set: { newValue in
-                let audioKeepAliveEnabled = !newValue
-                guard audioKeepAliveEnabled != displayedIOS26AudioKeepAliveEnabled else { return }
-                displayedIOS26AudioKeepAliveEnabled = audioKeepAliveEnabled
-                onSetIOS26AudioKeepAlive(audioKeepAliveEnabled)
             }
         )
     }
@@ -3062,8 +3074,8 @@ private struct PiPShortcutInstallGuideView: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: 14) {
                     Text(L10n.text(
-                        "推荐使用 iCloud 快捷指令链接导入；导入时仍需系统确认。iOS 15 搜不到 App 动作，或 iOS 17 偶发 1004 时，用下方 URL 方式最稳。iOS18+请在控制中心-快捷指令-全局高刷添加，本页面功能适用于iOS15-iOS17。",
-                        "Use iCloud Shortcuts links for setup. iOS still asks for confirmation. If iOS 15 cannot find app actions, or iOS 17 shows 1004, use the URL fallback below. On iOS 18+, add Global Refresh from Control Center > Shortcuts. This page is for iOS 15 to iOS 17."
+                        "推荐使用 iCloud 快捷指令链接导入；导入时仍需系统确认。请先打开悬浮窗并拖到侧边吸附，再执行一键0.1pt，避免阻止自动熄屏。iOS 15 搜不到 App 动作，或 iOS 17 偶发 1004 时，可使用下方 URL。iOS18+请在控制中心-快捷指令-全局高刷添加。",
+                        "Use iCloud Shortcuts links for setup. Open PiP and dock it to the side before using One-tap 0.1 pt so auto-lock keeps working. If iOS 15 cannot find app actions, or iOS 17 shows 1004, use the URL fallback. On iOS 18+, add Global Refresh from Control Center > Shortcuts."
                     ))
                     .font(.system(size: 14, weight: .semibold))
                     .foregroundColor(Color(UIColor.secondaryLabel))

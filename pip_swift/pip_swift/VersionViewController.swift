@@ -20,7 +20,8 @@ enum DiagnosticsLogExporter {
         [
             AppDebugLogger.exportText(),
             PowerUsageLogger.exportText(),
-            KeepAliveLogger.exportText()
+            KeepAliveLogger.exportText(),
+            MetricKitLogger.shared.exportText()
         ].joined(separator: "\n\n==============================\n\n")
     }
 }
@@ -267,20 +268,9 @@ final class VersionViewController: UIViewController {
     private var hasUpdateCheckFailed = false
     private var availableUpdate: AppUpdateInfo?
     private var isBetaUpdateChannelEnabled = UserDefaults.standard.bool(forKey: betaUpdateChannelKey)
-    private var isIOS26AudioKeepAliveEnabled: Bool {
-        get {
-            if UserDefaults.standard.object(forKey: ViewController.userDefaultsIOS26AudioKeepAliveKey) == nil {
-                if let legacyPiPOnly = UserDefaults.standard.object(forKey: ViewController.userDefaultsIOS26PiPOnlyKeepAliveKey) as? Bool {
-                    UserDefaults.standard.set(!legacyPiPOnly, forKey: ViewController.userDefaultsIOS26AudioKeepAliveKey)
-                } else {
-                    UserDefaults.standard.set(false, forKey: ViewController.userDefaultsIOS26AudioKeepAliveKey)
-                }
-            }
-            return UserDefaults.standard.bool(forKey: ViewController.userDefaultsIOS26AudioKeepAliveKey)
-        }
-        set {
-            UserDefaults.standard.set(newValue, forKey: ViewController.userDefaultsIOS26AudioKeepAliveKey)
-        }
+    private var keepAlivePolicy: KeepAlivePolicy {
+        get { KeepAlivePolicy.current }
+        set { KeepAlivePolicy.current = newValue }
     }
 
     override func viewDidLoad() {
@@ -316,7 +306,7 @@ final class VersionViewController: UIViewController {
                 get: { [weak self] in self?.isDebugPanelVisible ?? false },
                 set: { [weak self] newValue in self?.setDebugPanelVisible(newValue) }
             ),
-            isIOS26AudioKeepAliveEnabled: isIOS26AudioKeepAliveEnabled,
+            keepAlivePolicy: keepAlivePolicy,
             isDebugDiagnosticsEnabled: DebugDiagnosticsMonitor.isEnabled,
             debugPanelResetToken: debugPanelResetToken,
             onShowChangelog: { [weak self] in
@@ -348,8 +338,8 @@ final class VersionViewController: UIViewController {
             onRequestEnableDebugMode: { [weak self] in
                 self?.confirmEnableDebugMode()
             },
-            onSetIOS26AudioKeepAlive: { [weak self] newValue in
-                self?.setIOS26AudioKeepAlive(newValue)
+            onSetKeepAlivePolicy: { [weak self] newValue in
+                self?.setKeepAlivePolicy(newValue)
             },
             onSetBetaUpdateChannelEnabled: { [weak self] newValue in
                 self?.setBetaUpdateChannelEnabled(newValue)
@@ -387,7 +377,7 @@ final class VersionViewController: UIViewController {
                 get: { [weak self] in self?.isDebugPanelVisible ?? false },
                 set: { [weak self] newValue in self?.setDebugPanelVisible(newValue) }
             ),
-            isIOS26AudioKeepAliveEnabled: isIOS26AudioKeepAliveEnabled,
+            keepAlivePolicy: keepAlivePolicy,
             isDebugDiagnosticsEnabled: DebugDiagnosticsMonitor.isEnabled,
             debugPanelResetToken: debugPanelResetToken,
             onShowChangelog: { [weak self] in
@@ -419,8 +409,8 @@ final class VersionViewController: UIViewController {
             onRequestEnableDebugMode: { [weak self] in
                 self?.confirmEnableDebugMode()
             },
-            onSetIOS26AudioKeepAlive: { [weak self] newValue in
-                self?.setIOS26AudioKeepAlive(newValue)
+            onSetKeepAlivePolicy: { [weak self] newValue in
+                self?.setKeepAlivePolicy(newValue)
             },
             onSetBetaUpdateChannelEnabled: { [weak self] newValue in
                 self?.setBetaUpdateChannelEnabled(newValue)
@@ -630,6 +620,7 @@ final class VersionViewController: UIViewController {
             PowerUsageLogger.startFreshStatistics()
             MetricKitLogger.shared.start()
             DebugDiagnosticsMonitor.setEnabled(true)
+            ProcessTerminationDiagnostics.prepareForLaunch()
             AppDebugLogger.log("Debug mode enabled, diagnostics monitors enabled")
             AppDebugLogger.log(PerformanceDiagnosticsLogger.currentSnapshotText())
         } else {
@@ -662,13 +653,11 @@ final class VersionViewController: UIViewController {
         present(alert, animated: true)
     }
 
-    private func setIOS26AudioKeepAlive(_ isEnabled: Bool) {
-        DiagnosticsRuntimeState.recordUserAction(isEnabled ? "切换为音频强保活" : "切换为PiP低功耗保活")
-        isIOS26AudioKeepAliveEnabled = isEnabled
-        if !isEnabled {
-            BackgroundTaskManager.shared.forceStopAndDeactivate()
-            PowerUsageLogger.markKeepAliveStop()
-        }
+    private func setKeepAlivePolicy(_ policy: KeepAlivePolicy) {
+        guard policy != keepAlivePolicy else { return }
+        DiagnosticsRuntimeState.recordUserAction("切换保活策略：\(policy.diagnosticsName)")
+        keepAlivePolicy = policy
+        AppDebugLogger.log("保活策略切换：\(policy.diagnosticsName)")
         NotificationCenter.default.post(name: ViewController.iOS26KeepAliveModeDidChangeNotification, object: nil)
         updateSwiftUI()
     }
@@ -687,6 +676,7 @@ enum AppChangelogCatalog {
                 L10n.text("版本页新增手动清理缓存按钮；长按可清空全部应用数据并重新进入首次使用流程", "Added manual cache cleanup on the Version page; long press to reset all app data and return to first-time setup."),
                 L10n.text("新增自动缓存清理，首次安装、覆盖更新和日常启动时会清理过期临时素材", "Added automatic cleanup of expired temporary assets on install, update, and normal launch."),
                 L10n.text("清理并限制动态悬浮窗视频缓存，修复部分用户存储占用持续增长的问题", "Cleaned up and limited generated floating-window video caches to prevent storage usage from continuously growing for some users."),
+                L10n.text("新增锁屏音频增强 beta：亮屏时保持仅PiP，不影响音视频播放；熄屏后自动启用音频强保活，适合对锁屏后台保活有更高需求的用户；原有音频强保活仍保留", "Added Lock-screen Audio Boost beta: it stays PiP-only while the screen is on so media playback is unaffected, then automatically enables Audio Keep-alive after lock for users who need stronger background retention. The existing always-on Audio Keep-alive remains available."),
                 L10n.text("快捷指令改为默认关闭的风险功能，确认可能阻止自动熄屏后才开放安装和使用", "Shortcuts are now opt-in and require confirmation because one-tap hiding may prevent auto-lock."),
                 L10n.text("新增应用内 GitHub Releases 版本检测，不会自动下载或修改 App", "Added in-app GitHub Releases version checking; the app is never downloaded or modified automatically."),
                 L10n.text("帧率演示新增 80Hz 与 120Hz 同速动画对比，并保留两个蓝色球", "Added same-speed 80 Hz and 120 Hz animation comparison while keeping the two blue balls."),
@@ -1242,8 +1232,8 @@ private final class UpdateStatusViewController: UIViewController {
 
         let messageLabel = UILabel()
         messageLabel.text = L10n.text(
-            "当前没有检测到可用的新正式版本，敬请期待下一次更新。",
-            "No newer stable release is available yet. Stay tuned for the next update."
+            "当前没有检测到可用的新版本，敬请期待下一次更新。",
+            "No newer release is available yet. Stay tuned for the next update."
         )
         messageLabel.font = .systemFont(ofSize: 15, weight: .semibold)
         messageLabel.textColor = .secondaryLabel
@@ -1343,6 +1333,10 @@ private final class FAQViewController: UIViewController {
             makeQuestion(
                 question: L10n.text("10.为什么我发现有时候无法自动熄屏了", "10. Why does auto-lock sometimes stop working?"),
                 answer: L10n.text("因为隐藏悬浮窗的时候没有把悬浮窗拖到侧面，屏幕上会一直有活动阻止熄屏，请拖动到侧面后再将高度调节至0.1pt", "This can happen if the floating window is hidden before it is docked to the side. Activity may remain on screen and prevent auto-lock. Drag it to the edge first, then adjust the height to 0.1 pt.")
+            ),
+            makeQuestion(
+                question: L10n.text("11.我想反馈App的问题或者有可以优化的地方怎么办", "11. How can I report a problem or suggest an improvement?"),
+                answer: L10n.text("欢迎在GitHub项目地址中提问，或在酷安评论区留言/私信", "You are welcome to open an issue on the GitHub project page, or leave a comment or send a private message on Coolapk.")
             )
         ])
         stackView.axis = .vertical

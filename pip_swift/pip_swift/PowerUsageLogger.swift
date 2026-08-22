@@ -117,7 +117,7 @@ enum PowerUsageLogger {
         保活音频启动次数：\(defaults.integer(forKey: keepAliveStartCountKey))
         保活音频停止次数：\(defaults.integer(forKey: keepAliveStopCountKey))
 
-        模式说明：PiP保活-低功耗不启动静音音频；音频强保活会累计后台保活音频时长。
+        模式说明：PiP保活-低功耗不启动静音音频；锁屏音频增强仅在系统报告设备锁定后启动静音音频；音频强保活会持续累计保活音频时长。
         说明：iOS 不允许普通 App 读取系统电池用量百分比，本日志用于辅助判断悬浮窗、后台保活和音频会话的运行时长；统计周期最多保留24小时，超过后自动重新统计。
         """
     }
