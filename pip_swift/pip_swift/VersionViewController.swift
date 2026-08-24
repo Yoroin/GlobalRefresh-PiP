@@ -7,35 +7,270 @@ import UIKit
 import SwiftUI
 import SnapKit
 
+private func updateVersionFont(size: CGFloat, weight: UIFont.Weight) -> UIFont {
+    let baseFont = UIFont.systemFont(ofSize: size, weight: weight)
+    guard let roundedDescriptor = baseFont.fontDescriptor.withDesign(.rounded) else {
+        return baseFont
+    }
+    return UIFont(descriptor: roundedDescriptor, size: size)
+}
+
 enum DiagnosticsLogExporter {
     static func exportText() -> String {
         [
             AppDebugLogger.exportText(),
             PowerUsageLogger.exportText(),
-            KeepAliveLogger.exportText()
+            KeepAliveLogger.exportText(),
+            MetricKitLogger.shared.exportText()
         ].joined(separator: "\n\n==============================\n\n")
     }
 }
 
+struct AppUpdateInfo {
+    let version: String
+    let notes: String
+    let releaseURL: URL
+    let releaseNotes: [String]
+    let cloudDriveURL: URL
+    let githubReleasesURL: URL
+
+    var latestVersion: String { version }
+}
+
+enum AppUpdateChecker {
+    private struct Release: Decodable {
+        let tagName: String
+        let body: String?
+        let htmlURL: URL
+        let isDraft: Bool
+
+        enum CodingKeys: String, CodingKey {
+            case tagName = "tag_name"
+            case body
+            case htmlURL = "html_url"
+            case isDraft = "draft"
+        }
+    }
+
+    private static let updateRepository = "Yoroin/GlobalRefresh-PiP"
+    private static let latestReleaseAPI = URL(
+        string: "https://api.github.com/repos/\(updateRepository)/releases/latest"
+    )!
+    private static let allReleasesAPI = URL(
+        string: "https://api.github.com/repos/\(updateRepository)/releases?per_page=30"
+    )!
+    private static let cloudDriveURL = URL(string: "https://1811629626.share.123pan.cn/123pan/KDFRVv-UEPfh")!
+    private static let githubReleasesURL = URL(string: "https://github.com/\(updateRepository)/releases")!
+    private static let updateSession: URLSession = {
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.urlCache = nil
+        configuration.requestCachePolicy = .reloadIgnoringLocalCacheData
+        configuration.timeoutIntervalForRequest = 12
+        configuration.timeoutIntervalForResource = 12
+        return URLSession(configuration: configuration)
+    }()
+
+    static func check(
+        includePrereleases: Bool = false,
+        completion: @escaping (Result<AppUpdateInfo?, Error>) -> Void
+    ) {
+        let endpoint = includePrereleases ? allReleasesAPI : latestReleaseAPI
+        guard var endpointComponents = URLComponents(url: endpoint, resolvingAgainstBaseURL: false),
+              let requestURL = {
+                  endpointComponents.queryItems = (endpointComponents.queryItems ?? []) + [
+                      URLQueryItem(name: "_gr_cache_buster", value: UUID().uuidString)
+                  ]
+                  return endpointComponents.url
+              }() else {
+            DispatchQueue.main.async { completion(.failure(UpdateCheckError.invalidEndpoint)) }
+            return
+        }
+
+        var request = URLRequest(url: requestURL)
+        request.cachePolicy = .reloadIgnoringLocalCacheData
+        request.timeoutInterval = 12
+        request.setValue("application/vnd.github+json", forHTTPHeaderField: "Accept")
+        request.setValue("GlobalRefresh-PiP", forHTTPHeaderField: "User-Agent")
+        request.setValue("no-cache, no-store, max-age=0", forHTTPHeaderField: "Cache-Control")
+        request.setValue("no-cache", forHTTPHeaderField: "Pragma")
+
+        updateSession.dataTask(with: request) { data, response, error in
+            let result: Result<AppUpdateInfo?, Error>
+            if let error {
+                result = .failure(error)
+            } else if let httpResponse = response as? HTTPURLResponse,
+                      !(200..<300).contains(httpResponse.statusCode) {
+                result = .failure(UpdateCheckError.httpStatus(httpResponse.statusCode))
+            } else if let data {
+                do {
+                    let release: Release
+                    if includePrereleases {
+                        let releases = try JSONDecoder().decode([Release].self, from: data)
+                            .filter { !$0.isDraft }
+                        guard let newestRelease = releases.max(by: {
+                            isNewer(normalizedVersion($1.tagName), than: normalizedVersion($0.tagName))
+                        }) else {
+                            throw UpdateCheckError.invalidResponse
+                        }
+                        release = newestRelease
+                    } else {
+                        release = try JSONDecoder().decode(Release.self, from: data)
+                    }
+
+                    let remoteVersion = normalizedVersion(release.tagName)
+                    let localVersion = normalizedVersion(
+                        Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "0.0.0"
+                    )
+                    let update: AppUpdateInfo? = isNewer(remoteVersion, than: localVersion)
+                        ? AppUpdateInfo(
+                            version: remoteVersion,
+                            notes: release.body ?? "",
+                            releaseURL: release.htmlURL,
+                            releaseNotes: releaseNotes(from: release.body ?? ""),
+                            cloudDriveURL: cloudDriveURL,
+                            githubReleasesURL: githubReleasesURL
+                        )
+                        : nil
+                    result = .success(update)
+                } catch {
+                    result = .failure(error)
+                }
+            } else {
+                result = .failure(UpdateCheckError.invalidResponse)
+            }
+
+            DispatchQueue.main.async {
+                completion(result)
+            }
+        }.resume()
+    }
+
+    private static func normalizedVersion(_ value: String) -> String {
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.lowercased().hasPrefix("v") ? String(trimmed.dropFirst()) : trimmed
+    }
+
+    private static func isNewer(_ candidate: String, than current: String) -> Bool {
+        let candidateValue = parsedVersion(candidate)
+        let currentValue = parsedVersion(current)
+        let count = max(candidateValue.parts.count, currentValue.parts.count)
+        for index in 0..<count {
+            let lhs = index < candidateValue.parts.count ? candidateValue.parts[index] : 0
+            let rhs = index < currentValue.parts.count ? currentValue.parts[index] : 0
+            if lhs != rhs { return lhs > rhs }
+        }
+        if candidateValue.suffix == currentValue.suffix { return false }
+
+        let candidateStage = releaseStage(candidateValue.suffix)
+        let currentStage = releaseStage(currentValue.suffix)
+        if candidateStage.rank != currentStage.rank {
+            return candidateStage.rank > currentStage.rank
+        }
+
+        let candidateSuffixNumbers = numericGroups(candidateValue.suffix)
+        let currentSuffixNumbers = numericGroups(currentValue.suffix)
+        let suffixCount = max(candidateSuffixNumbers.count, currentSuffixNumbers.count)
+        for index in 0..<suffixCount {
+            let lhs = index < candidateSuffixNumbers.count ? candidateSuffixNumbers[index] : 0
+            let rhs = index < currentSuffixNumbers.count ? currentSuffixNumbers[index] : 0
+            if lhs != rhs { return lhs > rhs }
+        }
+        return candidateStage.normalizedSuffix.localizedStandardCompare(currentStage.normalizedSuffix) == .orderedDescending
+    }
+
+    private static func releaseStage(_ suffix: String) -> (rank: Int, normalizedSuffix: String) {
+        let normalized = suffix
+            .lowercased()
+            .trimmingCharacters(in: CharacterSet(charactersIn: "-_. "))
+        if normalized.hasPrefix("hotfix") || normalized.hasPrefix("fix") {
+            return (rank: 5, normalizedSuffix: normalized)
+        }
+        if normalized.isEmpty { return (rank: 4, normalizedSuffix: normalized) }
+        if normalized.hasPrefix("rc") { return (rank: 3, normalizedSuffix: normalized) }
+        if normalized.hasPrefix("beta") || normalized.hasPrefix("b") {
+            return (rank: 2, normalizedSuffix: normalized)
+        }
+        if normalized.hasPrefix("alpha") || normalized.hasPrefix("a") {
+            return (rank: 1, normalizedSuffix: normalized)
+        }
+        return (rank: 0, normalizedSuffix: normalized)
+    }
+
+    private static func parsedVersion(_ value: String) -> (parts: [Int], suffix: String) {
+        let normalized = normalizedVersion(value).lowercased()
+        var core = ""
+        var suffix = ""
+        var reachedSuffix = false
+        for character in normalized {
+            if !reachedSuffix, character.isNumber || character == "." {
+                core.append(character)
+            } else {
+                reachedSuffix = true
+                suffix.append(character)
+            }
+        }
+        let parts = core.split(separator: ".").map { Int($0) ?? 0 }
+        return (parts.isEmpty ? [0] : parts, suffix: suffix)
+    }
+
+    private static func numericGroups(_ value: String) -> [Int] {
+        value.split(whereSeparator: { !$0.isNumber }).compactMap { Int($0) }
+    }
+
+    private static func releaseNotes(from body: String) -> [String] {
+        let lines = body.components(separatedBy: .newlines)
+        var isReadingUpdateSection = false
+        var notes: [String] = []
+
+        for rawLine in lines {
+            let line = rawLine.trimmingCharacters(in: .whitespacesAndNewlines)
+            if line.hasPrefix("## ") {
+                if isReadingUpdateSection { break }
+                isReadingUpdateSection = line.contains("更新内容") || line.lowercased().contains("what's new")
+                continue
+            }
+            guard isReadingUpdateSection else { continue }
+            guard line.hasPrefix("- ") || line.hasPrefix("* ") else { continue }
+            let note = String(line.dropFirst(2)).trimmingCharacters(in: .whitespacesAndNewlines)
+            if !note.isEmpty { notes.append(note) }
+        }
+
+        return notes.isEmpty
+            ? [L10n.text("请前往发布页面查看完整更新内容", "Open the release page to view the full changelog.")]
+            : notes
+    }
+
+    enum UpdateCheckError: LocalizedError {
+        case invalidEndpoint
+        case invalidResponse
+        case httpStatus(Int)
+
+        var errorDescription: String? {
+            switch self {
+            case .invalidEndpoint: return "更新地址无效"
+            case .invalidResponse: return "更新服务返回无效响应"
+            case let .httpStatus(status): return "更新服务 HTTP \(status)"
+            }
+        }
+    }
+}
+
 final class VersionViewController: UIViewController {
+    private static let betaUpdateChannelKey = "globalRefresh.updateChannel.includePrereleases"
+    private static let skippedUpdateVersionKey = "globalRefresh.updateCheck.skippedVersion"
+
     private var hostingController: UIHostingController<VersionPageView>?
     private var isDebugModeEnabled = AppDebugLogger.isDebugModeEnabled
     private var isDebugPanelVisible = false
     private var debugPanelResetToken = 0
-    private var isIOS26AudioKeepAliveEnabled: Bool {
-        get {
-            if UserDefaults.standard.object(forKey: ViewController.userDefaultsIOS26AudioKeepAliveKey) == nil {
-                if let legacyPiPOnly = UserDefaults.standard.object(forKey: ViewController.userDefaultsIOS26PiPOnlyKeepAliveKey) as? Bool {
-                    UserDefaults.standard.set(!legacyPiPOnly, forKey: ViewController.userDefaultsIOS26AudioKeepAliveKey)
-                } else {
-                    UserDefaults.standard.set(false, forKey: ViewController.userDefaultsIOS26AudioKeepAliveKey)
-                }
-            }
-            return UserDefaults.standard.bool(forKey: ViewController.userDefaultsIOS26AudioKeepAliveKey)
-        }
-        set {
-            UserDefaults.standard.set(newValue, forKey: ViewController.userDefaultsIOS26AudioKeepAliveKey)
-        }
+    private var isCheckingForUpdate = false
+    private var hasCompletedUpdateCheck = false
+    private var hasUpdateCheckFailed = false
+    private var availableUpdate: AppUpdateInfo?
+    private var isBetaUpdateChannelEnabled = UserDefaults.standard.bool(forKey: betaUpdateChannelKey)
+    private var keepAlivePolicy: KeepAlivePolicy {
+        get { KeepAlivePolicy.current }
+        set { KeepAlivePolicy.current = newValue }
     }
 
     override func viewDidLoad() {
@@ -57,6 +292,7 @@ final class VersionViewController: UIViewController {
     override func viewDidAppear(_ animated: Bool) {
         super.viewDidAppear(animated)
         DiagnosticsRuntimeState.updateCurrentPage("版本")
+        checkForUpdates(presentResult: false)
     }
 
     @objc private func handleLanguageDidChange() {
@@ -70,7 +306,7 @@ final class VersionViewController: UIViewController {
                 get: { [weak self] in self?.isDebugPanelVisible ?? false },
                 set: { [weak self] newValue in self?.setDebugPanelVisible(newValue) }
             ),
-            isIOS26AudioKeepAliveEnabled: isIOS26AudioKeepAliveEnabled,
+            keepAlivePolicy: keepAlivePolicy,
             isDebugDiagnosticsEnabled: DebugDiagnosticsMonitor.isEnabled,
             debugPanelResetToken: debugPanelResetToken,
             onShowChangelog: { [weak self] in
@@ -82,14 +318,31 @@ final class VersionViewController: UIViewController {
             onCopyDiagnosticsLog: { [weak self] in
                 self?.copyDiagnosticsLog()
             },
+            onRequestCacheCleanup: { [weak self] in
+                self?.requestCacheCleanup()
+            },
+            onRequestUpdateCheck: { [weak self] in
+                self?.requestUpdateCheck()
+            },
+            onRequestClearAllData: { [weak self] in
+                self?.requestClearAllData()
+            },
+            hasAvailableUpdate: availableUpdate != nil,
+            hasCompletedUpdateCheck: hasCompletedUpdateCheck,
+            hasUpdateCheckFailed: hasUpdateCheckFailed,
+            isCheckingForUpdate: isCheckingForUpdate,
+            isBetaUpdateChannelEnabled: isBetaUpdateChannelEnabled,
             onSetDebugMode: { [weak self] newValue in
                 self?.setDebugMode(newValue)
             },
             onRequestEnableDebugMode: { [weak self] in
                 self?.confirmEnableDebugMode()
             },
-            onSetIOS26AudioKeepAlive: { [weak self] newValue in
-                self?.setIOS26AudioKeepAlive(newValue)
+            onSetKeepAlivePolicy: { [weak self] newValue in
+                self?.setKeepAlivePolicy(newValue)
+            },
+            onSetBetaUpdateChannelEnabled: { [weak self] newValue in
+                self?.setBetaUpdateChannelEnabled(newValue)
             }
         )
         let hostingController = UIHostingController(rootView: rootView)
@@ -124,7 +377,7 @@ final class VersionViewController: UIViewController {
                 get: { [weak self] in self?.isDebugPanelVisible ?? false },
                 set: { [weak self] newValue in self?.setDebugPanelVisible(newValue) }
             ),
-            isIOS26AudioKeepAliveEnabled: isIOS26AudioKeepAliveEnabled,
+            keepAlivePolicy: keepAlivePolicy,
             isDebugDiagnosticsEnabled: DebugDiagnosticsMonitor.isEnabled,
             debugPanelResetToken: debugPanelResetToken,
             onShowChangelog: { [weak self] in
@@ -136,14 +389,31 @@ final class VersionViewController: UIViewController {
             onCopyDiagnosticsLog: { [weak self] in
                 self?.copyDiagnosticsLog()
             },
+            onRequestCacheCleanup: { [weak self] in
+                self?.requestCacheCleanup()
+            },
+            onRequestUpdateCheck: { [weak self] in
+                self?.requestUpdateCheck()
+            },
+            onRequestClearAllData: { [weak self] in
+                self?.requestClearAllData()
+            },
+            hasAvailableUpdate: availableUpdate != nil,
+            hasCompletedUpdateCheck: hasCompletedUpdateCheck,
+            hasUpdateCheckFailed: hasUpdateCheckFailed,
+            isCheckingForUpdate: isCheckingForUpdate,
+            isBetaUpdateChannelEnabled: isBetaUpdateChannelEnabled,
             onSetDebugMode: { [weak self] newValue in
                 self?.setDebugMode(newValue)
             },
             onRequestEnableDebugMode: { [weak self] in
                 self?.confirmEnableDebugMode()
             },
-            onSetIOS26AudioKeepAlive: { [weak self] newValue in
-                self?.setIOS26AudioKeepAlive(newValue)
+            onSetKeepAlivePolicy: { [weak self] newValue in
+                self?.setKeepAlivePolicy(newValue)
+            },
+            onSetBetaUpdateChannelEnabled: { [weak self] newValue in
+                self?.setBetaUpdateChannelEnabled(newValue)
             }
         )
     }
@@ -168,6 +438,18 @@ final class VersionViewController: UIViewController {
         present(faqController, animated: true)
     }
 
+    private func setBetaUpdateChannelEnabled(_ isEnabled: Bool) {
+        guard isBetaUpdateChannelEnabled != isEnabled else { return }
+        isBetaUpdateChannelEnabled = isEnabled
+        UserDefaults.standard.set(isEnabled, forKey: Self.betaUpdateChannelKey)
+        availableUpdate = nil
+        hasCompletedUpdateCheck = false
+        hasUpdateCheckFailed = false
+        updateSwiftUI()
+        DiagnosticsRuntimeState.recordUserAction(isEnabled ? "开启Beta版本更新检测" : "关闭Beta版本更新检测")
+        checkForUpdates(presentResult: false)
+    }
+
     private func copyDiagnosticsLog() {
         DiagnosticsRuntimeState.recordUserAction("复制诊断日志")
         UIPasteboard.general.string = DiagnosticsLogExporter.exportText()
@@ -178,6 +460,151 @@ final class VersionViewController: UIViewController {
         )
         alert.addAction(UIAlertAction(title: L10n.ok, style: .default))
         present(alert, animated: true)
+    }
+
+    private func requestCacheCleanup() {
+        DiagnosticsRuntimeState.recordUserAction("请求清理缓存")
+        let alert = UIAlertController(
+            title: L10n.text("清理缓存", "Clear Cache"),
+            message: L10n.text(
+                "将清理临时素材、过期缓存和生成的视频缓存，不会删除应用设置。",
+                "This removes temporary assets, expired cache entries, and generated video cache. App settings are kept."
+            ),
+            preferredStyle: .alert
+        )
+        alert.addAction(UIAlertAction(title: L10n.cancel, style: .cancel))
+        alert.addAction(UIAlertAction(title: L10n.text("清理", "Clear"), style: .destructive) { [weak self] _ in
+            CacheCleanupManager.clearManually { [weak self] report in
+                let message = report.hasChanges
+                    ? L10n.text(
+                        "已清理 \(report.removedItems) 项，释放约 \(ByteCountFormatter.string(fromByteCount: report.freedBytes, countStyle: .file))。",
+                        "Removed \(report.removedItems) item(s), freeing about \(ByteCountFormatter.string(fromByteCount: report.freedBytes, countStyle: .file))."
+                    )
+                    : L10n.text("没有发现可清理的缓存。", "No removable cache was found.")
+                let result = UIAlertController(
+                    title: L10n.text("清理完成", "Cache Cleared"),
+                    message: message,
+                    preferredStyle: .alert
+                )
+                result.addAction(UIAlertAction(title: L10n.ok, style: .default))
+                self?.present(result, animated: true)
+            }
+        })
+        present(alert, animated: true)
+    }
+
+    private func requestClearAllData() {
+        DiagnosticsRuntimeState.recordUserAction("请求清空全部应用数据")
+        let alert = UIAlertController(
+            title: L10n.cacheCleanupTitle,
+            message: L10n.cacheCleanupMessage,
+            preferredStyle: .alert
+        )
+        alert.addAction(UIAlertAction(title: L10n.cancel, style: .cancel))
+        alert.addAction(UIAlertAction(title: L10n.cacheCleanupConfirm, style: .destructive) { [weak self] _ in
+            guard let self else { return }
+            CacheCleanupManager.resetAllAppData()
+            let result = UIAlertController(
+                title: L10n.cacheCleanupCompleted,
+                message: L10n.text("应用数据已清空，返回首页后会重新进入首次使用流程。", "App data was cleared. The first-launch flow will appear when Home is shown again."),
+                preferredStyle: .alert
+            )
+            result.addAction(UIAlertAction(title: L10n.ok, style: .default))
+            self.present(result, animated: true)
+        })
+        present(alert, animated: true)
+    }
+
+    private func requestUpdateCheck() {
+        checkForUpdates(presentResult: true)
+    }
+
+    private func checkForUpdates(presentResult: Bool) {
+        guard !isCheckingForUpdate else { return }
+
+        isCheckingForUpdate = true
+        hasCompletedUpdateCheck = false
+        hasUpdateCheckFailed = false
+        availableUpdate = nil
+        UIView.performWithoutAnimation {
+            updateSwiftUI()
+        }
+        DiagnosticsRuntimeState.recordUserAction(
+            presentResult ? "手动检查应用更新" : "进入版本页自动检查更新"
+        )
+
+        AppUpdateChecker.check(includePrereleases: isBetaUpdateChannelEnabled) { [weak self] result in
+            guard let self else { return }
+            self.isCheckingForUpdate = false
+
+            switch result {
+            case .success(let update):
+                self.hasCompletedUpdateCheck = true
+                self.hasUpdateCheckFailed = false
+                let skippedVersion = UserDefaults.standard.string(forKey: Self.skippedUpdateVersionKey)
+                let shouldSuppressSkippedUpdate = !presentResult
+                    && update?.latestVersion == skippedVersion
+                if shouldSuppressSkippedUpdate {
+                    self.availableUpdate = nil
+                    AppDebugLogger.log("自动检查忽略已跳过版本：\(skippedVersion ?? "unknown")")
+                } else {
+                    self.availableUpdate = update
+                    if presentResult || (update != nil && update?.latestVersion != skippedVersion) {
+                        UserDefaults.standard.removeObject(forKey: Self.skippedUpdateVersionKey)
+                    }
+                }
+            case .failure:
+                self.hasCompletedUpdateCheck = false
+                self.hasUpdateCheckFailed = true
+                self.availableUpdate = nil
+            }
+
+            UIView.performWithoutAnimation {
+                self.updateSwiftUI()
+            }
+
+            guard presentResult else { return }
+            self.presentUpdateCheckResult(result)
+        }
+    }
+
+    private func skipUpdate(_ update: AppUpdateInfo) {
+        UserDefaults.standard.set(update.latestVersion, forKey: Self.skippedUpdateVersionKey)
+        if availableUpdate?.latestVersion == update.latestVersion {
+            availableUpdate = nil
+        }
+        hasCompletedUpdateCheck = true
+        hasUpdateCheckFailed = false
+        UIView.performWithoutAnimation {
+            updateSwiftUI()
+        }
+        DiagnosticsRuntimeState.recordUserAction("跳过版本更新：\(update.latestVersion)")
+        AppDebugLogger.log("已跳过版本更新：\(update.latestVersion)")
+    }
+
+    private func presentUpdateCheckResult(_ result: Result<AppUpdateInfo?, Error>) {
+        switch result {
+        case .success(nil):
+            present(UpdateStatusViewController(), animated: true)
+        case let .success(update?):
+            present(
+                UpdateAvailableViewController(
+                    update: update,
+                    onSkipUpdate: { [weak self] skippedUpdate in
+                        self?.skipUpdate(skippedUpdate)
+                    }
+                ),
+                animated: true
+            )
+        case let .failure(error):
+            let alert = UIAlertController(
+                title: L10n.text("检查更新失败", "Update Check Failed"),
+                message: error.localizedDescription,
+                preferredStyle: .alert
+            )
+            alert.addAction(UIAlertAction(title: L10n.ok, style: .cancel))
+            present(alert, animated: true)
+        }
     }
 
     private func setDebugMode(_ isEnabled: Bool) {
@@ -193,6 +620,7 @@ final class VersionViewController: UIViewController {
             PowerUsageLogger.startFreshStatistics()
             MetricKitLogger.shared.start()
             DebugDiagnosticsMonitor.setEnabled(true)
+            ProcessTerminationDiagnostics.prepareForLaunch()
             AppDebugLogger.log("Debug mode enabled, diagnostics monitors enabled")
             AppDebugLogger.log(PerformanceDiagnosticsLogger.currentSnapshotText())
         } else {
@@ -225,19 +653,189 @@ final class VersionViewController: UIViewController {
         present(alert, animated: true)
     }
 
-    private func setIOS26AudioKeepAlive(_ isEnabled: Bool) {
-        DiagnosticsRuntimeState.recordUserAction(isEnabled ? "切换为音频强保活" : "切换为PiP低功耗保活")
-        isIOS26AudioKeepAliveEnabled = isEnabled
-        if !isEnabled {
-            BackgroundTaskManager.shared.forceStopAndDeactivate()
-            PowerUsageLogger.markKeepAliveStop()
-        }
+    private func setKeepAlivePolicy(_ policy: KeepAlivePolicy) {
+        guard policy != keepAlivePolicy else { return }
+        DiagnosticsRuntimeState.recordUserAction("切换保活策略：\(policy.diagnosticsName)")
+        keepAlivePolicy = policy
+        AppDebugLogger.log("保活策略切换：\(policy.diagnosticsName)")
         NotificationCenter.default.post(name: ViewController.iOS26KeepAliveModeDidChangeNotification, object: nil)
         updateSwiftUI()
     }
 }
 
-private final class ChangelogViewController: UIViewController {
+struct AppChangelogSection {
+    let version: String
+    let items: [String]
+}
+
+enum AppChangelogCatalog {
+    static var latest: AppChangelogSection {
+        AppChangelogSection(
+            version: L10n.text("1.1.0（26.8.22）", "1.1.0 (2026.8.22)"),
+            items: [
+                L10n.text("版本页新增手动清理缓存按钮；长按可清空全部应用数据并重新进入首次使用流程", "Added manual cache cleanup on the Version page; long press to reset all app data and return to first-time setup."),
+                L10n.text("新增自动缓存清理，首次安装、覆盖更新和日常启动时会清理过期临时素材", "Added automatic cleanup of expired temporary assets on install, update, and normal launch."),
+                L10n.text("清理并限制动态悬浮窗视频缓存，修复部分用户存储占用持续增长的问题", "Cleaned up and limited generated floating-window video caches to prevent storage usage from continuously growing for some users."),
+                L10n.text("新增锁屏音频增强 beta：亮屏时保持仅PiP，不影响音视频播放；熄屏后自动启用音频强保活，适合对锁屏后台保活有更高需求的用户；原有音频强保活仍保留", "Added Lock-screen Audio Boost beta: it stays PiP-only while the screen is on so media playback is unaffected, then automatically enables Audio Keep-alive after lock for users who need stronger background retention. The existing always-on Audio Keep-alive remains available."),
+                L10n.text("快捷指令改为默认关闭的风险功能，确认可能阻止自动熄屏后才开放安装和使用", "Shortcuts are now opt-in and require confirmation because one-tap hiding may prevent auto-lock."),
+                L10n.text("新增应用内 GitHub Releases 版本检测，不会自动下载或修改 App", "Added in-app GitHub Releases version checking; the app is never downloaded or modified automatically."),
+                L10n.text("帧率演示新增 80Hz 与 120Hz 同速动画对比，并保留两个蓝色球", "Added same-speed 80 Hz and 120 Hz animation comparison while keeping the two blue balls."),
+                L10n.text("新增首次启动动画与使用教程，通知权限在引导结束后申请", "Added a first-launch animation and tutorial; notification permission is requested after onboarding."),
+                L10n.text("新增首页本次更新弹窗，可进入完整更新日志", "Added a What's New popup on Home with access to the full changelog."),
+                L10n.text("优化更新日志、常见问题等弹窗的背景、圆角和滚动显示", "Improved the backgrounds, corners, and scrolling of Changelog and FAQ sheets."),
+                L10n.text("统一中英文状态、运行时间和更新提示文案", "Improved Chinese and English status, runtime, and update messages."),
+                L10n.text("修复 iOS 26 以下切换深浅色模式后界面图标可能消失的问题", "Fixed interface icons disappearing after appearance changes below iOS 26."),
+                L10n.text("深浅色模式检测仅在 App 前台运行，进入后台后停止轮询", "Appearance detection runs only in the foreground."),
+                L10n.text("覆盖更新后默认关闭调试模式并清理历史诊断数据", "Debug Mode is disabled after an update and old diagnostics are cleared."),
+                L10n.text("保留 1.0.9fix 的悬浮窗创建、高度调节和 120Hz 核心路径", "Preserved the 1.0.9fix PiP creation, sizing, and 120 Hz core paths.")
+            ]
+        )
+    }
+}
+
+final class LatestChangelogViewController: UIViewController {
+    private let onDismiss: () -> Void
+    private let onOpenFullChangelog: () -> Void
+
+    init(onDismiss: @escaping () -> Void, onOpenFullChangelog: @escaping () -> Void) {
+        self.onDismiss = onDismiss
+        self.onOpenFullChangelog = onOpenFullChangelog
+        super.init(nibName: nil, bundle: nil)
+        modalPresentationStyle = .overFullScreen
+        modalTransitionStyle = .crossDissolve
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
+
+    override func viewDidLoad() {
+        super.viewDidLoad()
+        view.backgroundColor = UIColor.black.withAlphaComponent(0.18)
+        view.accessibilityViewIsModal = true
+
+        let card = UIView()
+        card.layer.cornerRadius = 30
+        card.layer.cornerCurve = .continuous
+        card.layer.shadowColor = UIColor.black.cgColor
+        card.layer.shadowOpacity = 0.16
+        card.layer.shadowRadius = 24
+        card.layer.shadowOffset = CGSize(width: 0, height: 10)
+        view.addSubview(card)
+
+        let glassView: UIVisualEffectView
+        if #available(iOS 26.0, *) {
+            let effect = UIGlassEffect(style: .regular)
+            effect.isInteractive = true
+            glassView = UIVisualEffectView(effect: effect)
+        } else {
+            glassView = UIVisualEffectView(effect: UIBlurEffect(style: .systemMaterial))
+            glassView.contentView.backgroundColor = UIColor.secondarySystemBackground.withAlphaComponent(0.42)
+        }
+        glassView.layer.cornerRadius = 30
+        glassView.layer.cornerCurve = .continuous
+        glassView.clipsToBounds = true
+        card.addSubview(glassView)
+
+        let titleLabel = UILabel()
+        titleLabel.text = L10n.text("本次更新", "What's New")
+        titleLabel.font = .systemFont(ofSize: 26, weight: .black)
+        titleLabel.textColor = .label
+
+        let versionLabel = UILabel()
+        versionLabel.text = AppChangelogCatalog.latest.version
+        versionLabel.font = .systemFont(ofSize: UIScreen.main.bounds.height < 700 ? 21 : 23, weight: .bold)
+        versionLabel.textColor = .systemBlue
+        versionLabel.numberOfLines = 1
+
+        let header = UIStackView(arrangedSubviews: [titleLabel, versionLabel])
+        header.axis = .vertical
+        header.spacing = 5
+        card.addSubview(header)
+
+        let items = UIStackView()
+        items.axis = .vertical
+        items.spacing = 13
+        for item in AppChangelogCatalog.latest.items {
+            let label = UILabel()
+            label.text = "• \(item)"
+            label.font = .systemFont(ofSize: 15, weight: .semibold)
+            label.textColor = .secondaryLabel
+            label.numberOfLines = 0
+            items.addArrangedSubview(label)
+        }
+
+        let scrollView = UIScrollView()
+        scrollView.alwaysBounceVertical = true
+        scrollView.showsVerticalScrollIndicator = true
+        scrollView.addSubview(items)
+        card.addSubview(scrollView)
+
+        let fullLogButton = UIButton(configuration: .bordered())
+        var fullLogConfiguration = fullLogButton.configuration
+        fullLogConfiguration?.title = L10n.text("查看完整更新日志", "View Full Changelog")
+        fullLogConfiguration?.baseForegroundColor = .systemBlue
+        fullLogConfiguration?.cornerStyle = .capsule
+        fullLogButton.configuration = fullLogConfiguration
+        fullLogButton.addTarget(self, action: #selector(fullLogTapped), for: .touchUpInside)
+
+        let acknowledgeButton = UIButton(configuration: .filled())
+        var acknowledgeConfiguration = acknowledgeButton.configuration
+        acknowledgeConfiguration?.title = L10n.text("我知道了", "Got It")
+        acknowledgeConfiguration?.baseBackgroundColor = .systemBlue
+        acknowledgeConfiguration?.baseForegroundColor = .white
+        acknowledgeConfiguration?.cornerStyle = .capsule
+        acknowledgeButton.configuration = acknowledgeConfiguration
+        acknowledgeButton.addTarget(self, action: #selector(dismissTapped), for: .touchUpInside)
+
+        let buttons = UIStackView(arrangedSubviews: [fullLogButton, acknowledgeButton])
+        buttons.axis = .vertical
+        buttons.spacing = 10
+        card.addSubview(buttons)
+
+        [card, glassView, header, scrollView, items, buttons].forEach { $0.translatesAutoresizingMaskIntoConstraints = false }
+        let safe = view.safeAreaLayoutGuide
+        let cardHeight = UIScreen.main.bounds.height < 700 ? 0.72 : 0.64
+        NSLayoutConstraint.activate([
+            card.leadingAnchor.constraint(equalTo: safe.leadingAnchor, constant: 22),
+            card.trailingAnchor.constraint(equalTo: safe.trailingAnchor, constant: -22),
+            card.centerYAnchor.constraint(equalTo: safe.centerYAnchor),
+            card.heightAnchor.constraint(equalTo: safe.heightAnchor, multiplier: cardHeight),
+            glassView.leadingAnchor.constraint(equalTo: card.leadingAnchor),
+            glassView.trailingAnchor.constraint(equalTo: card.trailingAnchor),
+            glassView.topAnchor.constraint(equalTo: card.topAnchor),
+            glassView.bottomAnchor.constraint(equalTo: card.bottomAnchor),
+            header.leadingAnchor.constraint(equalTo: card.leadingAnchor, constant: 24),
+            header.trailingAnchor.constraint(equalTo: card.trailingAnchor, constant: -24),
+            header.topAnchor.constraint(equalTo: card.topAnchor, constant: 22),
+            scrollView.leadingAnchor.constraint(equalTo: card.leadingAnchor, constant: 24),
+            scrollView.trailingAnchor.constraint(equalTo: card.trailingAnchor, constant: -24),
+            scrollView.topAnchor.constraint(equalTo: header.bottomAnchor, constant: 16),
+            scrollView.bottomAnchor.constraint(equalTo: buttons.topAnchor, constant: -16),
+            items.leadingAnchor.constraint(equalTo: scrollView.contentLayoutGuide.leadingAnchor),
+            items.trailingAnchor.constraint(equalTo: scrollView.contentLayoutGuide.trailingAnchor),
+            items.topAnchor.constraint(equalTo: scrollView.contentLayoutGuide.topAnchor),
+            items.bottomAnchor.constraint(equalTo: scrollView.contentLayoutGuide.bottomAnchor),
+            items.widthAnchor.constraint(equalTo: scrollView.frameLayoutGuide.widthAnchor),
+            buttons.leadingAnchor.constraint(equalTo: card.leadingAnchor, constant: 24),
+            buttons.trailingAnchor.constraint(equalTo: card.trailingAnchor, constant: -24),
+            buttons.bottomAnchor.constraint(equalTo: card.bottomAnchor, constant: -20),
+            fullLogButton.heightAnchor.constraint(equalToConstant: 44),
+            acknowledgeButton.heightAnchor.constraint(equalToConstant: 44)
+        ])
+    }
+
+    @objc private func dismissTapped() {
+        onDismiss()
+    }
+
+    @objc private func fullLogTapped() {
+        onOpenFullChangelog()
+    }
+}
+
+final class ChangelogViewController: UIViewController {
     override func viewDidLoad() {
         super.viewDidLoad()
         let contentView = applyLegacyGlassSheetBackground()
@@ -250,6 +848,7 @@ private final class ChangelogViewController: UIViewController {
         titleLabel.numberOfLines = 1
 
         let stackView = UIStackView(arrangedSubviews: [
+            makeSection(section: AppChangelogCatalog.latest),
             makeSection(
                 version: L10n.text("1.0.9 （26.7.8）", "1.0.9 (2026.7.8)"),
                 items: [
@@ -369,6 +968,10 @@ private final class ChangelogViewController: UIViewController {
         }
     }
 
+    private func makeSection(section: AppChangelogSection) -> UIView {
+        makeSection(version: section.version, items: section.items)
+    }
+
     private func makeSection(version: String, items: [String]) -> UIView {
         let versionLabel = UILabel()
         versionLabel.text = version
@@ -393,6 +996,289 @@ private final class ChangelogViewController: UIViewController {
         sectionStack.axis = .vertical
         sectionStack.spacing = 12
         return sectionStack
+    }
+}
+
+private final class UpdateAvailableViewController: UIViewController {
+    private let update: AppUpdateInfo
+    private let onSkipUpdate: (AppUpdateInfo) -> Void
+
+    init(update: AppUpdateInfo, onSkipUpdate: @escaping (AppUpdateInfo) -> Void) {
+        self.update = update
+        self.onSkipUpdate = onSkipUpdate
+        super.init(nibName: nil, bundle: nil)
+        modalPresentationStyle = .overFullScreen
+        modalTransitionStyle = .crossDissolve
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
+
+    override func viewDidLoad() {
+        super.viewDidLoad()
+        view.backgroundColor = UIColor.black.withAlphaComponent(0.18)
+        view.accessibilityViewIsModal = true
+
+        let card = UIView()
+        let cornerRadius: CGFloat = 28
+        card.backgroundColor = .clear
+        card.layer.cornerRadius = cornerRadius
+        card.layer.cornerCurve = .continuous
+        card.layer.shadowColor = UIColor.black.cgColor
+        card.layer.shadowOpacity = 0.16
+        card.layer.shadowRadius = 22
+        card.layer.shadowOffset = CGSize(width: 0, height: 9)
+        view.addSubview(card)
+
+        let glassView = makeGlassView(cornerRadius: cornerRadius)
+        card.addSubview(glassView)
+
+        let titleLabel = UILabel()
+        titleLabel.text = L10n.text("检测到新版本", "New Version Available")
+        titleLabel.font = updateVersionFont(size: 24, weight: .black)
+        titleLabel.textColor = .label
+
+        let versionLabel = UILabel()
+        versionLabel.text = update.latestVersion
+        versionLabel.font = updateVersionFont(
+            size: UIScreen.main.bounds.height < 700 ? 21 : 23,
+            weight: .bold
+        )
+        versionLabel.textColor = .systemBlue
+
+        let header = UIStackView(arrangedSubviews: [titleLabel, versionLabel])
+        header.axis = .vertical
+        header.spacing = 5
+        card.addSubview(header)
+
+        let items = UIStackView()
+        items.axis = .vertical
+        items.spacing = 12
+        for note in update.releaseNotes {
+            let label = UILabel()
+            label.text = "• \(note)"
+            label.font = .systemFont(ofSize: 15, weight: .semibold)
+            label.textColor = .secondaryLabel
+            label.numberOfLines = 0
+            items.addArrangedSubview(label)
+        }
+
+        let scrollView = UIScrollView()
+        scrollView.alwaysBounceVertical = true
+        scrollView.showsVerticalScrollIndicator = true
+        scrollView.addSubview(items)
+        card.addSubview(scrollView)
+
+        let cloudButton = makeLinkButton(title: L10n.text("123云盘", "123 Cloud"))
+        cloudButton.addTarget(self, action: #selector(openCloudDrive), for: .touchUpInside)
+        let githubButton = makeLinkButton(title: "GitHub")
+        githubButton.addTarget(self, action: #selector(openGitHub), for: .touchUpInside)
+        let skipButton = makeLinkButton(title: L10n.text("跳过本次更新", "Skip This Update"))
+        skipButton.addTarget(self, action: #selector(skipTapped), for: .touchUpInside)
+        let laterButton = makeLinkButton(title: L10n.text("稍后", "Later"), primary: true)
+        laterButton.addTarget(self, action: #selector(dismissTapped), for: .touchUpInside)
+
+        let links = UIStackView(arrangedSubviews: [cloudButton, githubButton])
+        links.axis = .vertical
+        links.spacing = 8
+        let buttons = UIStackView(arrangedSubviews: [links, skipButton, laterButton])
+        buttons.axis = .vertical
+        buttons.spacing = 6
+        card.addSubview(buttons)
+
+        [card, glassView, header, scrollView, items, buttons].forEach {
+            $0.translatesAutoresizingMaskIntoConstraints = false
+        }
+
+        let safe = view.safeAreaLayoutGuide
+        let cardHeightMultiplier: CGFloat = UIScreen.main.bounds.height < 700 ? 0.68 : 0.58
+        NSLayoutConstraint.activate([
+            card.leadingAnchor.constraint(equalTo: safe.leadingAnchor, constant: 22),
+            card.trailingAnchor.constraint(equalTo: safe.trailingAnchor, constant: -22),
+            card.centerYAnchor.constraint(equalTo: safe.centerYAnchor),
+            card.heightAnchor.constraint(equalTo: safe.heightAnchor, multiplier: cardHeightMultiplier),
+            glassView.leadingAnchor.constraint(equalTo: card.leadingAnchor),
+            glassView.trailingAnchor.constraint(equalTo: card.trailingAnchor),
+            glassView.topAnchor.constraint(equalTo: card.topAnchor),
+            glassView.bottomAnchor.constraint(equalTo: card.bottomAnchor),
+            header.leadingAnchor.constraint(equalTo: card.leadingAnchor, constant: 22),
+            header.trailingAnchor.constraint(equalTo: card.trailingAnchor, constant: -22),
+            header.topAnchor.constraint(equalTo: card.topAnchor, constant: 22),
+            scrollView.leadingAnchor.constraint(equalTo: card.leadingAnchor, constant: 22),
+            scrollView.trailingAnchor.constraint(equalTo: card.trailingAnchor, constant: -22),
+            scrollView.topAnchor.constraint(equalTo: header.bottomAnchor, constant: 15),
+            scrollView.bottomAnchor.constraint(equalTo: buttons.topAnchor, constant: -14),
+            items.leadingAnchor.constraint(equalTo: scrollView.contentLayoutGuide.leadingAnchor),
+            items.trailingAnchor.constraint(equalTo: scrollView.contentLayoutGuide.trailingAnchor),
+            items.topAnchor.constraint(equalTo: scrollView.contentLayoutGuide.topAnchor),
+            items.bottomAnchor.constraint(equalTo: scrollView.contentLayoutGuide.bottomAnchor),
+            items.widthAnchor.constraint(equalTo: scrollView.frameLayoutGuide.widthAnchor),
+            buttons.leadingAnchor.constraint(equalTo: card.leadingAnchor, constant: 22),
+            buttons.trailingAnchor.constraint(equalTo: card.trailingAnchor, constant: -22),
+            buttons.bottomAnchor.constraint(equalTo: card.bottomAnchor, constant: -16),
+            cloudButton.heightAnchor.constraint(equalToConstant: 42),
+            githubButton.heightAnchor.constraint(equalToConstant: 42),
+            skipButton.heightAnchor.constraint(equalToConstant: 42),
+            laterButton.heightAnchor.constraint(equalToConstant: 42)
+        ])
+    }
+
+    private func makeGlassView(cornerRadius: CGFloat) -> UIVisualEffectView {
+        let glassView: UIVisualEffectView
+        if #available(iOS 26.0, *) {
+            let effect = UIGlassEffect(style: .regular)
+            effect.isInteractive = true
+            glassView = UIVisualEffectView(effect: effect)
+        } else {
+            glassView = UIVisualEffectView(effect: UIBlurEffect(style: .systemMaterial))
+            glassView.contentView.backgroundColor = UIColor.secondarySystemBackground.withAlphaComponent(0.42)
+        }
+        glassView.layer.cornerRadius = cornerRadius
+        glassView.layer.cornerCurve = .continuous
+        glassView.clipsToBounds = true
+        return glassView
+    }
+
+    private func makeLinkButton(title: String, primary: Bool = false) -> UIButton {
+        let button = UIButton(configuration: primary ? .filled() : .bordered())
+        var configuration = button.configuration
+        configuration?.title = title
+        configuration?.baseForegroundColor = primary ? .white : .systemBlue
+        configuration?.baseBackgroundColor = primary ? .systemBlue : nil
+        configuration?.cornerStyle = .capsule
+        button.configuration = configuration
+        button.titleLabel?.font = .systemFont(ofSize: 15, weight: .bold)
+        return button
+    }
+
+    @objc private func openCloudDrive() {
+        UIApplication.shared.open(update.cloudDriveURL)
+    }
+
+    @objc private func openGitHub() {
+        UIApplication.shared.open(update.githubReleasesURL)
+    }
+
+    @objc private func skipTapped() {
+        onSkipUpdate(update)
+        dismiss(animated: true)
+    }
+
+    @objc private func dismissTapped() {
+        dismiss(animated: true)
+    }
+}
+
+private final class UpdateStatusViewController: UIViewController {
+    init() {
+        super.init(nibName: nil, bundle: nil)
+        modalPresentationStyle = .overFullScreen
+        modalTransitionStyle = .crossDissolve
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
+
+    override func viewDidLoad() {
+        super.viewDidLoad()
+        view.backgroundColor = UIColor.black.withAlphaComponent(0.18)
+        view.accessibilityViewIsModal = true
+
+        let card = UIView()
+        let cornerRadius: CGFloat = 28
+        card.backgroundColor = .clear
+        card.layer.cornerRadius = cornerRadius
+        card.layer.cornerCurve = .continuous
+        card.layer.shadowColor = UIColor.black.cgColor
+        card.layer.shadowOpacity = 0.14
+        card.layer.shadowRadius = 20
+        card.layer.shadowOffset = CGSize(width: 0, height: 8)
+        view.addSubview(card)
+
+        let glassView: UIVisualEffectView
+        if #available(iOS 26.0, *) {
+            let effect = UIGlassEffect(style: .regular)
+            effect.isInteractive = true
+            glassView = UIVisualEffectView(effect: effect)
+        } else {
+            glassView = UIVisualEffectView(effect: UIBlurEffect(style: .systemUltraThinMaterial))
+            glassView.contentView.backgroundColor = UIColor.systemGroupedBackground.withAlphaComponent(0.42)
+        }
+        glassView.layer.cornerRadius = cornerRadius
+        glassView.layer.cornerCurve = .continuous
+        glassView.clipsToBounds = true
+        card.addSubview(glassView)
+
+        let icon = UIImageView(image: UIImage(systemName: "checkmark.circle.fill"))
+        icon.tintColor = .systemGreen
+        icon.contentMode = .scaleAspectFit
+        icon.preferredSymbolConfiguration = UIImage.SymbolConfiguration(pointSize: 32, weight: .semibold)
+
+        let titleLabel = UILabel()
+        titleLabel.text = L10n.text("已是最新版本", "You're Up to Date")
+        titleLabel.font = updateVersionFont(size: 23, weight: .black)
+        titleLabel.textColor = .label
+        titleLabel.textAlignment = .center
+
+        let versionLabel = UILabel()
+        versionLabel.text = "\(L10n.text("当前版本", "Current version"))  \(L10n.versionDisplay)"
+        versionLabel.font = updateVersionFont(size: 16, weight: .bold)
+        versionLabel.textColor = .systemBlue
+        versionLabel.textAlignment = .center
+
+        let messageLabel = UILabel()
+        messageLabel.text = L10n.text(
+            "当前没有检测到可用的新版本，敬请期待下一次更新。",
+            "No newer release is available yet. Stay tuned for the next update."
+        )
+        messageLabel.font = .systemFont(ofSize: 15, weight: .semibold)
+        messageLabel.textColor = .secondaryLabel
+        messageLabel.numberOfLines = 0
+        messageLabel.textAlignment = .center
+
+        let dismissButton = UIButton(configuration: .filled())
+        var configuration = dismissButton.configuration
+        configuration?.title = L10n.text("知道了", "Got It")
+        configuration?.baseForegroundColor = .white
+        configuration?.baseBackgroundColor = .systemBlue
+        configuration?.cornerStyle = .capsule
+        dismissButton.configuration = configuration
+        dismissButton.titleLabel?.font = .systemFont(ofSize: 15, weight: .bold)
+        dismissButton.addTarget(self, action: #selector(dismissTapped), for: .touchUpInside)
+
+        let stack = UIStackView(arrangedSubviews: [icon, titleLabel, versionLabel, messageLabel, dismissButton])
+        stack.axis = .vertical
+        stack.alignment = .fill
+        stack.spacing = 11
+        card.addSubview(stack)
+
+        [card, glassView, stack, icon, dismissButton].forEach {
+            $0.translatesAutoresizingMaskIntoConstraints = false
+        }
+        let safe = view.safeAreaLayoutGuide
+        NSLayoutConstraint.activate([
+            card.leadingAnchor.constraint(equalTo: safe.leadingAnchor, constant: 28),
+            card.trailingAnchor.constraint(equalTo: safe.trailingAnchor, constant: -28),
+            card.centerYAnchor.constraint(equalTo: safe.centerYAnchor),
+            card.heightAnchor.constraint(equalToConstant: 284),
+            glassView.leadingAnchor.constraint(equalTo: card.leadingAnchor),
+            glassView.trailingAnchor.constraint(equalTo: card.trailingAnchor),
+            glassView.topAnchor.constraint(equalTo: card.topAnchor),
+            glassView.bottomAnchor.constraint(equalTo: card.bottomAnchor),
+            stack.leadingAnchor.constraint(equalTo: card.leadingAnchor, constant: 26),
+            stack.trailingAnchor.constraint(equalTo: card.trailingAnchor, constant: -26),
+            stack.centerYAnchor.constraint(equalTo: card.centerYAnchor),
+            icon.heightAnchor.constraint(equalToConstant: 36),
+            dismissButton.heightAnchor.constraint(equalToConstant: 42)
+        ])
+    }
+
+    @objc private func dismissTapped() {
+        dismiss(animated: true)
     }
 }
 
@@ -447,6 +1333,10 @@ private final class FAQViewController: UIViewController {
             makeQuestion(
                 question: L10n.text("10.为什么我发现有时候无法自动熄屏了", "10. Why does auto-lock sometimes stop working?"),
                 answer: L10n.text("因为隐藏悬浮窗的时候没有把悬浮窗拖到侧面，屏幕上会一直有活动阻止熄屏，请拖动到侧面后再将高度调节至0.1pt", "This can happen if the floating window is hidden before it is docked to the side. Activity may remain on screen and prevent auto-lock. Drag it to the edge first, then adjust the height to 0.1 pt.")
+            ),
+            makeQuestion(
+                question: L10n.text("11.我想反馈App的问题或者有可以优化的地方怎么办", "11. How can I report a problem or suggest an improvement?"),
+                answer: L10n.text("欢迎在GitHub项目地址中提问，或在酷安评论区留言/私信", "You are welcome to open an issue on the GitHub project page, or leave a comment or send a private message on Coolapk.")
             )
         ])
         stackView.axis = .vertical

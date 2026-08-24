@@ -8,26 +8,13 @@
 
 /* Begin PBXBuildFile section */
 		68FE9A1F302F1B3ECE88FA4F /* Pods_pip_swift.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = D8853957D05B22C22DA37BB8 /* Pods_pip_swift.framework */; };
-		AA50ED42265E319E006DD1A6 /* pip_reference_10_1.mov in Resources */ = {isa = PBXBuildFile; fileRef = AA50ED43265E319E006DD1A6 /* pip_reference_10_1.mov */; };
-		AA50ED44265E319E006DD1A6 /* vertical_video.mp4 in Resources */ = {isa = PBXBuildFile; fileRef = AA50ED45265E319E006DD1A6 /* vertical_video.mp4 */; };
-		AA50ED46265E319E006DD1A6 /* playerlayer_video_noaudio.mp4 in Resources */ = {isa = PBXBuildFile; fileRef = AA50ED47265E319E006DD1A6 /* playerlayer_video_noaudio.mp4 */; };
-		AA51ED01265E319E006DD1A6 /* fc_ref_1_1.mov in Resources */ = {isa = PBXBuildFile; fileRef = AA51EE01265E319E006DD1A6 /* fc_ref_1_1.mov */; };
-		AA51ED02265E319E006DD1A6 /* fc_ref_2_1.mov in Resources */ = {isa = PBXBuildFile; fileRef = AA51EE02265E319E006DD1A6 /* fc_ref_2_1.mov */; };
-		AA51ED03265E319E006DD1A6 /* fc_ref_1_2.mov in Resources */ = {isa = PBXBuildFile; fileRef = AA51EE03265E319E006DD1A6 /* fc_ref_1_2.mov */; };
-		AA51ED04265E319E006DD1A6 /* fc_ref_16_9.mov in Resources */ = {isa = PBXBuildFile; fileRef = AA51EE04265E319E006DD1A6 /* fc_ref_16_9.mov */; };
-		AA51ED05265E319E006DD1A6 /* fc_ref_20_1.mov in Resources */ = {isa = PBXBuildFile; fileRef = AA51EE05265E319E006DD1A6 /* fc_ref_20_1.mov */; };
-		AA51ED06265E319E006DD1A6 /* fc_ref_50_1.mov in Resources */ = {isa = PBXBuildFile; fileRef = AA51EE06265E319E006DD1A6 /* fc_ref_50_1.mov */; };
-		AA51ED07265E319E006DD1A6 /* fc_ref_30_1.mov in Resources */ = {isa = PBXBuildFile; fileRef = AA51EE07265E319E006DD1A6 /* fc_ref_30_1.mov */; };
-		AA51ED08265E319E006DD1A6 /* fc_ref_160_12.mov in Resources */ = {isa = PBXBuildFile; fileRef = AA51EE08265E319E006DD1A6 /* fc_ref_160_12.mov */; };
-		AA51ED09265E319E006DD1A6 /* fc_ref_16_7.mov in Resources */ = {isa = PBXBuildFile; fileRef = AA51EE09265E319E006DD1A6 /* fc_ref_16_7.mov */; };
-		AA51ED0A265E319E006DD1A6 /* fc_ref_10_1.mov in Resources */ = {isa = PBXBuildFile; fileRef = AA51EE0A265E319E006DD1A6 /* fc_ref_10_1.mov */; };
-		AA51ED0B265E319E006DD1A6 /* fc_ref_6_9.mov in Resources */ = {isa = PBXBuildFile; fileRef = AA51EE0B265E319E006DD1A6 /* fc_ref_6_9.mov */; };
 		D93F3C1328BF36E600BB696D /* BackgroundTaskManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = D93F3C1228BF36E600BB696D /* BackgroundTaskManager.swift */; };
 			D950ED0F265E319D006DD1A6 /* AppDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = D950ED0E265E319D006DD1A6 /* AppDelegate.swift */; };
 			D950ED11265E319D006DD1A6 /* SceneDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = D950ED10265E319D006DD1A6 /* SceneDelegate.swift */; };
 			D950ED13265E319D006DD1A6 /* ViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = D950ED12265E319D006DD1A6 /* ViewController.swift */; };
 			AA50ED22265E319E006DD1A6 /* MainTabBarController.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA50ED20265E319E006DD1A6 /* MainTabBarController.swift */; };
-			AA50ED23265E319E006DD1A6 /* PiPViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA50ED21265E319E006DD1A6 /* PiPViews.swift */; };
+		AA50ED23265E319E006DD1A6 /* PiPViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA50ED21265E319E006DD1A6 /* PiPViews.swift */; };
+		A2200003265E319E006DD1A6 /* GlobalRefresh2LaunchCelebration.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2200002265E319E006DD1A6 /* GlobalRefresh2LaunchCelebration.swift */; };
 				AA50ED25265E319E006DD1A6 /* TutorialTabBarController.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA50ED24265E319E006DD1A6 /* TutorialTabBarController.swift */; };
 				AA50ED27265E319E006DD1A6 /* FrameRateTestTabBarController.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA50ED26265E319E006DD1A6 /* FrameRateTestTabBarController.swift */; };
 				AA50ED29265E319E006DD1A6 /* VersionViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA50ED28265E319E006DD1A6 /* VersionViewController.swift */; };
@@ -59,7 +46,8 @@
 			D950ED10265E319D006DD1A6 /* SceneDelegate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SceneDelegate.swift; sourceTree = "<group>"; };
 			D950ED12265E319D006DD1A6 /* ViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ViewController.swift; sourceTree = "<group>"; };
 			AA50ED20265E319E006DD1A6 /* MainTabBarController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MainTabBarController.swift; sourceTree = "<group>"; };
-			AA50ED21265E319E006DD1A6 /* PiPViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PiPViews.swift; sourceTree = "<group>"; };
+		AA50ED21265E319E006DD1A6 /* PiPViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PiPViews.swift; sourceTree = "<group>"; };
+		A2200002265E319E006DD1A6 /* GlobalRefresh2LaunchCelebration.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GlobalRefresh2LaunchCelebration.swift; sourceTree = "<group>"; };
 				AA50ED24265E319E006DD1A6 /* TutorialTabBarController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TutorialTabBarController.swift; sourceTree = "<group>"; };
 				AA50ED26265E319E006DD1A6 /* FrameRateTestTabBarController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FrameRateTestTabBarController.swift; sourceTree = "<group>"; };
 				AA50ED28265E319E006DD1A6 /* VersionViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VersionViewController.swift; sourceTree = "<group>"; };
@@ -80,20 +68,6 @@
 		D95D3E3927A2AF26001C1B6E /* slience.mp3 */ = {isa = PBXFileReference; lastKnownFileType = audio.mp3; path = slience.mp3; sourceTree = "<group>"; };
 		AA50ED40265E319E006DD1A6 /* en */ = {isa = PBXFileReference; lastKnownFileType = text.plist.strings; name = en; path = en.lproj/InfoPlist.strings; sourceTree = "<group>"; };
 		AA50ED41265E319E006DD1A6 /* zh-Hans */ = {isa = PBXFileReference; lastKnownFileType = text.plist.strings; name = "zh-Hans"; path = "zh-Hans.lproj/InfoPlist.strings"; sourceTree = "<group>"; };
-		AA50ED43265E319E006DD1A6 /* pip_reference_10_1.mov */ = {isa = PBXFileReference; lastKnownFileType = file; path = pip_reference_10_1.mov; sourceTree = "<group>"; };
-		AA50ED45265E319E006DD1A6 /* vertical_video.mp4 */ = {isa = PBXFileReference; lastKnownFileType = file; path = vertical_video.mp4; sourceTree = "<group>"; };
-		AA50ED47265E319E006DD1A6 /* playerlayer_video_noaudio.mp4 */ = {isa = PBXFileReference; lastKnownFileType = file; path = playerlayer_video_noaudio.mp4; sourceTree = "<group>"; };
-		AA51EE01265E319E006DD1A6 /* fc_ref_1_1.mov */ = {isa = PBXFileReference; lastKnownFileType = file; path = fc_ref_1_1.mov; sourceTree = "<group>"; };
-		AA51EE02265E319E006DD1A6 /* fc_ref_2_1.mov */ = {isa = PBXFileReference; lastKnownFileType = file; path = fc_ref_2_1.mov; sourceTree = "<group>"; };
-		AA51EE03265E319E006DD1A6 /* fc_ref_1_2.mov */ = {isa = PBXFileReference; lastKnownFileType = file; path = fc_ref_1_2.mov; sourceTree = "<group>"; };
-		AA51EE04265E319E006DD1A6 /* fc_ref_16_9.mov */ = {isa = PBXFileReference; lastKnownFileType = file; path = fc_ref_16_9.mov; sourceTree = "<group>"; };
-		AA51EE05265E319E006DD1A6 /* fc_ref_20_1.mov */ = {isa = PBXFileReference; lastKnownFileType = file; path = fc_ref_20_1.mov; sourceTree = "<group>"; };
-		AA51EE06265E319E006DD1A6 /* fc_ref_50_1.mov */ = {isa = PBXFileReference; lastKnownFileType = file; path = fc_ref_50_1.mov; sourceTree = "<group>"; };
-		AA51EE07265E319E006DD1A6 /* fc_ref_30_1.mov */ = {isa = PBXFileReference; lastKnownFileType = file; path = fc_ref_30_1.mov; sourceTree = "<group>"; };
-		AA51EE08265E319E006DD1A6 /* fc_ref_160_12.mov */ = {isa = PBXFileReference; lastKnownFileType = file; path = fc_ref_160_12.mov; sourceTree = "<group>"; };
-		AA51EE09265E319E006DD1A6 /* fc_ref_16_7.mov */ = {isa = PBXFileReference; lastKnownFileType = file; path = fc_ref_16_7.mov; sourceTree = "<group>"; };
-		AA51EE0A265E319E006DD1A6 /* fc_ref_10_1.mov */ = {isa = PBXFileReference; lastKnownFileType = file; path = fc_ref_10_1.mov; sourceTree = "<group>"; };
-		AA51EE0B265E319E006DD1A6 /* fc_ref_6_9.mov */ = {isa = PBXFileReference; lastKnownFileType = file; path = fc_ref_6_9.mov; sourceTree = "<group>"; };
 		B1090002265E319E006DD1A6 /* en */ = {isa = PBXFileReference; lastKnownFileType = text.plist.strings; name = en; path = en.lproj/Localizable.strings; sourceTree = "<group>"; };
 		B1090003265E319E006DD1A6 /* zh-Hans */ = {isa = PBXFileReference; lastKnownFileType = text.plist.strings; name = "zh-Hans"; path = "zh-Hans.lproj/Localizable.strings"; sourceTree = "<group>"; };
 /* End PBXFileReference section */
@@ -160,7 +134,8 @@
 					D93F3C1128BF34B800BB696D /* BackgroundTaskManager */,
 						D950ED12265E319D006DD1A6 /* ViewController.swift */,
 						AA50ED20265E319E006DD1A6 /* MainTabBarController.swift */,
-						AA50ED21265E319E006DD1A6 /* PiPViews.swift */,
+					AA50ED21265E319E006DD1A6 /* PiPViews.swift */,
+					A2200002265E319E006DD1A6 /* GlobalRefresh2LaunchCelebration.swift */,
 								AA50ED24265E319E006DD1A6 /* TutorialTabBarController.swift */,
 								AA50ED26265E319E006DD1A6 /* FrameRateTestTabBarController.swift */,
 								AA50ED28265E319E006DD1A6 /* VersionViewController.swift */,
@@ -178,20 +153,6 @@
 				D950ED10265E319D006DD1A6 /* SceneDelegate.swift */,
 				D950ED14265E319D006DD1A6 /* Main.storyboard */,
 				D950ED17265E319E006DD1A6 /* Assets.xcassets */,
-					AA50ED43265E319E006DD1A6 /* pip_reference_10_1.mov */,
-					AA50ED45265E319E006DD1A6 /* vertical_video.mp4 */,
-					AA50ED47265E319E006DD1A6 /* playerlayer_video_noaudio.mp4 */,
-					AA51EE01265E319E006DD1A6 /* fc_ref_1_1.mov */,
-					AA51EE02265E319E006DD1A6 /* fc_ref_2_1.mov */,
-					AA51EE03265E319E006DD1A6 /* fc_ref_1_2.mov */,
-					AA51EE04265E319E006DD1A6 /* fc_ref_16_9.mov */,
-					AA51EE05265E319E006DD1A6 /* fc_ref_20_1.mov */,
-					AA51EE06265E319E006DD1A6 /* fc_ref_50_1.mov */,
-					AA51EE07265E319E006DD1A6 /* fc_ref_30_1.mov */,
-					AA51EE08265E319E006DD1A6 /* fc_ref_160_12.mov */,
-					AA51EE09265E319E006DD1A6 /* fc_ref_16_7.mov */,
-					AA51EE0A265E319E006DD1A6 /* fc_ref_10_1.mov */,
-					AA51EE0B265E319E006DD1A6 /* fc_ref_6_9.mov */,
 				D950ED19265E319E006DD1A6 /* LaunchScreen.storyboard */,
 				AA50ED3D265E319E006DD1A6 /* InfoPlist.strings */,
 				B1090000265E319E006DD1A6 /* Localizable.strings */,
@@ -267,20 +228,6 @@
 						D95D3E3A27A2AF26001C1B6E /* slience.mp3 in Resources */,
 						AA50ED3F265E319E006DD1A6 /* InfoPlist.strings in Resources */,
 						B1090001265E319E006DD1A6 /* Localizable.strings in Resources */,
-							AA50ED42265E319E006DD1A6 /* pip_reference_10_1.mov in Resources */,
-							AA50ED44265E319E006DD1A6 /* vertical_video.mp4 in Resources */,
-							AA50ED46265E319E006DD1A6 /* playerlayer_video_noaudio.mp4 in Resources */,
-							AA51ED01265E319E006DD1A6 /* fc_ref_1_1.mov in Resources */,
-							AA51ED02265E319E006DD1A6 /* fc_ref_2_1.mov in Resources */,
-							AA51ED03265E319E006DD1A6 /* fc_ref_1_2.mov in Resources */,
-							AA51ED04265E319E006DD1A6 /* fc_ref_16_9.mov in Resources */,
-							AA51ED05265E319E006DD1A6 /* fc_ref_20_1.mov in Resources */,
-							AA51ED06265E319E006DD1A6 /* fc_ref_50_1.mov in Resources */,
-							AA51ED07265E319E006DD1A6 /* fc_ref_30_1.mov in Resources */,
-							AA51ED08265E319E006DD1A6 /* fc_ref_160_12.mov in Resources */,
-							AA51ED09265E319E006DD1A6 /* fc_ref_16_7.mov in Resources */,
-							AA51ED0A265E319E006DD1A6 /* fc_ref_10_1.mov in Resources */,
-							AA51ED0B265E319E006DD1A6 /* fc_ref_6_9.mov in Resources */,
 								);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -361,6 +308,7 @@
 					D950ED13265E319D006DD1A6 /* ViewController.swift in Sources */,
 					AA50ED22265E319E006DD1A6 /* MainTabBarController.swift in Sources */,
 					AA50ED23265E319E006DD1A6 /* PiPViews.swift in Sources */,
+					A2200003265E319E006DD1A6 /* GlobalRefresh2LaunchCelebration.swift in Sources */,
 						AA50ED25265E319E006DD1A6 /* TutorialTabBarController.swift in Sources */,
 						AA50ED27265E319E006DD1A6 /* FrameRateTestTabBarController.swift in Sources */,
 						AA50ED29265E319E006DD1A6 /* VersionViewController.swift in Sources */,

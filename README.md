@@ -4,9 +4,15 @@
 
 # 全局高刷悬浮窗
 
+<h3>
+  简体中文 | <a href="README_EN.md">English</a> | <a href="DEVELOPMENT_PRD.md">开发文档 PRD</a> | <a href="DEVELOPMENT_PRD_EN.md">Development Document PRD</a>
+</h3>
+
 > 基于 [CaiWanFeng/PiP](https://github.com/CaiWanFeng/PiP) 修改的个人学习与测试版本。
 
 全局高刷通过系统画中画悬浮窗辅助部分 iOS App 恢复更高的自适应刷新率表现1-120Hz。将悬浮窗拖动并吸附到屏幕侧边后，可用于改善部分被限制在 1-80Hz 的场景体验。
+
+它主要面向 ProMotion 设备在部分 App 或系统场景中被限制到 80Hz 左右的情况，通过画中画悬浮窗持续请求高刷新率，帮助这些场景恢复更接近 120Hz 的滑动和动画表现。具体效果仍取决于设备型号、系统版本、前台 App 自身策略以及悬浮窗是否正常吸附和存活。
 
 ## 说明
 
@@ -18,6 +24,15 @@
 - 效果依赖系统画中画、设备刷新率能力和具体 App 的刷新率策略。
 - 60Hz 设备或本身锁定 60Hz 的 App 无法通过本项目变成 120Hz。
 - 后台保活并非系统级永久后台权限，仍可能受到内存压力、系统策略或其他画中画 App 的影响。
+
+底层方案说明：
+
+| 方案 | 优点 | 缺点 | 适合场景 |
+| --- | --- | --- | --- |
+| 默认方案：VideoCall | 支持最低 0.1pt，可做到视觉上完全隐藏；兼容性更好，日常使用更稳定 | 会强拉全局 120Hz，部分自身锁 60Hz 的游戏或弹幕场景可能出现不同步卡顿 | 大多数 App、锁 80Hz 场景、需要完全隐藏悬浮窗的用户 |
+| 新方案：PlayerLayer | 可改善部分锁 60Hz App 与 120Hz 不同步导致的卡顿，例如 B 站弹幕一快一慢、荒野乱斗大厅偶尔掉帧 | 受底层限制最低 1pt，无法完全隐藏，视觉上可能留下一条细线；属于测试入口 | 仅建议遇到锁 60Hz 场景卡顿时尝试 |
+
+简单来说：默认方案隐藏能力更好，适合大多数用户；新方案主要用于解决特定锁 60Hz 场景的卡顿问题，但无法做到 0.1pt 完全隐藏。
 
 ## 主要功能
 
@@ -42,6 +57,49 @@
 
 ![使用演示](assets/demo.gif)
 
+## 开发者参考
+
+如果你只是想借用默认 `VideoCall` 方案实现一个可自定义高度的画中画悬浮窗，而不需要本项目的“强拉 120Hz”能力，可以保留 `AVPictureInPictureVideoCallViewController` + `AVPictureInPictureController.ContentSource` 这条路线。
+
+核心思路是创建一个透明的 `AVPictureInPictureVideoCallViewController`，通过 `preferredContentSize` 控制悬浮窗尺寸，再把自己的自定义 View 挂到这个 content view 里：
+
+```swift
+let contentController = AVPictureInPictureVideoCallViewController()
+contentController.preferredContentSize = CGSize(width: 300, height: customHeight)
+contentController.view.backgroundColor = .clear
+contentController.view.isOpaque = false
+
+let contentSource = AVPictureInPictureController.ContentSource(
+    activeVideoCallSourceView: sourceView,
+    contentViewController: contentController
+)
+
+let pipController = AVPictureInPictureController(contentSource: contentSource)
+```
+
+后续调节高度时，同步更新 `preferredContentSize` 和你自己的内容 View 约束即可。需要视觉隐藏时，可以把高度调到很小，例如 `0.1pt`；如果不需要完全隐藏，也可以使用更保守的高度。
+
+如果不需要强拉 120Hz，建议不要复制本项目的高刷驱动字段：
+
+- 不需要在 `Info.plist` 中启用 `CADisableMinimumFrameDurationOnPhone`
+- 不要把 `CADisplayLink.preferredFrameRateRange` 固定为 `minimum = maximum = preferred = 120`
+- 不要把 `preferredFramesPerSecond` 固定为 `120`
+- 如需保留 DisplayLink，用系统自适应即可，例如：
+
+```swift
+if #available(iOS 15.0, *) {
+    displayLink.preferredFrameRateRange = CAFrameRateRange(
+        minimum: 30,
+        maximum: Float(UIScreen.main.maximumFramesPerSecond),
+        preferred: 0
+    )
+} else {
+    displayLink.preferredFramesPerSecond = 0
+}
+```
+
+简单来说：只做自定义高度时，保留 `VideoCall` 的 PiP 容器和 `preferredContentSize`；关闭强制 120Hz 相关字段，让系统自己决定刷新率。
+
 ## 自签安装
 
 项目导出的通用未签名 IPA 可通过以下工具自行签名安装：
@@ -54,6 +112,24 @@
 请使用自己的 Apple ID、证书或设备环境完成签名安装。
 
 ## 版本日志
+
+### 1.1.0（26.8.22）
+
+- 新增锁屏音频增强 beta：亮屏时保持仅PiP，不影响音视频播放；熄屏后自动启用音频强保活，适合对锁屏后台保活有更高需求的用户；原有音频强保活仍保留
+- 版本页新增手动清理缓存按钮，可查看释放的空间；长按可清空全部应用数据并重新进入首次使用流程
+- 新增自动缓存清理，首次安装、覆盖更新和日常启动时会清理残留临时素材与过期缓存
+- 清理并限制动态悬浮窗视频缓存，修复部分用户存储占用持续增长的问题
+- 快捷指令改为默认关闭的风险功能，阅读并确认可能阻止自动熄屏后才会开放安装和使用
+- 新增应用内版本检测，通过 GitHub Releases 公开接口读取最新正式版或 Beta 版版本号并与本机版本比较，不会自动下载或修改 App；支持跳过指定版本，下一版本发布前不再显示红点
+- 帧率演示新增 80Hz 与 120Hz 同速动画对比，更直观展示 80Hz 的步进停顿与 120Hz 的连续移动，并保留上下滑动体验当前页面真实流畅度
+- 新增首次启动动画与使用教程，通知权限会在引导结束后再申请
+- 新增首页本次更新弹窗，可快速查看重点内容并进入完整更新日志
+- 优化 iOS 26 及以上更新日志、常见问题等弹窗的 Liquid Glass 背景、圆角和滚动显示
+- 优化中英文状态、运行时间和更新提示显示，修复部分页面文案不一致的问题
+- 修复 iOS 26 以下切换深浅色模式后界面图标可能消失的问题
+- 深浅色模式检测仅在 App 前台运行，进入后台后停止轮询
+- 覆盖更新后默认关闭调试模式并清理历史诊断数据，避免后台监控和旧日志继续占用内存
+- 保留 1.0.9 稳定版两套悬浮窗方案的核心创建、高度调节和 120Hz 作用路径，仅增加资源清理与问题诊断
 
 ### 1.0.9（26.7.8）
 

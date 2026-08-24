@@ -70,6 +70,8 @@ struct PageHeaderTitle: View {
         Text(title)
             .font(.system(size: layout.headerTitleSize, weight: .black, design: .rounded))
             .foregroundColor(Color(UIColor.label))
+            .lineLimit(1)
+            .minimumScaleFactor(0.72)
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(.horizontal, layout.headerHorizontalPadding)
             .padding(.top, layout.headerTopPadding)
@@ -88,8 +90,10 @@ struct PiPHomeView: View {
     @State private var isPiPStoppedNotificationInfoVisible = false
     @State private var isEngineRouteInfoVisible = false
     @State private var isShortcutInstallGuidePresented = false
+    @State private var isShortcutRiskConfirmationPresented = false
     @State private var languageRefreshToken = 0
     @AppStorage(L10n.languageOverrideKey) private var languageOverrideRawValue = ""
+    @AppStorage(PiPShortcutFeatureAccess.enabledKey) private var shortcutFeaturesEnabled = false
     @AppStorage(FrameRatePreference.experimentProfileKey) private var frameRateExperimentProfileRawValue = FrameRateExperimentProfile.followSwitch.rawValue
     @AppStorage("frameRateDemo.customMinimum") private var customFrameRateMinimum: Double = 30
     @AppStorage("frameRateDemo.customMaximum") private var customFrameRateMaximum: Double = 120
@@ -97,10 +101,13 @@ struct PiPHomeView: View {
 
     let pipHeight: String
     let keepAliveMode: String
+    let keepAliveModeDescription: String
     let pipStatusTitle: String
     let pipStatusColor: UIColor
     let pipRunningDuration: String
     let pipStoppedAtText: String
+    let pipRuntimeLabel: String
+    let pipStoppedAtLabel: String
     let pipRuntimeStartedAt: Date?
     let overlayResetToken: Int
     let isScrollingEnabled: Bool
@@ -113,6 +120,7 @@ struct PiPHomeView: View {
     let keepAliveNotificationFrequency: KeepAliveNotificationProbeFrequency
     let keepsPiPStatusInfoPersistent: Bool
     let remembersPiPHeight: Bool
+    let requiresPiPCloseConfirmation: Bool
     let hidesPiPWhenDocked: Bool
     let pipEngineRoute: PiPEngineRoute
     let isExtremeSilentModeEnabled: Bool
@@ -133,6 +141,7 @@ struct PiPHomeView: View {
     let onToggleSettings: () -> Void
     let onDismissSettings: () -> Void
     let onSetRememberPiPHeight: (Bool) -> Void
+    let onSetPiPCloseConfirmationRequired: (Bool) -> Void
     let onSetHidePiPWhenDocked: (Bool) -> Void
     let onSetPiPEngineRoute: (PiPEngineRoute) -> Void
     let onSetExtremeSilentModeEnabled: (Bool) -> Void
@@ -179,13 +188,10 @@ struct PiPHomeView: View {
                 Spacer(minLength: layout.isCompact ? 8 : 18)
 
                 VStack(spacing: layout.isCompact ? 9 : 12) {
-                    if L10n.isBetaBuild {
-                        betaHomeNotice
-                    }
-
                     StartAndHidePiPButton(title: startAndHidePiPButtonTitle) {
                         runAfterDismissingSettings(onStartAndHidePiP)
                     }
+                    .offset(y: -5)
 
                     PrimaryPiPButton(title: isPiPActive ? L10n.text("关闭悬浮窗", "Stop PiP") : L10n.text("开启悬浮窗", "Enable PiP")) {
                         runAfterDismissingSettings(onTogglePiP)
@@ -282,6 +288,22 @@ struct PiPHomeView: View {
         }
         .sheet(isPresented: $isShortcutInstallGuidePresented) {
             PiPShortcutInstallGuideView()
+        }
+        .alert(
+            L10n.text("启用快捷指令风险确认", "Enable Shortcuts"),
+            isPresented: $isShortcutRiskConfirmationPresented
+        ) {
+            Button(L10n.cancel, role: .cancel) {}
+            Button(L10n.text("确认启用", "Enable")) {
+                shortcutFeaturesEnabled = true
+                PiPShortcutFeatureAccess.setEnabled(true)
+                DiagnosticsRuntimeState.recordUserAction("确认启用快捷指令功能")
+            }
+        } message: {
+            Text(L10n.text(
+                "“打开并一键0.1pt”虽然方便，但可能在悬浮窗尚未吸附到屏幕侧边时直接隐藏，从而持续阻止自动熄屏。建议先打开悬浮窗并拖到侧边吸附，再执行“一键0.1pt”。确认后才会开放快捷指令安装入口并允许相关操作。",
+                "Open and One-tap 0.1 pt can hide PiP before it docks to the screen edge, which may keep auto-lock from working. Open PiP, dock it to the side, then use One-tap 0.1 pt. Shortcut setup and actions become available only after you confirm."
+            ))
         }
     }
 
@@ -852,12 +874,6 @@ struct PiPHomeView: View {
         }
     }
 
-    private var keepAliveModeDescription: String {
-        keepAliveMode == L10n.text("音频强保活", "Audio Keep-alive")
-            ? L10n.text("音频强保活，强力保活方案，缺点较为耗电，且小部分场景可能影响音频，已默认不再使用，仅适合超强保活且不在意耗电的需求用户", "Audio keep-alive is stronger but uses more power and may affect audio in some cases. It is no longer the default.")
-            : L10n.text("新方案仅PiP保活，经实测较老方案更为省电，保活效果一致，并且解决音频冲突问题，优先推荐", "Low-power PiP keep-alive is recommended. In testing it keeps the same background stability while using less power and avoiding audio conflicts.")
-    }
-
     private var settingsPopover: some View {
         VStack(alignment: .leading, spacing: 7) {
             Text(L10n.text("高级设置", "Advanced Settings"))
@@ -896,26 +912,6 @@ struct PiPHomeView: View {
                     Divider()
                         .opacity(0.42)
 
-                    SettingsActionRow(
-                        title: L10n.text("快捷指令安装", "Shortcuts Setup"),
-                        systemImage: "link.circle.fill",
-                        statusText: L10n.text(
-                            "通过 iCloud 快捷指令链接导入；搜不到动作或 iOS 17 报 1004 时，可复制 URL 方式兜底",
-                            "Import via iCloud Shortcuts links. If actions are missing or iOS 17 shows 1004, copy the URL fallback."
-                        )
-                    ) {
-                        UIImpactFeedbackGenerator(style: .light).impactOccurred()
-                        dismissKeepAliveInfoIfNeeded()
-                        dismissPiPStatusInfoIfNeededRespectingPersistence()
-                        dismissNotificationFrequencyInfoIfNeeded()
-                        dismissPiPStoppedNotificationInfoIfNeeded()
-                        dismissEngineRouteInfoIfNeeded()
-                        isShortcutInstallGuidePresented = true
-                    }
-
-                    Divider()
-                        .opacity(0.42)
-
                     SettingsToggleRow(
                         title: L10n.text("悬浮窗被挤通知", "PiP Conflict Alert"),
                         systemImage: "rectangle.on.rectangle.slash.fill",
@@ -925,6 +921,70 @@ struct PiPHomeView: View {
                                 "用于在悬浮窗被其他画中画应用挤掉或被系统停止时通知你",
                                 "Alerts you when another PiP app or the system stops the floating window."
                             )
+                        }
+                    )
+
+                    Divider()
+                        .opacity(0.42)
+
+                    SettingsToggleRow(
+                        title: L10n.text("快捷指令功能", "Shortcuts"),
+                        systemImage: "exclamationmark.triangle.fill",
+                        isOn: shortcutFeatureBinding,
+                        allowsExpandedStatusText: true,
+                        statusText: { isOn in
+                            isOn
+                                ? L10n.text(
+                                    "已确认风险；可安装并使用快捷指令",
+                                    "Risk confirmed. Shortcut setup and actions are available."
+                                )
+                                : L10n.text(
+                                    "默认关闭；一键隐藏可能阻止自动熄屏，需确认风险后启用",
+                                    "Off by default. One-tap hiding may prevent auto-lock and requires confirmation."
+                                )
+                        }
+                    )
+
+                    if shortcutFeaturesEnabled {
+                        Divider()
+                            .opacity(0.42)
+
+                        SettingsActionRow(
+                            title: L10n.text("快捷指令安装", "Shortcuts Setup"),
+                            systemImage: "link.circle.fill",
+                            statusText: L10n.text(
+                                "通过 iCloud 链接导入；请先将悬浮窗拖到侧边吸附，再使用一键0.1pt",
+                                "Import using iCloud links. Dock PiP to the side before using One-tap 0.1 pt."
+                            )
+                        ) {
+                            UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                            dismissKeepAliveInfoIfNeeded()
+                            dismissPiPStatusInfoIfNeededRespectingPersistence()
+                            dismissNotificationFrequencyInfoIfNeeded()
+                            dismissPiPStoppedNotificationInfoIfNeeded()
+                            dismissEngineRouteInfoIfNeeded()
+                            isShortcutInstallGuidePresented = true
+                        }
+                    }
+
+                    Divider()
+                        .opacity(0.42)
+
+                    SettingsToggleRow(
+                        title: L10n.text("防误触", "Confirm Before Closing"),
+                        systemImage: "hand.raised.fill",
+                        isOn: closeConfirmationBinding,
+                        allowsExpandedStatusText: true,
+                        statusText: { isOn in
+                            isOn
+                                ? L10n.text(
+                                    "通过App首页关闭悬浮窗前需要再次确认，避免误触",
+                                    "Requires confirmation before closing the floating window from the app's Home page."
+                                )
+                                : L10n.text(
+                                    "首页关闭悬浮窗时立即执行",
+                                    "Closes immediately from the app's Home page."
+                                )
                         }
                     )
 
@@ -1014,6 +1074,35 @@ struct PiPHomeView: View {
                 UIImpactFeedbackGenerator(style: .light).impactOccurred()
                 dismissPiPStatusInfoIfNeededRespectingPersistence()
                 onSetRememberPiPHeight(newValue)
+            }
+        )
+    }
+
+    private var closeConfirmationBinding: Binding<Bool> {
+        Binding(
+            get: { requiresPiPCloseConfirmation },
+            set: { newValue in
+                guard newValue != requiresPiPCloseConfirmation else { return }
+                UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                dismissPiPStatusInfoIfNeededRespectingPersistence()
+                onSetPiPCloseConfirmationRequired(newValue)
+            }
+        )
+    }
+
+    private var shortcutFeatureBinding: Binding<Bool> {
+        Binding(
+            get: { shortcutFeaturesEnabled },
+            set: { newValue in
+                guard newValue != shortcutFeaturesEnabled else { return }
+                UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                if newValue {
+                    isShortcutRiskConfirmationPresented = true
+                } else {
+                    shortcutFeaturesEnabled = false
+                    PiPShortcutFeatureAccess.setEnabled(false)
+                    DiagnosticsRuntimeState.recordUserAction("关闭快捷指令功能")
+                }
             }
         )
     }
@@ -1493,53 +1582,81 @@ private struct VersionDescriptionFrameKey: PreferenceKey {
 struct VersionPageView: View {
     let isDebugModeEnabled: Bool
     @Binding var isDebugPanelVisible: Bool
-    let isIOS26AudioKeepAliveEnabled: Bool
+    let keepAlivePolicy: KeepAlivePolicy
     let isDebugDiagnosticsEnabled: Bool
     let debugPanelResetToken: Int
     let onShowChangelog: () -> Void
     let onShowFAQ: () -> Void
     let onCopyDiagnosticsLog: () -> Void
+    let onRequestCacheCleanup: () -> Void
+    let onRequestUpdateCheck: () -> Void
+    let onRequestClearAllData: () -> Void
+    let hasAvailableUpdate: Bool
+    let hasCompletedUpdateCheck: Bool
+    let hasUpdateCheckFailed: Bool
+    let isCheckingForUpdate: Bool
+    let isBetaUpdateChannelEnabled: Bool
     let onSetDebugMode: (Bool) -> Void
     let onRequestEnableDebugMode: () -> Void
-    let onSetIOS26AudioKeepAlive: (Bool) -> Void
+    let onSetKeepAlivePolicy: (KeepAlivePolicy) -> Void
+    let onSetBetaUpdateChannelEnabled: (Bool) -> Void
     @State private var isKeepAliveInfoVisible = false
     @State private var isBetaInfoVisible = false
     @State private var isDebugDiagnosticsInfoVisible = false
     @State private var isDebugPanelClosing = false
     @State private var displayedDebugModeEnabled: Bool
-    @State private var displayedIOS26AudioKeepAliveEnabled: Bool
+    @State private var displayedKeepAlivePolicy: KeepAlivePolicy
     @State private var displayedDebugDiagnosticsEnabled: Bool
     @State private var debugModeStatusLabelFrame: CGRect = .zero
     @State private var versionDescriptionFrame: CGRect = .zero
+    @State private var suppressNextCacheTap = false
     @State private var languageRefreshToken = 0
     @AppStorage(L10n.languageOverrideKey) private var languageOverrideRawValue = ""
 
     init(
         isDebugModeEnabled: Bool,
         isDebugPanelVisible: Binding<Bool>,
-        isIOS26AudioKeepAliveEnabled: Bool,
+        keepAlivePolicy: KeepAlivePolicy,
         isDebugDiagnosticsEnabled: Bool,
         debugPanelResetToken: Int,
         onShowChangelog: @escaping () -> Void,
         onShowFAQ: @escaping () -> Void,
         onCopyDiagnosticsLog: @escaping () -> Void,
+        onRequestCacheCleanup: @escaping () -> Void,
+        onRequestUpdateCheck: @escaping () -> Void,
+        onRequestClearAllData: @escaping () -> Void,
+        hasAvailableUpdate: Bool = false,
+        hasCompletedUpdateCheck: Bool = false,
+        hasUpdateCheckFailed: Bool = false,
+        isCheckingForUpdate: Bool = false,
+        isBetaUpdateChannelEnabled: Bool,
         onSetDebugMode: @escaping (Bool) -> Void,
         onRequestEnableDebugMode: @escaping () -> Void,
-        onSetIOS26AudioKeepAlive: @escaping (Bool) -> Void
+        onSetKeepAlivePolicy: @escaping (KeepAlivePolicy) -> Void,
+        onSetBetaUpdateChannelEnabled: @escaping (Bool) -> Void
     ) {
         self.isDebugModeEnabled = isDebugModeEnabled
         _isDebugPanelVisible = isDebugPanelVisible
-        self.isIOS26AudioKeepAliveEnabled = isIOS26AudioKeepAliveEnabled
+        self.keepAlivePolicy = keepAlivePolicy
         self.isDebugDiagnosticsEnabled = isDebugDiagnosticsEnabled
         self.debugPanelResetToken = debugPanelResetToken
         self.onShowChangelog = onShowChangelog
         self.onShowFAQ = onShowFAQ
         self.onCopyDiagnosticsLog = onCopyDiagnosticsLog
+        self.onRequestCacheCleanup = onRequestCacheCleanup
+        self.onRequestUpdateCheck = onRequestUpdateCheck
+        self.onRequestClearAllData = onRequestClearAllData
+        self.hasAvailableUpdate = hasAvailableUpdate
+        self.hasCompletedUpdateCheck = hasCompletedUpdateCheck
+        self.hasUpdateCheckFailed = hasUpdateCheckFailed
+        self.isCheckingForUpdate = isCheckingForUpdate
+        self.isBetaUpdateChannelEnabled = isBetaUpdateChannelEnabled
         self.onSetDebugMode = onSetDebugMode
         self.onRequestEnableDebugMode = onRequestEnableDebugMode
-        self.onSetIOS26AudioKeepAlive = onSetIOS26AudioKeepAlive
+        self.onSetKeepAlivePolicy = onSetKeepAlivePolicy
+        self.onSetBetaUpdateChannelEnabled = onSetBetaUpdateChannelEnabled
         _displayedDebugModeEnabled = State(initialValue: isDebugModeEnabled)
-        _displayedIOS26AudioKeepAliveEnabled = State(initialValue: isIOS26AudioKeepAliveEnabled)
+        _displayedKeepAlivePolicy = State(initialValue: keepAlivePolicy)
         _displayedDebugDiagnosticsEnabled = State(initialValue: isDebugDiagnosticsEnabled)
     }
 
@@ -1558,6 +1675,38 @@ struct VersionPageView: View {
                 PageHeaderTitle(title: L10n.about)
 
                 Spacer()
+
+                Button {
+                    UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                    guard !suppressNextCacheTap else {
+                        suppressNextCacheTap = false
+                        return
+                    }
+                    dismissDebugPanel()
+                    dismissKeepAliveInfoPanel()
+                    dismissBetaInfoPanel()
+                    dismissDebugDiagnosticsInfoPanel()
+                    onRequestCacheCleanup()
+                } label: {
+                    CacheCleanupButton()
+                }
+                .buttonStyle(.plain)
+                .help(L10n.cacheCleanupTitle)
+                .accessibilityLabel(L10n.cacheCleanupTitle)
+                .accessibilityHint(L10n.text("长按可清空全部数据并回到首次加载页面", "Long press to erase all app data and return to the first-launch screen"))
+                .highPriorityGesture(
+                    LongPressGesture(minimumDuration: 1.05, maximumDistance: 22)
+                        .onEnded { _ in
+                            suppressNextCacheTap = true
+                            UIImpactFeedbackGenerator(style: .heavy).impactOccurred()
+                            dismissDebugPanel()
+                            dismissKeepAliveInfoPanel()
+                            dismissBetaInfoPanel()
+                            dismissDebugDiagnosticsInfoPanel()
+                            onRequestClearAllData()
+                        }
+                )
+                .padding(.trailing, 2)
 
                 Button {
                     UIImpactFeedbackGenerator(style: .light).impactOccurred()
@@ -1610,13 +1759,80 @@ struct VersionPageView: View {
 	                            Text(L10n.versionDisplay)
 	                                .font(.system(size: layout.versionNumberSize, weight: .bold, design: .rounded))
 	                                .foregroundColor(Color(UIColor.label))
+	                                .lineLimit(1)
+	                                .fixedSize(horizontal: true, vertical: true)
+	                                .layoutPriority(3)
 
                                 if L10n.isBetaBuild {
                                     betaVersionBadge
                                 }
+
+                                Button {
+                                    UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                                    dismissDebugPanel()
+                                    dismissKeepAliveInfoPanel()
+                                    dismissBetaInfoPanel()
+                                    dismissDebugDiagnosticsInfoPanel()
+                                    onRequestUpdateCheck()
+                                } label: {
+                                    UpdateCheckButton(
+                                        hasUpdate: hasAvailableUpdate,
+                                        isChecking: isCheckingForUpdate
+                                    )
+                                }
+                                .buttonStyle(.plain)
+                                .help(L10n.text("检查更新", "Check for Updates"))
+                                .accessibilityLabel(L10n.text("检查更新", "Check for Updates"))
 	                        }
-	                        .lineLimit(1)
-	                        .minimumScaleFactor(0.72)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .layoutPriority(3)
+
+                        Button {
+                            UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                            onRequestUpdateCheck()
+                        } label: {
+                            let updateStatusColor = isCheckingForUpdate
+                                ? Color(UIColor.systemGreen)
+                                : hasUpdateCheckFailed
+                                ? Color(UIColor.systemOrange)
+                                : hasAvailableUpdate
+                                ? Color(UIColor.systemRed)
+                                : Color(UIColor.systemGreen)
+
+                            let updateStatusText = isCheckingForUpdate
+                                ? L10n.text("检测中", "Checking")
+                                : hasUpdateCheckFailed
+                                ? L10n.text("检查失败", "Check Failed")
+                                : hasAvailableUpdate
+                                ? L10n.text("检测到新版本", "New Version Available")
+                                : L10n.text("当前已是最新版", "You're Up to Date")
+
+                            HStack(spacing: 5) {
+                                Circle()
+                                    .fill(updateStatusColor)
+                                    .frame(width: 7, height: 7)
+                                Text(updateStatusText)
+                                    .font(.system(size: 12, weight: .bold))
+                            }
+                            .foregroundColor(updateStatusColor)
+                            .padding(.horizontal, 10)
+                            .frame(height: 24)
+                            .background(
+                                Capsule()
+                                    .fill(updateStatusColor.opacity(0.1))
+                                    .overlay(
+                                        Capsule().strokeBorder(
+                                            updateStatusColor.opacity(0.32),
+                                            lineWidth: 1
+                                        )
+                                    )
+                            )
+                        }
+                        .buttonStyle(.plain)
+                        .disabled(isCheckingForUpdate)
+                        .transaction { transaction in
+                            transaction.animation = nil
+                        }
 
                         Button {
                             UIImpactFeedbackGenerator(style: .light).impactOccurred()
@@ -1658,9 +1874,11 @@ struct VersionPageView: View {
                         }
                     )
 
-                Color.clear
-                    .frame(height: layout.versionReservedControlsHeight)
-                    .padding(.top, layout.versionReservedControlsTopPadding)
+                if !layout.isCompact {
+                    Color.clear
+                        .frame(height: layout.versionReservedControlsHeight)
+                        .padding(.top, layout.versionReservedControlsTopPadding)
+                }
 
                 if !layout.isCompact {
                     copyDiagnosticsLogButton
@@ -1700,9 +1918,9 @@ struct VersionPageView: View {
                 dismissDebugDiagnosticsInfoPanel()
             }
         }
-        .onChange(of: isIOS26AudioKeepAliveEnabled) { newValue in
-            guard newValue != displayedIOS26AudioKeepAliveEnabled else { return }
-            displayedIOS26AudioKeepAliveEnabled = newValue
+        .onChange(of: keepAlivePolicy) { newValue in
+            guard newValue != displayedKeepAlivePolicy else { return }
+            displayedKeepAlivePolicy = newValue
         }
         .onChange(of: isDebugDiagnosticsEnabled) { newValue in
             guard newValue != displayedDebugDiagnosticsEnabled else { return }
@@ -1798,13 +2016,13 @@ struct VersionPageView: View {
         }
     }
 
-    private func setIOS26AudioKeepAlive(_ isEnabled: Bool) {
+    private func setKeepAlivePolicy(_ policy: KeepAlivePolicy) {
         var transaction = Transaction()
         transaction.disablesAnimations = true
         withTransaction(transaction) {
-            displayedIOS26AudioKeepAliveEnabled = isEnabled
+            displayedKeepAlivePolicy = policy
         }
-        onSetIOS26AudioKeepAlive(isEnabled)
+        onSetKeepAlivePolicy(policy)
     }
 
     private func openGitHubLink() {
@@ -1819,13 +2037,11 @@ struct VersionPageView: View {
     }
 
     private var keepAliveModeTitle: String {
-        displayedIOS26AudioKeepAliveEnabled ? L10n.text("音频强保活", "Audio Keep-alive") : L10n.text("PiP保活-低功耗", "PiP Keep-alive")
+        displayedKeepAlivePolicy.title
     }
 
     private var keepAliveModeDescription: String {
-        displayedIOS26AudioKeepAliveEnabled
-            ? L10n.text("音频强保活，强力保活方案，缺点较为耗电，且小部分场景可能影响音频，已默认不再使用，仅适合超强保活且不在意耗电的需求用户", "Audio keep-alive is stronger but uses more power and may affect audio in some cases. It is no longer the default.")
-            : L10n.text("新方案仅PiP保活，经实测较老方案更为省电，保活效果一致，并且解决音频冲突问题，优先推荐", "Low-power PiP keep-alive is recommended. In testing it keeps the same background stability while using less power and avoiding audio conflicts.")
+        displayedKeepAlivePolicy.detail
     }
 
     private var fixedFAQButtons: some View {
@@ -1990,23 +2206,34 @@ struct VersionPageView: View {
     private var fixedDebugPanel: some View {
         GeometryReader { proxy in
             if isDebugPanelVisible || isDebugPanelClosing {
-                DebugModePanel(
-                    isEnabled: displayedDebugModeEnabled,
-                    isIOS26AudioKeepAliveEnabled: displayedIOS26AudioKeepAliveEnabled,
-                    onSetEnabled: setDebugMode,
-                    onSetIOS26AudioKeepAlive: setIOS26AudioKeepAlive,
-                    isClosing: isDebugPanelClosing
-                )
-                .scaleEffect(isDebugPanelVisible ? 1 : 0.985, anchor: .top)
+                VStack(spacing: 0) {
+                    Spacer(minLength: 0)
+
+                    DebugModePanel(
+                        isEnabled: displayedDebugModeEnabled,
+                        keepAlivePolicy: displayedKeepAlivePolicy,
+                        isBetaUpdateChannelEnabled: isBetaUpdateChannelEnabled,
+                        onSetEnabled: setDebugMode,
+                        onSetKeepAlivePolicy: setKeepAlivePolicy,
+                        onSetBetaUpdateChannelEnabled: onSetBetaUpdateChannelEnabled,
+                        isClosing: isDebugPanelClosing
+                    )
+                    .padding(.bottom, max(proxy.safeAreaInsets.bottom, 0) + 5)
+                }
+                .frame(width: proxy.size.width, height: proxy.size.height, alignment: .bottom)
+                .scaleEffect(isDebugPanelVisible ? 1 : 0.985, anchor: .bottom)
                 .opacity(isDebugPanelVisible ? 1 : 0)
                 .allowsHitTesting(isDebugPanelVisible && !isDebugPanelClosing)
                 .transition(
                     .asymmetric(
-                        insertion: .opacity.combined(with: .scale(scale: 0.985, anchor: .top)),
+                        insertion: .opacity.combined(with: .scale(scale: 0.985, anchor: .bottom)),
                         removal: .opacity
                     )
                 )
-                .position(x: proxy.size.width / 2, y: debugPanelCenterY)
+                .animation(
+                    .interpolatingSpring(mass: 0.45, stiffness: 420, damping: 36, initialVelocity: 0.12),
+                    value: isDebugPanelVisible
+                )
             }
         }
         .zIndex(5)
@@ -2147,10 +2374,10 @@ struct VersionPageView: View {
     }
 
     private var fixedFAQRowCenterY: CGFloat {
-        guard !L10n.usesChinese, versionDescriptionFrame != .zero else {
+        guard versionDescriptionFrame != .zero else {
             return layout.versionFAQRowCenterY
         }
-        return max(layout.versionFAQRowCenterY, versionDescriptionFrame.maxY + 5 + 23)
+        return max(layout.versionFAQRowCenterY, versionDescriptionFrame.maxY + 12 + 23)
     }
 
     private var languageSwitchAnimation: Animation {
@@ -2181,17 +2408,6 @@ struct VersionPageView: View {
             return L10n.text("调试模式已开启，可复制诊断日志、切换保活方案。当前已合并记录线程与性能信息，会记录主线程响应、UI帧间隔异常、CPU、内存、线程状态、热状态、电量、当前页面、悬浮窗状态和最近操作，可帮助开发者分析卡死、发热和后台异常。关闭调试模式后会一起关闭。", "Debug mode is on. Diagnostics include thread and performance data for investigating freezes, heat, and background issues. Turning debug mode off disables this logging.")
         }
         return L10n.text("调试模式已开启，但诊断监控当前未运行。若不是刚切换状态，请关闭后重新开启调试模式。", "Debug mode is on, but diagnostics are not running. If this is not a transient state, turn Debug Mode off and on again.")
-    }
-
-    private var debugPanelCenterY: CGFloat {
-        let normalY = fixedFAQRowCenterY + 54 + debugPanelCenterOffset
-        guard layout.isCompact else { return normalY }
-        let maxY = layout.size.height - (displayedDebugModeEnabled ? 126 : 74)
-        return min(normalY, maxY)
-    }
-
-    private var debugPanelCenterOffset: CGFloat {
-        displayedDebugModeEnabled ? 92 : 48
     }
 
     private var versionFlagBackground: AnyView {
@@ -2302,6 +2518,81 @@ private struct DebugModeButton: View {
     }
 }
 
+private struct CacheCleanupButton: View {
+    var body: some View {
+        let shape = Circle()
+        Image(systemName: UIImage(systemName: "broom.fill") == nil ? "paintbrush.fill" : "broom.fill")
+            .font(.system(size: 15, weight: .bold))
+            .foregroundColor(Color(UIColor.systemRed))
+            .frame(width: 38, height: 38)
+            .background(glassBackground(shape: shape))
+            .overlay(
+                shape.strokeBorder(Color(UIColor.separator).opacity(0.52), lineWidth: 1)
+            )
+            .clipShape(Circle())
+            .contentShape(Circle())
+    }
+
+    private func glassBackground(shape: Circle) -> AnyView {
+        if #available(iOS 26.0, *) {
+            return AnyView(
+                shape
+                    .fill(Color(UIColor.secondarySystemGroupedBackground).opacity(0.22))
+                    .glassEffect(.regular.interactive(), in: shape)
+            )
+        }
+        return AnyView(
+            shape
+                .fill(.regularMaterial)
+                .overlay(shape.fill(Color(UIColor.secondarySystemBackground).opacity(0.38)))
+        )
+    }
+}
+
+private struct UpdateCheckButton: View {
+    let hasUpdate: Bool
+    let isChecking: Bool
+
+    var body: some View {
+        ZStack(alignment: .topTrailing) {
+            if isChecking {
+                RotatingRefreshIcon()
+            } else {
+                Image(systemName: "arrow.clockwise.circle.fill")
+                    .font(.system(size: 21, weight: .semibold))
+                    .foregroundColor(Color(UIColor.systemBlue))
+                    .frame(width: 30, height: 30)
+            }
+
+            Circle()
+                .fill(Color(UIColor.systemRed))
+                .frame(width: 8, height: 8)
+                .overlay(Circle().stroke(Color(UIColor.systemGroupedBackground), lineWidth: 2))
+                .offset(x: 1, y: -1)
+                .opacity(isChecking ? 0 : (hasUpdate ? 1 : 0))
+        }
+        .frame(width: 30, height: 30)
+        .contentShape(Rectangle())
+    }
+}
+
+private struct RotatingRefreshIcon: View {
+    @State private var rotation: Double = 0
+
+    var body: some View {
+        Image(systemName: "arrow.clockwise.circle.fill")
+            .font(.system(size: 21, weight: .semibold))
+            .foregroundColor(Color(UIColor.systemBlue))
+            .frame(width: 30, height: 30)
+            .rotationEffect(.degrees(rotation))
+            .onAppear {
+                withAnimation(.linear(duration: 0.72).repeatForever(autoreverses: false)) {
+                    rotation = 360
+                }
+            }
+    }
+}
+
 private struct LanguageToggleButton: View {
     let title: String
 
@@ -2406,29 +2697,49 @@ private struct CopyLogButton: View {
     }
 }
 
+private struct BetaCapsuleBadge: View {
+    var body: some View {
+        Text("beta")
+            .font(.system(size: 9, weight: .black, design: .rounded))
+            .foregroundColor(Color(UIColor.systemRed))
+            .padding(.horizontal, 5)
+            .frame(height: 16)
+            .background(Capsule().fill(Color(UIColor.systemRed).opacity(0.14)))
+            .overlay(Capsule().strokeBorder(Color(UIColor.systemRed).opacity(0.35), lineWidth: 1))
+    }
+}
+
 private struct DebugModePanel: View {
     let isEnabled: Bool
-    let isIOS26AudioKeepAliveEnabled: Bool
+    let keepAlivePolicy: KeepAlivePolicy
+    let isBetaUpdateChannelEnabled: Bool
     let onSetEnabled: (Bool) -> Void
-    let onSetIOS26AudioKeepAlive: (Bool) -> Void
+    let onSetKeepAlivePolicy: (KeepAlivePolicy) -> Void
+    let onSetBetaUpdateChannelEnabled: (Bool) -> Void
     let isClosing: Bool
     @State private var displayedIsEnabled: Bool
-    @State private var displayedIOS26AudioKeepAliveEnabled: Bool
+    @State private var displayedKeepAlivePolicy: KeepAlivePolicy
+    @State private var displayedBetaUpdateChannelEnabled: Bool
 
     init(
         isEnabled: Bool,
-        isIOS26AudioKeepAliveEnabled: Bool,
+        keepAlivePolicy: KeepAlivePolicy,
+        isBetaUpdateChannelEnabled: Bool,
         onSetEnabled: @escaping (Bool) -> Void,
-        onSetIOS26AudioKeepAlive: @escaping (Bool) -> Void,
+        onSetKeepAlivePolicy: @escaping (KeepAlivePolicy) -> Void,
+        onSetBetaUpdateChannelEnabled: @escaping (Bool) -> Void,
         isClosing: Bool = false
     ) {
         self.isEnabled = isEnabled
-        self.isIOS26AudioKeepAliveEnabled = isIOS26AudioKeepAliveEnabled
+        self.keepAlivePolicy = keepAlivePolicy
+        self.isBetaUpdateChannelEnabled = isBetaUpdateChannelEnabled
         self.onSetEnabled = onSetEnabled
-        self.onSetIOS26AudioKeepAlive = onSetIOS26AudioKeepAlive
+        self.onSetKeepAlivePolicy = onSetKeepAlivePolicy
+        self.onSetBetaUpdateChannelEnabled = onSetBetaUpdateChannelEnabled
         self.isClosing = isClosing
         _displayedIsEnabled = State(initialValue: isEnabled)
-        _displayedIOS26AudioKeepAliveEnabled = State(initialValue: isIOS26AudioKeepAliveEnabled)
+        _displayedKeepAlivePolicy = State(initialValue: keepAlivePolicy)
+        _displayedBetaUpdateChannelEnabled = State(initialValue: isBetaUpdateChannelEnabled)
     }
 
     var body: some View {
@@ -2456,28 +2767,83 @@ private struct DebugModePanel: View {
                 Divider()
                     .opacity(0.42)
 
-                HStack(spacing: 10) {
-                    Image(systemName: "waveform")
+                HStack(spacing: 8) {
+                    Image(systemName: "waveform.path.ecg")
                         .font(.system(size: 18, weight: .bold))
                         .frame(width: 22, alignment: .center)
                     Text(L10n.text("保活方案切换", "Keep-alive Mode"))
                         .font(.system(size: 16, weight: .bold))
                         .lineLimit(1)
-                    Spacer(minLength: 10)
-                    Toggle("", isOn: lowPowerPiPBinding)
-                        .labelsHidden()
+                    Spacer(minLength: 4)
                 }
-                .frame(height: 32)
+                .frame(height: 26)
 
-                VStack(alignment: .leading, spacing: 4) {
-                    Text(L10n.text("开启：新方案仅PiP保活，经实测较老方案更为省电，保活效果一致，并且解决音频冲突问题，优先推荐", "On: low-power PiP keep-alive. Recommended."))
-                    Text(L10n.text("关闭：音频强保活，强力保活方案，缺点较为耗电，且小部分场景可能影响音频，已默认不再使用，仅适合超强保活且不在意耗电的需求用户", "Off: audio keep-alive. Stronger but uses more power and may affect audio."))
+                Menu {
+                    ForEach(KeepAlivePolicy.allCases) { policy in
+                        Button {
+                            guard policy != displayedKeepAlivePolicy else { return }
+                            displayedKeepAlivePolicy = policy
+                            onSetKeepAlivePolicy(policy)
+                        } label: {
+                            Label(
+                                policy.title + (policy.isExperimental ? " · beta" : ""),
+                                systemImage: policy == displayedKeepAlivePolicy ? "checkmark.circle.fill" : "circle"
+                            )
+                        }
+                    }
+                } label: {
+                    HStack(spacing: 6) {
+                        Text(displayedKeepAlivePolicy.title)
+                            .font(.system(size: 14, weight: .bold))
+                            .lineLimit(1)
+                            .minimumScaleFactor(0.78)
+                        if displayedKeepAlivePolicy.isExperimental {
+                            BetaCapsuleBadge()
+                        }
+                        Spacer(minLength: 4)
+                        Image(systemName: "chevron.up.chevron.down")
+                            .font(.system(size: 11, weight: .bold))
+                            .foregroundColor(Color(UIColor.secondaryLabel))
+                    }
+                    .padding(.horizontal, 12)
+                    .frame(height: 38)
+                    .background(
+                        RoundedRectangle(cornerRadius: 14, style: .continuous)
+                            .fill(Color(UIColor.tertiarySystemFill))
+                    )
                 }
+
+                Text(displayedKeepAlivePolicy.detail)
                 .font(.system(size: 12, weight: .semibold))
                 .foregroundColor(Color(UIColor.secondaryLabel))
                 .fixedSize(horizontal: false, vertical: true)
 
             }
+
+            Divider()
+                .opacity(0.42)
+
+            HStack(spacing: 8) {
+                Image(systemName: "arrow.triangle.2.circlepath")
+                    .font(.system(size: 17, weight: .bold))
+                    .frame(width: 22, alignment: .center)
+                Text(L10n.text("检测 Beta 版本更新", "Check Beta Updates"))
+                    .font(.system(size: 16, weight: .bold))
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.78)
+                Spacer(minLength: 6)
+                Toggle("", isOn: betaUpdateChannelBinding)
+                    .labelsHidden()
+            }
+            .frame(minHeight: 32)
+
+            Text(L10n.text(
+                "无需开启调试模式。打开后会检查 GitHub 已发布的 Beta 版本；同版本正式版发布后优先提示正式版。",
+                "Debug Mode is not required. Checks published GitHub Beta releases; a stable release supersedes its prerelease."
+            ))
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundColor(Color(UIColor.secondaryLabel))
+                .fixedSize(horizontal: false, vertical: true)
         }
         .foregroundColor(Color(UIColor.label))
         .padding(.horizontal, 16)
@@ -2494,9 +2860,13 @@ private struct DebugModePanel: View {
             guard newValue != displayedIsEnabled else { return }
             displayedIsEnabled = newValue
         }
-        .onChange(of: isIOS26AudioKeepAliveEnabled) { newValue in
-            guard newValue != displayedIOS26AudioKeepAliveEnabled else { return }
-            displayedIOS26AudioKeepAliveEnabled = newValue
+        .onChange(of: keepAlivePolicy) { newValue in
+            guard newValue != displayedKeepAlivePolicy else { return }
+            displayedKeepAlivePolicy = newValue
+        }
+        .onChange(of: isBetaUpdateChannelEnabled) { newValue in
+            guard newValue != displayedBetaUpdateChannelEnabled else { return }
+            displayedBetaUpdateChannelEnabled = newValue
         }
     }
 
@@ -2510,14 +2880,13 @@ private struct DebugModePanel: View {
         )
     }
 
-    private var lowPowerPiPBinding: Binding<Bool> {
+    private var betaUpdateChannelBinding: Binding<Bool> {
         Binding(
-            get: { !displayedIOS26AudioKeepAliveEnabled },
+            get: { displayedBetaUpdateChannelEnabled },
             set: { newValue in
-                let audioKeepAliveEnabled = !newValue
-                guard audioKeepAliveEnabled != displayedIOS26AudioKeepAliveEnabled else { return }
-                displayedIOS26AudioKeepAliveEnabled = audioKeepAliveEnabled
-                onSetIOS26AudioKeepAlive(audioKeepAliveEnabled)
+                guard newValue != displayedBetaUpdateChannelEnabled else { return }
+                displayedBetaUpdateChannelEnabled = newValue
+                onSetBetaUpdateChannelEnabled(newValue)
             }
         )
     }
@@ -2705,8 +3074,8 @@ private struct PiPShortcutInstallGuideView: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: 14) {
                     Text(L10n.text(
-                        "推荐使用 iCloud 快捷指令链接导入；导入时仍需系统确认。iOS 15 搜不到 App 动作，或 iOS 17 偶发 1004 时，用下方 URL 方式最稳。iOS18+请在控制中心-快捷指令-全局高刷添加，本页面功能适用于iOS15-iOS17。",
-                        "Use iCloud Shortcuts links for setup. iOS still asks for confirmation. If iOS 15 cannot find app actions, or iOS 17 shows 1004, use the URL fallback below. On iOS 18+, add Global Refresh from Control Center > Shortcuts. This page is for iOS 15 to iOS 17."
+                        "推荐使用 iCloud 快捷指令链接导入；导入时仍需系统确认。请先打开悬浮窗并拖到侧边吸附，再执行一键0.1pt，避免阻止自动熄屏。iOS 15 搜不到 App 动作，或 iOS 17 偶发 1004 时，可使用下方 URL。iOS18+请在控制中心-快捷指令-全局高刷添加。",
+                        "Use iCloud Shortcuts links for setup. Open PiP and dock it to the side before using One-tap 0.1 pt so auto-lock keeps working. If iOS 15 cannot find app actions, or iOS 17 shows 1004, use the URL fallback. On iOS 18+, add Global Refresh from Control Center > Shortcuts."
                     ))
                     .font(.system(size: 14, weight: .semibold))
                     .foregroundColor(Color(UIColor.secondaryLabel))

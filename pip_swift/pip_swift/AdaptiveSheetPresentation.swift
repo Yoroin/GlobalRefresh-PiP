@@ -14,7 +14,11 @@ extension UIViewController {
         }
 
         if #available(iOS 26.0, *) {
-            sheet.detents = [.medium()]
+            let mediumDetent = UISheetPresentationController.Detent.medium()
+            if #available(iOS 26.1, *) {
+                mediumDetent.backgroundEffect = UIGlassEffect(style: .clear)
+            }
+            sheet.detents = [mediumDetent]
             sheet.prefersGrabberVisible = true
             return
         }
@@ -39,9 +43,25 @@ extension UIViewController {
     }
 
     func applyLegacyGlassSheetBackground() -> UIView {
-        guard #unavailable(iOS 26.0) else {
-            view.backgroundColor = .systemGroupedBackground
-            return view
+        if #available(iOS 26.0, *) {
+            view.backgroundColor = .clear
+
+            let glassEffect = UIGlassEffect(style: .regular)
+            glassEffect.isInteractive = true
+            let glassView = UIVisualEffectView(effect: glassEffect)
+            glassView.layer.cornerRadius = adaptiveSheetCornerRadius
+            glassView.layer.cornerCurve = .continuous
+            glassView.clipsToBounds = true
+            glassView.translatesAutoresizingMaskIntoConstraints = false
+
+            view.addSubview(glassView)
+            NSLayoutConstraint.activate([
+                glassView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+                glassView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+                glassView.topAnchor.constraint(equalTo: view.topAnchor),
+                glassView.bottomAnchor.constraint(equalTo: view.bottomAnchor)
+            ])
+            return glassView.contentView
         }
 
         view.backgroundColor = .clear

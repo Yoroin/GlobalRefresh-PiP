@@ -13,6 +13,11 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
     func application(_ application: UIApplication, didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]?) -> Bool {
         // Override point for customization after application launch.
         DiagnosticsResetManager.resetDiagnosticsIfBuildChanged()
+        DiagnosticsResetManager.clearDiagnosticsIfDebugModeDisabled()
+        AppDebugLogger.trimOnLaunch()
+        AppDebugLogger.registerBackgroundFlush()
+        CacheCleanupManager.cleanOnLaunch()
+        GeneratedPiPVideoCache.prepareForLaunch()
         KeepAliveModeText.migrateDefaultToLowPowerPiPIfNeeded()
         KeepAliveNotificationTester.sanitizeOnLaunch()
         PiPShortcutRuntimeRegistration.warmUpProviderIfAvailable()
@@ -21,6 +26,7 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
             DiagnosticsRuntimeState.refreshAppState()
             MetricKitLogger.shared.start()
             DebugDiagnosticsMonitor.setEnabled(true)
+            ProcessTerminationDiagnostics.prepareForLaunch()
         }
         return true
     }

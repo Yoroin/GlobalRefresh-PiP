@@ -11,11 +11,22 @@ import OSLog
 enum AppDebugLogger {
     private static let storageKey = "pip.debug.recentLogs"
     private static let debugModeKey = "pip.debug.modeEnabled"
-    private static let maximumEntries = 200
+    private static let maximumEntries = 600
+    private static let maximumEntryBytes = 8 * 1024
+    private static let maximumBufferBytes = 1_500_000
     private static let logger = Logger(subsystem: "com.yoroin.globalrefresh", category: "diagnostics")
-    private static let logQueue = DispatchQueue(label: "com.yoroin.globalrefresh.appDebugLog", qos: .utility)
+    private static let logQueueKey = DispatchSpecificKey<Void>()
+    private static let logQueue: DispatchQueue = {
+        let queue = DispatchQueue(label: "com.yoroin.globalrefresh.appDebugLog", qos: .utility)
+        queue.setSpecific(key: logQueueKey, value: ())
+        return queue
+    }()
+    private static let registrationLock = NSLock()
+    private static var didRegisterBackgroundFlush = false
+    private static var didTrimOnLaunch = false
     // 内存环形缓存：日志只写内存，不实时写 UserDefaults
     private static var memoryBuffer: [String] = []
+    private static var memoryBufferBytes = 0
 
     static var isDebugModeEnabled: Bool {
         get { UserDefaults.standard.bool(forKey: debugModeKey) }
@@ -24,11 +35,25 @@ enum AppDebugLogger {
 
     // 启动时清理旧积压数据，并加载历史日志到内存
     static func trimOnLaunch() {
+        registrationLock.lock()
+        guard !didTrimOnLaunch else {
+            registrationLock.unlock()
+            return
+        }
+        didTrimOnLaunch = true
+        registrationLock.unlock()
         logQueue.async {
+            guard isDebugModeEnabled else {
+                memoryBuffer.removeAll(keepingCapacity: false)
+                memoryBufferBytes = 0
+                UserDefaults.standard.removeObject(forKey: storageKey)
+                return
+            }
             let stored = UserDefaults.standard.stringArray(forKey: storageKey) ?? []
-            memoryBuffer = stored.suffix(maximumEntries)
-            // 清理旧的大量积压（旧版本留下的）
-            if stored.count > maximumEntries {
+            memoryBuffer = stored.suffix(maximumEntries).map(limitEntry)
+            memoryBufferBytes = memoryBuffer.reduce(into: 0) { $0 += $1.utf8.count }
+            trimMemoryBuffer()
+            if stored != memoryBuffer {
                 UserDefaults.standard.set(memoryBuffer, forKey: storageKey)
             }
         }
@@ -36,6 +61,13 @@ enum AppDebugLogger {
 
     // 注册后台/终止时落盘，在 viewDidLoad 调用一次即可
     static func registerBackgroundFlush() {
+        registrationLock.lock()
+        guard !didRegisterBackgroundFlush else {
+            registrationLock.unlock()
+            return
+        }
+        didRegisterBackgroundFlush = true
+        registrationLock.unlock()
         NotificationCenter.default.addObserver(forName: UIApplication.didEnterBackgroundNotification, object: nil, queue: nil) { _ in
             flush()
         }
@@ -46,22 +78,40 @@ enum AppDebugLogger {
 
     // 只写内存，不碰 UserDefaults
     static func log(_ message: String, file: StaticString = #fileID, line: UInt = #line) {
+        append(message, persistImmediately: false, file: file, line: line)
+    }
+
+    // 生命周期、内存警告和保活切换使用此入口，避免系统直接终止时最后状态只留在内存。
+    static func logCritical(_ message: String, file: StaticString = #fileID, line: UInt = #line) {
+        append(message, persistImmediately: true, file: file, line: line)
+    }
+
+    private static func append(
+        _ message: String,
+        persistImmediately: Bool,
+        file: StaticString,
+        line: UInt
+    ) {
         guard isDebugModeEnabled else { return }
-        DiagnosticsRuntimeState.updateLastEvent(message)
-        logger.info("\(message, privacy: .public)")
+        let limitedMessage = limitEntry(message)
+        DiagnosticsRuntimeState.updateLastEvent(limitedMessage)
+        logger.info("\(limitedMessage, privacy: .public)")
         let device = UIDevice.current
-        let entry = [
+        let entry = limitEntry([
             beijingFormatter.string(from: Date()),
             "iOS \(device.systemVersion)",
             deviceModelIdentifier,
             "\(file):\(line)",
-            message
-        ].joined(separator: " | ")
+            limitedMessage
+        ].joined(separator: " | "))
 
         logQueue.async {
             memoryBuffer.append(entry)
-            if memoryBuffer.count > maximumEntries {
-                memoryBuffer.removeFirst(memoryBuffer.count - maximumEntries)
+            memoryBufferBytes += entry.utf8.count
+            trimMemoryBuffer()
+            if persistImmediately {
+                UserDefaults.standard.set(memoryBuffer, forKey: storageKey)
+                UserDefaults.standard.synchronize()
             }
         }
     }
@@ -69,6 +119,12 @@ enum AppDebugLogger {
     // 只在复制日志/进后台/终止时落盘
     static func flush() {
         logQueue.async {
+            guard isDebugModeEnabled else {
+                memoryBuffer.removeAll(keepingCapacity: false)
+                memoryBufferBytes = 0
+                UserDefaults.standard.removeObject(forKey: storageKey)
+                return
+            }
             guard !memoryBuffer.isEmpty else { return }
             UserDefaults.standard.set(memoryBuffer, forKey: storageKey)
         }
@@ -87,6 +143,7 @@ enum AppDebugLogger {
         线程与性能日志记录：开启
         当前现场：\(DiagnosticsRuntimeState.snapshotText())
         实时性能：\(PerformanceDiagnosticsLogger.currentSnapshotText())
+        \(ProcessTerminationDiagnostics.exportText())
         """
             : ""
 
@@ -110,11 +167,35 @@ enum AppDebugLogger {
     }
 
     static func resetLogs() {
-        logQueue.async {
-            memoryBuffer.removeAll()
+        let clearBuffer = {
+            memoryBuffer.removeAll(keepingCapacity: false)
+            memoryBufferBytes = 0
             UserDefaults.standard.removeObject(forKey: storageKey)
         }
+        if DispatchQueue.getSpecific(key: logQueueKey) != nil {
+            clearBuffer()
+        } else {
+            logQueue.sync(execute: clearBuffer)
+        }
         DiagnosticsRuntimeState.reset()
+        ProcessTerminationDiagnostics.reset()
+    }
+
+    private static func limitEntry(_ text: String) -> String {
+        guard text.utf8.count > maximumEntryBytes else { return text }
+        let marker = "\n[日志过长，已截断]"
+        let prefixByteCount = max(0, maximumEntryBytes - marker.utf8.count)
+        return String(decoding: text.utf8.prefix(prefixByteCount), as: UTF8.self) + marker
+    }
+
+    private static func trimMemoryBuffer() {
+        while memoryBuffer.count > maximumEntries || memoryBufferBytes > maximumBufferBytes {
+            guard !memoryBuffer.isEmpty else {
+                memoryBufferBytes = 0
+                return
+            }
+            memoryBufferBytes -= memoryBuffer.removeFirst().utf8.count
+        }
     }
 
     private static let beijingFormatter: DateFormatter = {
@@ -485,6 +566,7 @@ enum PerformanceDiagnosticsLogger {
     private static let enabledKey = "pip.debug.performanceDiagnosticsEnabled"
     private static let queue = DispatchQueue(label: "pip.debug.performance-diagnostics")
     private static var timer: DispatchSourceTimer?
+    private static var isRuntimeSamplingSuppressed = false
 
     static var isEnabled: Bool {
         UserDefaults.standard.bool(forKey: enabledKey)
@@ -503,9 +585,18 @@ enum PerformanceDiagnosticsLogger {
         queue.async {
             guard timer == nil else { return }
             let source = DispatchSource.makeTimerSource(queue: queue)
-            source.schedule(deadline: .now() + 2, repeating: 15)
+            source.schedule(deadline: .now() + 2, repeating: 60, leeway: .seconds(3))
             source.setEventHandler {
-                AppDebugLogger.log(makeSnapshot())
+                guard !isRuntimeSamplingSuppressed else { return }
+                let snapshot = makeSnapshot()
+                AppDebugLogger.log(snapshot)
+                DispatchQueue.main.async {
+                    let runtime = DiagnosticsRuntimeState.snapshotText(includeAudio: false)
+                    ProcessTerminationDiagnostics.recordCheckpoint(
+                        reason: "60秒性能心跳",
+                        pipSnapshot: "\(runtime), 性能{\(snapshot)}"
+                    )
+                }
             }
             timer = source
             source.resume()
@@ -517,6 +608,17 @@ enum PerformanceDiagnosticsLogger {
         queue.async {
             timer?.cancel()
             timer = nil
+            isRuntimeSamplingSuppressed = false
+        }
+    }
+
+    static func setRuntimeSamplingSuppressed(_ isSuppressed: Bool, reason: String) {
+        queue.async {
+            guard isRuntimeSamplingSuppressed != isSuppressed else { return }
+            isRuntimeSamplingSuppressed = isSuppressed
+            AppDebugLogger.log(
+                "Performance diagnostics runtime sampling \(isSuppressed ? "suppressed" : "resumed"): \(reason)"
+            )
         }
     }
 
@@ -729,6 +831,9 @@ enum DebugDiagnosticsMonitor {
         MainThreadWatchdog.setEnabled(isEnabled)
         FrameStutterMonitor.setEnabled(isEnabled)
         PerformanceDiagnosticsLogger.setEnabled(isEnabled)
+        if !isEnabled {
+            DiagnosticsRuntimeState.stopAppStateTracking()
+        }
     }
 
     static func startIfNeeded() {
@@ -741,5 +846,244 @@ enum DebugDiagnosticsMonitor {
         MainThreadWatchdog.stop()
         FrameStutterMonitor.stop()
         PerformanceDiagnosticsLogger.stop()
+    }
+}
+enum ProcessTerminationDiagnostics {
+    private static let prefix = "pip.debug.processExit."
+    private static let runActiveKey = prefix + "runActive"
+    private static let launchKey = prefix + "launch"
+    private static let legacyBootKey = prefix + "boot"
+    private static let lastUptimeKey = prefix + "lastUptime"
+    private static let lastCheckpointKey = prefix + "lastCheckpoint"
+    private static let lastCheckpointDateKey = prefix + "lastCheckpointDate"
+    private static let memoryWarningCountKey = prefix + "memoryWarningCount"
+    private static let lastMemoryWarningKey = prefix + "lastMemoryWarning"
+    private static let previousRunSummaryKey = prefix + "previousRunSummary"
+    private static let observerLock = NSLock()
+    private static var observerTokens: [NSObjectProtocol] = []
+
+    static func prepareForLaunch() {
+        guard AppDebugLogger.isDebugModeEnabled else { return }
+
+        let defaults = UserDefaults.standard
+        let previousRunWasActive = defaults.bool(forKey: runActiveKey)
+        let previousLaunch = defaults.double(forKey: launchKey)
+        let previousUptime = defaults.double(forKey: lastUptimeKey)
+        let previousCheckpoint = defaults.string(forKey: lastCheckpointKey) ?? "无"
+        let previousCheckpointDate = defaults.double(forKey: lastCheckpointDateKey)
+        let previousMemoryWarnings = defaults.integer(forKey: memoryWarningCountKey)
+        let previousLastMemoryWarning = defaults.double(forKey: lastMemoryWarningKey)
+        let currentUptime = ProcessInfo.processInfo.systemUptime
+
+        if previousRunWasActive {
+            // A reboot resets monotonic uptime. Deriving a boot date from wall-clock time
+            // drifts during deep sleep on some iOS versions and causes false reboot reports.
+            let bootChanged = previousUptime > 0 && currentUptime + 90 < previousUptime
+            let warningWasRecent = previousLastMemoryWarning > 0
+                && previousCheckpointDate > 0
+                && previousCheckpointDate - previousLastMemoryWarning < 30 * 60
+            let inference: String
+            if bootChanged {
+                inference = "设备在两次运行之间重启或更新系统，无法判定为单纯杀后台"
+            } else if warningWasRecent || previousMemoryWarnings > 0 {
+                inference = "终止前出现过内存警告，可能与内存压力/Jetsam有关；需结合MetricKit确认"
+            } else if previousCheckpoint.contains("低电量=是") && previousCheckpoint.contains("PiP") {
+                inference = "低电量模式下的后台媒体资格不足、系统夜间整理或Jetsam均有可能；普通App无法获得精确终止回调"
+            } else {
+                inference = "可能为系统后台策略、Jetsam、用户强退或其他未回调终止；需结合MetricKit确认"
+            }
+            let previousLaunchText = dateText(previousLaunch)
+            let checkpointText = dateText(previousCheckpointDate)
+            let summary = "上次进程未记录正常终止 | 启动=\(previousLaunchText) | 最后现场=\(checkpointText) | 内存警告=\(previousMemoryWarnings)次 | 推断=\(inference) | 现场{\(previousCheckpoint)}"
+            defaults.set(summary, forKey: previousRunSummaryKey)
+        }
+
+        defaults.set(true, forKey: runActiveKey)
+        defaults.set(Date().timeIntervalSince1970, forKey: launchKey)
+        defaults.set(0, forKey: memoryWarningCountKey)
+        defaults.removeObject(forKey: lastMemoryWarningKey)
+        installObserversIfNeeded()
+        recordCheckpoint(reason: "进程启动")
+        AppDebugLogger.logCritical("进程终止诊断已启动；\(defaults.string(forKey: previousRunSummaryKey) ?? "无上次异常终止记录")")
+    }
+
+    static func recordCheckpoint(
+        reason: String,
+        pipSnapshot: String? = nil,
+        persistImmediately: Bool = true
+    ) {
+        guard AppDebugLogger.isDebugModeEnabled else { return }
+        let defaults = UserDefaults.standard
+        let snapshot = runtimeSnapshot(reason: reason, pipSnapshot: pipSnapshot)
+        defaults.set(snapshot, forKey: lastCheckpointKey)
+        defaults.set(Date().timeIntervalSince1970, forKey: lastCheckpointDateKey)
+        defaults.set(ProcessInfo.processInfo.systemUptime, forKey: lastUptimeKey)
+        if persistImmediately {
+            defaults.synchronize()
+        }
+    }
+
+    static func recordMemoryWarning() {
+        guard AppDebugLogger.isDebugModeEnabled else { return }
+        let defaults = UserDefaults.standard
+        let count = defaults.integer(forKey: memoryWarningCountKey) + 1
+        defaults.set(count, forKey: memoryWarningCountKey)
+        defaults.set(Date().timeIntervalSince1970, forKey: lastMemoryWarningKey)
+        recordCheckpoint(reason: "收到内存警告#\(count)")
+        AppDebugLogger.logCritical("收到系统内存警告#\(count) | \(PerformanceDiagnosticsLogger.currentSnapshotText())")
+    }
+
+    static func markGracefulTermination(reason: String) {
+        guard AppDebugLogger.isDebugModeEnabled else { return }
+        recordCheckpoint(reason: reason)
+        let defaults = UserDefaults.standard
+        defaults.set(false, forKey: runActiveKey)
+        defaults.synchronize()
+        AppDebugLogger.logCritical("进程记录正常结束：\(reason)")
+    }
+
+    static func exportText() -> String {
+        let defaults = UserDefaults.standard
+        return """
+        进程终止推断：
+        上次运行：\(defaults.string(forKey: previousRunSummaryKey) ?? "无异常终止记录")
+        本次启动：\(dateText(defaults.double(forKey: launchKey)))
+        本次内存警告：\(defaults.integer(forKey: memoryWarningCountKey)) 次
+        最后诊断现场：\(defaults.string(forKey: lastCheckpointKey) ?? "无")
+        说明：iOS 不向普通App提供Jetsam瞬间回调；这里是根据最后持久化现场、设备重启、内存警告及MetricKit作出的推断，不等同于系统精确杀进程原因。
+        """
+    }
+
+    static func reset() {
+        observerLock.lock()
+        let tokens = observerTokens
+        observerTokens.removeAll(keepingCapacity: false)
+        observerLock.unlock()
+        tokens.forEach(NotificationCenter.default.removeObserver)
+
+        let defaults = UserDefaults.standard
+        [
+            runActiveKey,
+            launchKey,
+            legacyBootKey,
+            lastUptimeKey,
+            lastCheckpointKey,
+            lastCheckpointDateKey,
+            memoryWarningCountKey,
+            lastMemoryWarningKey,
+            previousRunSummaryKey
+        ].forEach(defaults.removeObject(forKey:))
+    }
+
+    private static func installObserversIfNeeded() {
+        observerLock.lock()
+        let hasObservers = !observerTokens.isEmpty
+        observerLock.unlock()
+        guard !hasObservers else { return }
+
+        let center = NotificationCenter.default
+        let tokens = [
+            center.addObserver(forName: UIApplication.willResignActiveNotification, object: nil, queue: .main) { _ in
+                recordAndLogCritical("App即将非活跃")
+            },
+            center.addObserver(forName: UIApplication.didEnterBackgroundNotification, object: nil, queue: .main) { _ in
+                recordAndLogCritical("App进入后台")
+            },
+            center.addObserver(forName: UIApplication.willEnterForegroundNotification, object: nil, queue: .main) { _ in
+                recordAndLogCritical("App即将回前台")
+            },
+            center.addObserver(forName: UIApplication.didBecomeActiveNotification, object: nil, queue: .main) { _ in
+                recordAndLogCritical("App前台活跃")
+            },
+            center.addObserver(forName: UIApplication.didReceiveMemoryWarningNotification, object: nil, queue: .main) { _ in
+                recordMemoryWarning()
+            },
+            center.addObserver(forName: UIApplication.protectedDataWillBecomeUnavailableNotification, object: nil, queue: .main) { _ in
+                recordAndLogCritical("设备即将锁定")
+            },
+            center.addObserver(forName: UIApplication.protectedDataDidBecomeAvailableNotification, object: nil, queue: .main) { _ in
+                recordAndLogCritical("设备已解锁")
+            },
+            center.addObserver(forName: Notification.Name.NSProcessInfoPowerStateDidChange, object: nil, queue: .main) { _ in
+                recordAndLogCritical("系统低电量模式变化")
+            },
+            center.addObserver(forName: ProcessInfo.thermalStateDidChangeNotification, object: nil, queue: .main) { _ in
+                recordAndLogCritical("系统热状态变化")
+            },
+            center.addObserver(forName: UIApplication.willTerminateNotification, object: nil, queue: .main) { _ in
+                markGracefulTermination(reason: "收到willTerminate")
+            }
+        ]
+
+        observerLock.lock()
+        if observerTokens.isEmpty {
+            observerTokens = tokens
+        } else {
+            tokens.forEach(center.removeObserver)
+        }
+        observerLock.unlock()
+    }
+
+    private static func recordAndLogCritical(_ reason: String) {
+        recordCheckpoint(reason: reason)
+        AppDebugLogger.logCritical("生命周期诊断：\(runtimeSnapshot(reason: reason, pipSnapshot: nil))")
+    }
+
+    private static func runtimeSnapshot(reason: String, pipSnapshot: String?) -> String {
+        UIDevice.current.isBatteryMonitoringEnabled = true
+        let app = UIApplication.shared
+        let state: String
+        switch app.applicationState {
+        case .active: state = "active"
+        case .inactive: state = "inactive"
+        case .background: state = "background"
+        @unknown default: state = "unknown"
+        }
+        let remainingBackgroundTime = app.backgroundTimeRemaining
+        let backgroundTime: String
+        if app.applicationState != .background {
+            backgroundTime = "不适用"
+        } else if !remainingBackgroundTime.isFinite || remainingBackgroundTime > 24 * 60 * 60 {
+            backgroundTime = "系统未限制"
+        } else {
+            backgroundTime = String(format: "%.1fs", remainingBackgroundTime)
+        }
+        let battery = UIDevice.current.batteryLevel >= 0
+            ? "\(Int(UIDevice.current.batteryLevel * 100))%"
+            : "未知"
+        let pipText = pipSnapshot ?? DiagnosticsRuntimeState.snapshotText(includeAudio: false)
+        return [
+            "原因=\(reason)",
+            "App=\(state)",
+            "后台剩余=\(backgroundTime)",
+            "受保护数据=\(app.isProtectedDataAvailable ? "可用" : "不可用/锁定")",
+            "低电量=\(ProcessInfo.processInfo.isLowPowerModeEnabled ? "是" : "否")",
+            "热状态=\(thermalStateText)",
+            "电量=\(battery)",
+            "物理内存=\(String(format: "%.1fGB", Double(ProcessInfo.processInfo.physicalMemory) / 1_073_741_824))",
+            "运行时长=\(String(format: "%.0fs", ProcessInfo.processInfo.systemUptime))",
+            "保活策略=\(KeepAlivePolicy.current.diagnosticsName)",
+            "音频{\(BackgroundTaskManager.shared.diagnosticsText)}",
+            "现场{\(pipText)}"
+        ].joined(separator: ", ")
+    }
+
+    private static var thermalStateText: String {
+        switch ProcessInfo.processInfo.thermalState {
+        case .nominal: return "正常"
+        case .fair: return "轻微升温"
+        case .serious: return "明显升温"
+        case .critical: return "严重"
+        @unknown default: return "未知"
+        }
+    }
+
+    private static func dateText(_ timestamp: TimeInterval) -> String {
+        guard timestamp > 0 else { return "无" }
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.timeZone = TimeZone(identifier: "Asia/Shanghai")
+        formatter.dateFormat = "yyyy-MM-dd HH:mm:ss.SSS"
+        return formatter.string(from: Date(timeIntervalSince1970: timestamp))
     }
 }
