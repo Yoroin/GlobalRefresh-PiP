@@ -6,15 +6,12 @@
 import UIKit
 import SwiftUI
 
-final class TutorialTabBarController: UITabBarController, UITabBarControllerDelegate, UIGestureRecognizerDelegate {
-
-    private var interactionController: UIPercentDrivenInteractiveTransition?
-    private var isInteractive = false
+final class TutorialTabBarController: UITabBarController, UITabBarControllerDelegate {
 
     override func viewDidLoad() {
         super.viewDidLoad()
         delegate = self
-        title = "使用教程"
+        title = L10n.text("使用教程", "Tutorial")
         navigationItem.leftBarButtonItem = UIBarButtonItem(
             systemItem: .close,
             primaryAction: UIAction { [weak self] _ in
@@ -24,109 +21,35 @@ final class TutorialTabBarController: UITabBarController, UITabBarControllerDele
 
         let stepOneController = UIHostingController(
             rootView: TutorialStepView(
-                title: "步骤一",
-                content: "点击首页的“开启悬浮窗”按钮，打开悬浮窗",
+                title: L10n.text("步骤一", "Step 1"),
+                content: L10n.text("点击首页的“开启悬浮窗”按钮，打开悬浮窗", "Tap Enable Floating Window on the home page to start PiP."),
                 imageName: "tutorial-step-1"
             )
         )
         stepOneController.tabBarItem = UITabBarItem(
-            title: "步骤一",
+            title: L10n.text("步骤一", "Step 1"),
             image: UIImage(systemName: "1.circle"),
             selectedImage: UIImage(systemName: "1.circle.fill")
         )
 
         let stepTwoController = UIHostingController(
             rootView: TutorialStepView(
-                title: "步骤二",
-                content: "将悬浮窗拖动到侧边吸附，即可实现系统全局120hz（划掉后台失效）。如需完全隐藏，点击自定义悬浮窗高度将滑块拖至0.1pt",
+                title: L10n.text("步骤二", "Step 2"),
+                content: L10n.text("将悬浮窗拖动到侧边吸附，即可实现系统全局120hz（划掉后台失效）。如需完全隐藏，点击自定义悬浮窗高度将滑块拖至0.1pt", "Drag the floating window to the screen edge. To fully hide it, set the custom PiP height to 0.1 pt."),
                 imageName: "tutorial-step-2"
             )
         )
         stepTwoController.tabBarItem = UITabBarItem(
-            title: "步骤二",
+            title: L10n.text("步骤二", "Step 2"),
             image: UIImage(systemName: "2.circle"),
             selectedImage: UIImage(systemName: "2.circle.fill")
         )
 
         viewControllers = [stepOneController, stepTwoController]
-
-        let panGesture = UIPanGestureRecognizer(target: self, action: #selector(handlePan(_:)))
-        panGesture.delegate = self
-        panGesture.cancelsTouchesInView = false
-        view.addGestureRecognizer(panGesture)
-    }
-
-    func gestureRecognizerShouldBegin(_ gestureRecognizer: UIGestureRecognizer) -> Bool {
-        guard let panGesture = gestureRecognizer as? UIPanGestureRecognizer else {
-            return true
-        }
-        let velocity = panGesture.velocity(in: view)
-        return abs(velocity.x) > abs(velocity.y)
-    }
-
-    @objc private func handlePan(_ gesture: UIPanGestureRecognizer) {
-        guard let controllers = viewControllers, controllers.count > 1 else { return }
-
-        let translation = gesture.translation(in: view)
-        let velocity = gesture.velocity(in: view)
-        let progress = min(max(abs(translation.x) / max(view.bounds.width, 1), 0), 1)
-
-        switch gesture.state {
-        case .began:
-            let targetIndex = velocity.x < 0 ? selectedIndex + 1 : selectedIndex - 1
-            guard controllers.indices.contains(targetIndex) else { return }
-
-            isInteractive = true
-            interactionController = UIPercentDrivenInteractiveTransition()
-            selectedIndex = targetIndex
-
-        case .changed:
-            interactionController?.update(progress)
-
-        case .ended:
-            let shouldFinish = progress > 0.35 || abs(velocity.x) > 700
-            shouldFinish ? interactionController?.finish() : interactionController?.cancel()
-            interactionController = nil
-            isInteractive = false
-
-        case .cancelled, .failed:
-            interactionController?.cancel()
-            interactionController = nil
-            isInteractive = false
-
-        default:
-            break
-        }
-    }
-
-    func tabBarController(
-        _ tabBarController: UITabBarController,
-        animationControllerForTransitionFrom fromVC: UIViewController,
-        to toVC: UIViewController
-    ) -> UIViewControllerAnimatedTransitioning? {
-        guard
-            let controllers = viewControllers,
-            let fromIndex = controllers.firstIndex(of: fromVC),
-            let toIndex = controllers.firstIndex(of: toVC)
-        else {
-            return nil
-        }
-
-        return TabSlideAnimator(direction: toIndex > fromIndex ? .forward : .backward)
-    }
-
-    func tabBarController(
-        _ tabBarController: UITabBarController,
-        interactionControllerFor animationController: UIViewControllerAnimatedTransitioning
-    ) -> UIViewControllerInteractiveTransitioning? {
-        isInteractive ? interactionController : nil
     }
 
     func tabBarController(_ tabBarController: UITabBarController, shouldSelect viewController: UIViewController) -> Bool {
-        guard
-            !isInteractive,
-            selectedViewController !== viewController
-        else {
+        guard selectedViewController !== viewController else {
             return true
         }
 

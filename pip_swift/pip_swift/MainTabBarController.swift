@@ -5,48 +5,86 @@
 
 import UIKit
 import SwiftUI
+import AVFoundation
 
-final class MainTabBarController: UITabBarController, UITabBarControllerDelegate, UIGestureRecognizerDelegate {
+private final class TabContentFadeAnimator: NSObject, UIViewControllerAnimatedTransitioning {
+    func transitionDuration(using transitionContext: UIViewControllerContextTransitioning?) -> TimeInterval {
+        0.18
+    }
 
-    private var interactionController: UIPercentDrivenInteractiveTransition?
-    private var isInteractive = false
-    private var isTabTransitioning = false
-    private var tabTransitionResetWorkItem: DispatchWorkItem?
+    func animateTransition(using transitionContext: UIViewControllerContextTransitioning) {
+        guard
+            let toViewController = transitionContext.viewController(forKey: .to),
+            let toView = transitionContext.view(forKey: .to)
+        else {
+            transitionContext.completeTransition(false)
+            return
+        }
+
+        let containerView = transitionContext.containerView
+        toView.frame = transitionContext.finalFrame(for: toViewController)
+        toView.alpha = 0
+        toView.transform = CGAffineTransform(translationX: 0, y: 5)
+            .scaledBy(x: 0.992, y: 0.992)
+        containerView.addSubview(toView)
+
+        UIView.animate(
+            withDuration: transitionDuration(using: transitionContext),
+            delay: 0,
+            options: [.curveEaseOut, .allowUserInteraction, .beginFromCurrentState]
+        ) {
+            toView.alpha = 1
+            toView.transform = .identity
+        } completion: { finished in
+            if transitionContext.transitionWasCancelled {
+                toView.removeFromSuperview()
+            }
+            transitionContext.completeTransition(finished && !transitionContext.transitionWasCancelled)
+        }
+    }
+}
+
+final class MainTabBarController: UITabBarController, UITabBarControllerDelegate {
+
     private var refreshDisplayLink: CADisplayLink?
     private var pendingShortcutRetryWorkItems: [DispatchWorkItem] = []
+    private let tabContentFadeAnimator = TabContentFadeAnimator()
+    private static let shortcutDarwinNotificationCallback: CFNotificationCallback = { _, observer, _, _, _ in
+        guard let observer else { return }
+        let controller = Unmanaged<MainTabBarController>.fromOpaque(observer).takeUnretainedValue()
+        DispatchQueue.main.async {
+            controller.handleShortcutDarwinNotification()
+        }
+    }
 
     override func viewDidLoad() {
         super.viewDidLoad()
+        L10n.rememberCurrentSystemLanguageIfNeeded()
         delegate = self
         DiagnosticsRuntimeState.updateCurrentPage("悬浮窗")
 
         let pipController = ViewController()
         pipController.tabBarItem = UITabBarItem(
-            title: "悬浮窗",
+            title: L10n.floatingWindow,
             image: TabIconFactory.icon120Hz(),
             selectedImage: TabIconFactory.icon120Hz()
         )
 
         let frameRateController = UIHostingController(rootView: RootFrameRateTestView())
         frameRateController.tabBarItem = UITabBarItem(
-            title: "帧率演示",
+            title: L10n.frameRateDemo,
             image: UIImage(systemName: "speedometer"),
             selectedImage: UIImage(systemName: "speedometer")
         )
 
         let versionController = VersionViewController()
         versionController.tabBarItem = UITabBarItem(
-            title: "版本",
+            title: L10n.version,
             image: UIImage(systemName: "info.circle"),
             selectedImage: UIImage(systemName: "info.circle.fill")
         )
 
         viewControllers = [pipController, frameRateController, versionController]
-
-        let panGesture = UIPanGestureRecognizer(target: self, action: #selector(handlePan(_:)))
-        panGesture.delegate = self
-        panGesture.cancelsTouchesInView = false
-        view.addGestureRecognizer(panGesture)
 
         startRefreshDriver()
         NotificationCenter.default.addObserver(
@@ -57,14 +95,46 @@ final class MainTabBarController: UITabBarController, UITabBarControllerDelegate
         )
         NotificationCenter.default.addObserver(
             self,
+            selector: #selector(handleEngineRuntimeModeChange),
+            name: ViewController.piPEngineRuntimeModeDidChangeNotification,
+            object: nil
+        )
+        NotificationCenter.default.addObserver(
+            self,
             selector: #selector(handleShortcutActionNotification),
             name: PiPShortcutActionCenter.didRequestActionNotification,
             object: nil
+        )
+        CFNotificationCenterAddObserver(
+            CFNotificationCenterGetDarwinNotifyCenter(),
+            Unmanaged.passUnretained(self).toOpaque(),
+            Self.shortcutDarwinNotificationCallback,
+            PiPShortcutActionCenter.darwinNotificationName as CFString,
+            nil,
+            .deliverImmediately
         )
         NotificationCenter.default.addObserver(
             self,
             selector: #selector(handleAppDidBecomeActive),
             name: UIApplication.didBecomeActiveNotification,
+            object: nil
+        )
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(handleAppDidEnterBackground),
+            name: UIApplication.didEnterBackgroundNotification,
+            object: nil
+        )
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(handleLanguageDidChange),
+            name: L10n.languageDidChangeNotification,
+            object: nil
+        )
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(handleSystemLocaleDidChange),
+            name: NSLocale.currentLocaleDidChangeNotification,
             object: nil
         )
         DispatchQueue.main.async { [weak self] in
@@ -74,97 +144,19 @@ final class MainTabBarController: UITabBarController, UITabBarControllerDelegate
 
     deinit {
         NotificationCenter.default.removeObserver(self)
-        tabTransitionResetWorkItem?.cancel()
+        CFNotificationCenterRemoveObserver(
+            CFNotificationCenterGetDarwinNotifyCenter(),
+            Unmanaged.passUnretained(self).toOpaque(),
+            CFNotificationName(rawValue: PiPShortcutActionCenter.darwinNotificationName as CFString),
+            nil
+        )
         pendingShortcutRetryWorkItems.forEach { $0.cancel() }
         refreshDisplayLink?.invalidate()
-    }
-
-    func gestureRecognizerShouldBegin(_ gestureRecognizer: UIGestureRecognizer) -> Bool {
-        guard let panGesture = gestureRecognizer as? UIPanGestureRecognizer else {
-            return true
-        }
-        let velocity = panGesture.velocity(in: view)
-        return abs(velocity.x) > abs(velocity.y)
-    }
-
-    @objc private func handlePan(_ gesture: UIPanGestureRecognizer) {
-        guard let controllers = viewControllers, controllers.count > 1 else { return }
-
-        let translation = gesture.translation(in: view)
-        let velocity = gesture.velocity(in: view)
-        let progress = min(max(abs(translation.x) / max(view.bounds.width, 1), 0), 1)
-
-        switch gesture.state {
-        case .began:
-            let targetIndex = velocity.x < 0 ? selectedIndex + 1 : selectedIndex - 1
-            guard controllers.indices.contains(targetIndex) else { return }
-            guard !isTabTransitioning else {
-                AppDebugLogger.log("忽略底栏左右滑动：转场中")
-                return
-            }
-
-            dismissVisibleTransientOverlays()
-            DiagnosticsRuntimeState.recordUserAction("底栏左右滑动切换：\(diagnosticPageName(for: targetIndex))")
-            DiagnosticsRuntimeState.updateCurrentPage(diagnosticPageName(for: targetIndex))
-            isInteractive = true
-            beginTabTransition(reason: "swipe")
-            interactionController = UIPercentDrivenInteractiveTransition()
-            selectedIndex = targetIndex
-
-        case .changed:
-            interactionController?.update(progress)
-
-        case .ended:
-            let shouldFinish = progress > 0.35 || abs(velocity.x) > 700
-            shouldFinish ? interactionController?.finish() : interactionController?.cancel()
-            interactionController = nil
-            isInteractive = false
-
-        case .cancelled, .failed:
-            interactionController?.cancel()
-            interactionController = nil
-            isInteractive = false
-
-        default:
-            break
-        }
-    }
-
-    func tabBarController(
-        _ tabBarController: UITabBarController,
-        animationControllerForTransitionFrom fromVC: UIViewController,
-        to toVC: UIViewController
-    ) -> UIViewControllerAnimatedTransitioning? {
-        guard
-            let controllers = viewControllers,
-            let fromIndex = controllers.firstIndex(of: fromVC),
-            let toIndex = controllers.firstIndex(of: toVC)
-        else {
-            return nil
-        }
-
-        return TabSlideAnimator(direction: toIndex > fromIndex ? .forward : .backward) { [weak self] completed, cancelled, finished in
-            self?.finishTabTransition(completed: completed, cancelled: cancelled, finished: finished)
-        }
-    }
-
-    func tabBarController(
-        _ tabBarController: UITabBarController,
-        interactionControllerFor animationController: UIViewControllerAnimatedTransitioning
-    ) -> UIViewControllerInteractiveTransitioning? {
-        isInteractive ? interactionController : nil
     }
 
     func tabBarController(_ tabBarController: UITabBarController, shouldSelect viewController: UIViewController) -> Bool {
         guard selectedViewController !== viewController else {
             return true
-        }
-
-        guard !isInteractive, !isTabTransitioning else {
-            AppDebugLogger.log("忽略底栏点击：转场中")
-            UISelectionFeedbackGenerator().selectionChanged()
-            normalizeSelectedViewAfterTabTransition()
-            return false
         }
 
         UIImpactFeedbackGenerator(style: .light).impactOccurred()
@@ -173,7 +165,6 @@ final class MainTabBarController: UITabBarController, UITabBarControllerDelegate
             DiagnosticsRuntimeState.recordUserAction("底栏点击切换：\(diagnosticPageName(for: index))")
             DiagnosticsRuntimeState.updateCurrentPage(diagnosticPageName(for: index))
         }
-        beginTabTransition(reason: "tap")
         return true
     }
 
@@ -183,45 +174,24 @@ final class MainTabBarController: UITabBarController, UITabBarControllerDelegate
         }
     }
 
+    func tabBarController(
+        _ tabBarController: UITabBarController,
+        animationControllerForTransitionFrom fromVC: UIViewController,
+        to toVC: UIViewController
+    ) -> UIViewControllerAnimatedTransitioning? {
+        tabContentFadeAnimator
+    }
+
+    func handleExternalShortcutRequest(reason: String) {
+        schedulePendingShortcutActionChecks(reason: reason)
+    }
+
     private func dismissVisibleTransientOverlays() {
         if let controller = selectedViewController as? ViewController {
             controller.dismissTransientOverlays()
         } else if let controller = selectedViewController as? VersionViewController {
             controller.dismissTransientOverlays()
         }
-    }
-
-    private func beginTabTransition(reason: String) {
-        tabTransitionResetWorkItem?.cancel()
-        isTabTransitioning = true
-
-        let workItem = DispatchWorkItem { [weak self] in
-            guard let self, self.isTabTransitioning else { return }
-            self.isTabTransitioning = false
-            self.normalizeSelectedViewAfterTabTransition()
-            AppDebugLogger.log("Tab transition watchdog reset, reason=\(reason)")
-        }
-        tabTransitionResetWorkItem = workItem
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.9, execute: workItem)
-    }
-
-    private func finishTabTransition(completed: Bool, cancelled: Bool, finished: Bool) {
-        tabTransitionResetWorkItem?.cancel()
-        tabTransitionResetWorkItem = nil
-        isTabTransitioning = false
-        normalizeSelectedViewAfterTabTransition()
-
-        if !finished || cancelled || !completed {
-            AppDebugLogger.log("Tab transition normalized, finished=\(finished), cancelled=\(cancelled), completed=\(completed)")
-        }
-    }
-
-    private func normalizeSelectedViewAfterTabTransition() {
-        guard let selectedView = selectedViewController?.view,
-              let container = selectedView.superview
-        else { return }
-        selectedView.frame = container.bounds
-        selectedView.isUserInteractionEnabled = true
     }
 
     private func diagnosticPageName(for index: Int) -> String {
@@ -239,12 +209,27 @@ final class MainTabBarController: UITabBarController, UITabBarControllerDelegate
 
     private func startRefreshDriver() {
         refreshDisplayLink?.invalidate()
+        refreshDisplayLink = nil
+
+        let isPlayerLayerRouteEnabled = UserDefaults.standard.bool(forKey: "pip.home.playerLayerRouteEnabled")
+        let isExtremeSilentModeEnabled = UserDefaults.standard.bool(forKey: "pip.home.extremeSilentModeEnabled")
+        guard !isPlayerLayerRouteEnabled, !isExtremeSilentModeEnabled else {
+            AppDebugLogger.log("RefreshDriver skipped: PlayerLayer/extreme silent route active")
+            return
+        }
 
         let displayLink = CADisplayLink(target: self, selector: #selector(stepRefreshDriver))
         configureRefreshDriver(displayLink)
-        // BETA2 ANCHOR: 避免空 DisplayLink 在滑动 tracking mode 中抢主线程。
-        displayLink.add(to: .main, forMode: .default)
+        // Use the 1.0.7 driver mode for every supported iOS version; hidden 0.1 pt PiP depends on this driver more than visible PiP content.
+        displayLink.add(to: .main, forMode: .common)
         refreshDisplayLink = displayLink
+    }
+
+    private func stopRefreshDriver(reason: String) {
+        guard refreshDisplayLink != nil else { return }
+        refreshDisplayLink?.invalidate()
+        refreshDisplayLink = nil
+        AppDebugLogger.log("RefreshDriver stopped: \(reason)")
     }
 
     @objc private func handleFrameRatePreferenceChange() {
@@ -255,12 +240,55 @@ final class MainTabBarController: UITabBarController, UITabBarControllerDelegate
         }
     }
 
+    @objc private func handleEngineRuntimeModeChange() {
+        startRefreshDriver()
+    }
+
     @objc private func handleShortcutActionNotification() {
         schedulePendingShortcutActionChecks(reason: "快捷方式通知")
     }
 
+    private func handleShortcutDarwinNotification() {
+        schedulePendingShortcutActionChecks(reason: "快捷方式Darwin通知")
+    }
+
     @objc private func handleAppDidBecomeActive() {
+        startRefreshDriver()
         schedulePendingShortcutActionChecks(reason: "App激活")
+    }
+
+    @objc private func handleAppDidEnterBackground() {
+        startRefreshDriver()
+    }
+
+    @objc private func handleLanguageDidChange() {
+        updateTabBarItemTitles()
+        refreshLocalizedHostedPages()
+    }
+
+    @objc private func handleSystemLocaleDidChange() {
+        L10n.followSystemLanguageIfActuallyChanged()
+    }
+
+    private func updateTabBarItemTitles() {
+        guard let viewControllers else { return }
+        if viewControllers.indices.contains(0) {
+            viewControllers[0].tabBarItem.title = L10n.floatingWindow
+        }
+        if viewControllers.indices.contains(1) {
+            viewControllers[1].tabBarItem.title = L10n.frameRateDemo
+        }
+        if viewControllers.indices.contains(2) {
+            viewControllers[2].tabBarItem.title = L10n.version
+        }
+    }
+
+    private func refreshLocalizedHostedPages() {
+        guard let viewControllers else { return }
+        if viewControllers.indices.contains(1),
+           let frameRateController = viewControllers[1] as? UIHostingController<RootFrameRateTestView> {
+            frameRateController.rootView = RootFrameRateTestView()
+        }
     }
 
     private func schedulePendingShortcutActionChecks(reason: String) {
@@ -281,15 +309,10 @@ final class MainTabBarController: UITabBarController, UITabBarControllerDelegate
     private func performPendingShortcutAction(reason: String) -> Bool {
         guard PiPShortcutActionCenter.hasPendingAction else { return false }
         AppDebugLogger.log("Route shortcut action to PiP page, reason=\(reason)")
+
         dismissVisibleTransientOverlays()
 
         if selectedIndex != 0 {
-            tabTransitionResetWorkItem?.cancel()
-            tabTransitionResetWorkItem = nil
-            isTabTransitioning = false
-            isInteractive = false
-            interactionController?.cancel()
-            interactionController = nil
             selectedIndex = 0
             DiagnosticsRuntimeState.updateCurrentPage("悬浮窗")
             loadViewIfNeeded()
@@ -312,78 +335,19 @@ final class MainTabBarController: UITabBarController, UITabBarControllerDelegate
 
     private func configureRefreshDriver(_ displayLink: CADisplayLink) {
         let maximumFramesPerSecond = UIScreen.main.maximumFramesPerSecond
-        let targetFramesPerSecond = max(60, maximumFramesPerSecond)
+        let targetFramesPerSecond = min(FrameRatePreference.targetFrameRate, maximumFramesPerSecond)
 
         if #available(iOS 15.0, *) {
             let target = Float(targetFramesPerSecond)
+            // 1.0.9 beta2: fully restore the 1.0.7 strict range; wider ranges can fall back to 80 Hz when PiP is hidden at 0.1 pt.
             displayLink.preferredFrameRateRange = CAFrameRateRange(
-                minimum: 30,
+                minimum: target,
                 maximum: target,
-                preferred: FrameRatePreference.preferredFrameRateValue(target: target)
+                preferred: target
             )
         } else {
             displayLink.preferredFramesPerSecond = targetFramesPerSecond
         }
-    }
-}
-
-final class TabSlideAnimator: NSObject, UIViewControllerAnimatedTransitioning {
-    enum Direction {
-        case forward
-        case backward
-    }
-
-    private let direction: Direction
-    private let onCompletion: ((Bool, Bool, Bool) -> Void)?
-
-    init(direction: Direction, onCompletion: ((Bool, Bool, Bool) -> Void)? = nil) {
-        self.direction = direction
-        self.onCompletion = onCompletion
-    }
-
-    func transitionDuration(using transitionContext: UIViewControllerContextTransitioning?) -> TimeInterval {
-        0.28
-    }
-
-    func animateTransition(using transitionContext: UIViewControllerContextTransitioning) {
-        guard
-            let fromView = transitionContext.view(forKey: .from),
-            let toView = transitionContext.view(forKey: .to)
-        else {
-            transitionContext.completeTransition(false)
-            onCompletion?(false, true, false)
-            return
-        }
-
-        let container = transitionContext.containerView
-        let width = container.bounds.width
-        let offset = direction == .forward ? width : -width
-
-        toView.frame = container.bounds.offsetBy(dx: offset, dy: 0)
-        container.addSubview(toView)
-
-        UIView.animate(
-            withDuration: transitionDuration(using: transitionContext),
-            delay: 0,
-            options: [.curveEaseOut, .allowUserInteraction, .beginFromCurrentState],
-            animations: {
-                fromView.frame = container.bounds.offsetBy(dx: -offset * 0.32, dy: 0)
-                toView.frame = container.bounds
-            },
-            completion: { finished in
-                fromView.frame = container.bounds
-                toView.frame = container.bounds
-                let cancelled = transitionContext.transitionWasCancelled
-                let completed = !cancelled
-                if !finished || !completed {
-                    AppDebugLogger.log("Tab transition completion, finished=\(finished), cancelled=\(cancelled), completed=\(completed)")
-                }
-                transitionContext.completeTransition(completed)
-                DispatchQueue.main.async {
-                    self.onCompletion?(completed, cancelled, finished)
-                }
-            }
-        )
     }
 }
 

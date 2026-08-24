@@ -6,24 +6,49 @@
 import UIKit
 import AVFoundation
 import Darwin
+import OSLog
 
 enum AppDebugLogger {
     private static let storageKey = "pip.debug.recentLogs"
     private static let debugModeKey = "pip.debug.modeEnabled"
     private static let maximumEntries = 200
+    private static let logger = Logger(subsystem: "com.yoroin.globalrefresh", category: "diagnostics")
+    private static let logQueue = DispatchQueue(label: "com.yoroin.globalrefresh.appDebugLog", qos: .utility)
+    // 内存环形缓存：日志只写内存，不实时写 UserDefaults
+    private static var memoryBuffer: [String] = []
 
     static var isDebugModeEnabled: Bool {
-        get {
-            UserDefaults.standard.bool(forKey: debugModeKey)
-        }
-        set {
-            UserDefaults.standard.set(newValue, forKey: debugModeKey)
+        get { UserDefaults.standard.bool(forKey: debugModeKey) }
+        set { UserDefaults.standard.set(newValue, forKey: debugModeKey) }
+    }
+
+    // 启动时清理旧积压数据，并加载历史日志到内存
+    static func trimOnLaunch() {
+        logQueue.async {
+            let stored = UserDefaults.standard.stringArray(forKey: storageKey) ?? []
+            memoryBuffer = stored.suffix(maximumEntries)
+            // 清理旧的大量积压（旧版本留下的）
+            if stored.count > maximumEntries {
+                UserDefaults.standard.set(memoryBuffer, forKey: storageKey)
+            }
         }
     }
 
+    // 注册后台/终止时落盘，在 viewDidLoad 调用一次即可
+    static func registerBackgroundFlush() {
+        NotificationCenter.default.addObserver(forName: UIApplication.didEnterBackgroundNotification, object: nil, queue: nil) { _ in
+            flush()
+        }
+        NotificationCenter.default.addObserver(forName: UIApplication.willTerminateNotification, object: nil, queue: nil) { _ in
+            flush()
+        }
+    }
+
+    // 只写内存，不碰 UserDefaults
     static func log(_ message: String, file: StaticString = #fileID, line: UInt = #line) {
         guard isDebugModeEnabled else { return }
         DiagnosticsRuntimeState.updateLastEvent(message)
+        logger.info("\(message, privacy: .public)")
         let device = UIDevice.current
         let entry = [
             beijingFormatter.string(from: Date()),
@@ -33,21 +58,30 @@ enum AppDebugLogger {
             message
         ].joined(separator: " | ")
 
-        var entries = UserDefaults.standard.stringArray(forKey: storageKey) ?? []
-        entries.append(entry)
-        if entries.count > maximumEntries {
-            entries.removeFirst(entries.count - maximumEntries)
+        logQueue.async {
+            memoryBuffer.append(entry)
+            if memoryBuffer.count > maximumEntries {
+                memoryBuffer.removeFirst(memoryBuffer.count - maximumEntries)
+            }
         }
-        UserDefaults.standard.set(entries, forKey: storageKey)
+    }
+
+    // 只在复制日志/进后台/终止时落盘
+    static func flush() {
+        logQueue.async {
+            guard !memoryBuffer.isEmpty else { return }
+            UserDefaults.standard.set(memoryBuffer, forKey: storageKey)
+        }
     }
 
     static func exportText() -> String {
+        var entries: [String] = []
+        logQueue.sync { entries = memoryBuffer }
         let info = Bundle.main.infoDictionary
         let version = info?["CFBundleShortVersionString"] as? String ?? "unknown"
         let build = info?["CFBundleVersion"] as? String ?? "unknown"
         let bundleID = Bundle.main.bundleIdentifier ?? "unknown"
         let device = UIDevice.current
-        let entries = UserDefaults.standard.stringArray(forKey: storageKey) ?? []
         let diagnosticsSection = DebugDiagnosticsMonitor.isEnabled
             ? """
         线程与性能日志记录：开启
@@ -76,7 +110,10 @@ enum AppDebugLogger {
     }
 
     static func resetLogs() {
-        UserDefaults.standard.removeObject(forKey: storageKey)
+        logQueue.async {
+            memoryBuffer.removeAll()
+            UserDefaults.standard.removeObject(forKey: storageKey)
+        }
         DiagnosticsRuntimeState.reset()
     }
 

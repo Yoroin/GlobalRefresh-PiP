@@ -20,6 +20,8 @@ class SceneDelegate: UIResponder, UIWindowSceneDelegate {
         AppAppearancePreference.apply(to: window)
         self.window = window
         window.makeKeyAndVisible()
+
+        handleShortcutURLContexts(connectionOptions.urlContexts)
     }
 
     func sceneDidDisconnect(_ scene: UIScene) {
@@ -37,5 +39,18 @@ class SceneDelegate: UIResponder, UIWindowSceneDelegate {
         print("sceneDidEnterBackground")
     }
 
+    func scene(_ scene: UIScene, openURLContexts URLContexts: Set<UIOpenURLContext>) {
+        handleShortcutURLContexts(URLContexts)
+    }
+
+    private func handleShortcutURLContexts(_ URLContexts: Set<UIOpenURLContext>) {
+        for context in URLContexts {
+            if PiPShortcutActionCenter.request(from: context.url) {
+                (window?.rootViewController as? MainTabBarController)?
+                    .handleExternalShortcutRequest(reason: "URL快捷指令")
+                break
+            }
+        }
+    }
 
 }

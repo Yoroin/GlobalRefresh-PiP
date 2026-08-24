@@ -15,13 +15,18 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
         DiagnosticsResetManager.resetDiagnosticsIfBuildChanged()
         KeepAliveModeText.migrateDefaultToLowPowerPiPIfNeeded()
         KeepAliveNotificationTester.sanitizeOnLaunch()
+        PiPShortcutRuntimeRegistration.warmUpProviderIfAvailable()
         if AppDebugLogger.isDebugModeEnabled {
             DiagnosticsRuntimeState.startAppStateTracking()
             DiagnosticsRuntimeState.refreshAppState()
             MetricKitLogger.shared.start()
-            DebugDiagnosticsMonitor.startIfNeeded()
+            DebugDiagnosticsMonitor.setEnabled(true)
         }
         return true
+    }
+
+    func application(_ app: UIApplication, open url: URL, options: [UIApplication.OpenURLOptionsKey: Any] = [:]) -> Bool {
+        PiPShortcutActionCenter.request(from: url)
     }
     
     // MARK: UISceneSession Lifecycle
