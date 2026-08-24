@@ -16,6 +16,7 @@ enum KeepAliveLogger {
     private static let maximumEvents = 80
 
     static func markAppLaunch() {
+        guard AppDebugLogger.isDebugModeEnabled else { return }
         if UserDefaults.standard.bool(forKey: sessionActiveKey),
            UserDefaults.standard.double(forKey: backgroundStartKey) > 0 {
             append("App重新启动：上次保活可能异常中断，最后心跳=\(storedDateText(lastHeartbeatKey))，本次启动=\(nowText)")
@@ -27,6 +28,7 @@ enum KeepAliveLogger {
     }
 
     static func markPiPStarted(mode: String) {
+        guard AppDebugLogger.isDebugModeEnabled else { return }
         UserDefaults.standard.set(true, forKey: sessionActiveKey)
         UserDefaults.standard.set(Date().timeIntervalSince1970, forKey: sessionStartKey)
         UserDefaults.standard.set(mode, forKey: lastModeKey)
@@ -35,12 +37,14 @@ enum KeepAliveLogger {
     }
 
     static func markPiPStopped(reason: String) {
+        guard AppDebugLogger.isDebugModeEnabled else { return }
         append("悬浮窗停止保活，原因=\(reason)，开始=\(storedDateText(sessionStartKey))，最后心跳=\(storedDateText(lastHeartbeatKey))")
         UserDefaults.standard.set(false, forKey: sessionActiveKey)
         UserDefaults.standard.removeObject(forKey: backgroundStartKey)
     }
 
     static func markEnterBackground(mode: String) {
+        guard AppDebugLogger.isDebugModeEnabled else { return }
         UserDefaults.standard.set(Date().timeIntervalSince1970, forKey: backgroundStartKey)
         UserDefaults.standard.set(mode, forKey: lastModeKey)
         heartbeat()
@@ -48,17 +52,26 @@ enum KeepAliveLogger {
     }
 
     static func markEnterForeground() {
+        guard AppDebugLogger.isDebugModeEnabled else { return }
         append("回到前台，后台开始=\(storedDateText(backgroundStartKey))，最后心跳=\(storedDateText(lastHeartbeatKey))")
         UserDefaults.standard.removeObject(forKey: backgroundStartKey)
         heartbeat()
     }
 
     static func heartbeat() {
+        guard AppDebugLogger.isDebugModeEnabled else { return }
         UserDefaults.standard.set(Date().timeIntervalSince1970, forKey: lastHeartbeatKey)
     }
 
     static func copyToPasteboard() {
         UIPasteboard.general.string = exportText()
+    }
+
+    static func resetLogs() {
+        let defaults = UserDefaults.standard
+        for key in [eventsKey, sessionActiveKey, sessionStartKey, backgroundStartKey, lastHeartbeatKey, lastModeKey] {
+            defaults.removeObject(forKey: key)
+        }
     }
 
     static func exportText() -> String {

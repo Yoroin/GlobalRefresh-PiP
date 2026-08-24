@@ -5,27 +5,90 @@
 
 import SwiftUI
 import UIKit
+import Combine
+
+private struct AdaptiveLayoutMetrics {
+    static var current: AdaptiveLayoutMetrics {
+        AdaptiveLayoutMetrics(size: UIScreen.main.bounds.size)
+    }
+
+    let size: CGSize
+
+    private var shortSide: CGFloat { min(size.width, size.height) }
+    private var longSide: CGFloat { max(size.width, size.height) }
+
+    var isNarrow: Bool { shortSide <= 340 }
+    var isCompactHeight: Bool { longSide <= 620 }
+    var isCompact: Bool { isNarrow || isCompactHeight }
+
+    var headerTitleSize: CGFloat { isCompact ? 30 : 34 }
+    var headerHorizontalPadding: CGFloat { isNarrow ? 16 : 20 }
+    var headerTopPadding: CGFloat { isCompact ? 12 : 22 }
+    var headerBottomPadding: CGFloat { isCompact ? 6 : 12 }
+
+    var homeOuterSpacing: CGFloat { isCompact ? 10 : 18 }
+    var homeActionSpacing: CGFloat { isCompact ? 8 : 14 }
+    var homeActionHorizontalPadding: CGFloat { isNarrow ? 12 : 20 }
+    var homeContainerHorizontalPadding: CGFloat { isNarrow ? 4 : 8 }
+    var homePrimaryBottomPadding: CGFloat { isCompact ? 16 : 40 }
+    var homePrimaryHorizontalPadding: CGFloat { isNarrow ? 18 : 28 }
+    var homeKeepAliveInfoTop: CGFloat { isCompact ? 98 : 116 }
+    var homeSettingsTop: CGFloat { isCompact ? 66 : 82 }
+    var homeSettingsTrailing: CGFloat { isNarrow ? 12 : 20 }
+    var homePiPStatusInfoTop: CGFloat {
+        isCompact ? min(354, max(300, longSide - 214)) : 406
+    }
+
+    var versionContentTopPadding: CGFloat { isCompact ? 70 : 104 }
+    var versionHorizontalPadding: CGFloat { isNarrow ? 18 : 28 }
+    var versionMainSpacing: CGFloat { isCompact ? 13 : 24 }
+    var versionTitleSize: CGFloat { isCompact ? 28 : 34 }
+    var versionNumberSize: CGFloat { isCompact ? 27 : 32 }
+    var versionDividerPadding: CGFloat { isNarrow ? 34 : 52 }
+    var versionReservedControlsHeight: CGFloat { isCompact ? 0 : 46 }
+    var versionReservedControlsTopPadding: CGFloat { isCompact ? 0 : 24 }
+    var versionCopyLogRowHeight: CGFloat { isCompact ? 44 : 54 }
+    var versionFAQRowCenterY: CGFloat { isCompact ? min(410, max(372, longSide - 158)) : 452 }
+    var versionKeepAliveInfoCenterY: CGFloat { isCompact ? 266 : 318 }
+    var panelWidth300: CGFloat { min(300, shortSide - 24) }
+    var homeSettingsPanelWidth: CGFloat { min(270, shortSide - 24) }
+    var infoPanelWidth282: CGFloat { min(282, shortSide - 24) }
+    var infoPanelWidth254: CGFloat { min(254, shortSide - 24) }
+
+}
 
 struct PageHeaderTitle: View {
     let title: String
 
     var body: some View {
         Text(title)
-            .font(.system(size: 34, weight: .black, design: .rounded))
+            .font(.system(size: layout.headerTitleSize, weight: .black, design: .rounded))
             .foregroundColor(Color(UIColor.label))
             .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(.horizontal, 20)
-            .padding(.top, 22)
-            .padding(.bottom, 12)
+            .padding(.horizontal, layout.headerHorizontalPadding)
+            .padding(.top, layout.headerTopPadding)
+            .padding(.bottom, layout.headerBottomPadding)
     }
+
+    private var layout: AdaptiveLayoutMetrics { .current }
 }
 
 struct PiPHomeView: View {
     @Binding var isPiPActive: Bool
     @State private var isSettingsVisible = false
+    @State private var isKeepAliveInfoVisible = false
+    @State private var isPiPStatusInfoVisible = false
 
     let pipHeight: String
+    let keepAliveMode: String
+    let pipStatusTitle: String
+    let pipStatusColor: UIColor
+    let pipRunningDuration: String
+    let pipStoppedAtText: String
+    let pipRuntimeStartedAt: Date?
+    let overlayResetToken: Int
     let isScrollingEnabled: Bool
+    let isClockModeEnabled: Bool
     let remembersPiPHeight: Bool
     let isSettingsExpanded: Bool
     let onTogglePiP: () -> Void
@@ -33,6 +96,7 @@ struct PiPHomeView: View {
     let onToggleStyle: () -> Void
     let onCustomizeHeight: () -> Void
     let onToggleScrolling: () -> Void
+    let onSetClockMode: (Bool) -> Void
     let onToggleSettings: () -> Void
     let onDismissSettings: () -> Void
     let onSetRememberPiPHeight: (Bool) -> Void
@@ -43,13 +107,15 @@ struct PiPHomeView: View {
                 .edgesIgnoringSafeArea(.all)
                 .contentShape(Rectangle())
                 .onTapGesture {
+                    dismissKeepAliveInfoIfNeeded()
+                    dismissPiPStatusInfoIfNeeded()
                     dismissSettingsIfNeeded()
                 }
 
-            VStack(alignment: .leading, spacing: 18) {
+            VStack(alignment: .leading, spacing: layout.homeOuterSpacing) {
                 homeHeader
 
-                VStack(spacing: 14) {
+                VStack(spacing: layout.homeActionSpacing) {
                     ActionButton(title: "使用教程", systemImage: "book") {
                         runAfterDismissingSettings(onShowTutorial)
                     }
@@ -59,36 +125,54 @@ struct PiPHomeView: View {
                     ActionButton(title: "自定义悬浮窗高度", systemImage: "arrow.up.and.down", detail: pipHeight) {
                         runAfterDismissingSettings(onCustomizeHeight)
                     }
-                    ActionButton(
-                        title: isScrollingEnabled ? "停止滚动悬浮窗内容文本" : "启用滚动悬浮窗内容文本",
-                        systemImage: isScrollingEnabled ? "pause.circle" : "play.circle"
-                    ) {
-                        runAfterDismissingSettings(onToggleScrolling)
-                    }
-                }
-                .padding(.horizontal, 20)
 
-                Spacer(minLength: 18)
+                    pipStatusRow
+                }
+                .padding(.horizontal, layout.homeActionHorizontalPadding)
+
+                Spacer(minLength: layout.isCompact ? 8 : 18)
 
                 PrimaryPiPButton(title: isPiPActive ? "关闭悬浮窗" : "开启悬浮窗") {
                     runAfterDismissingSettings(onTogglePiP)
                 }
                     .frame(maxWidth: 286)
                     .frame(maxWidth: .infinity, alignment: .center)
-                    .padding(.horizontal, 28)
-                    .padding(.bottom, 40)
+                    .padding(.horizontal, layout.homePrimaryHorizontalPadding)
+                    .padding(.bottom, layout.homePrimaryBottomPadding)
             }
-            .padding(.horizontal, 8)
+            .padding(.horizontal, layout.homeContainerHorizontalPadding)
             .contentShape(Rectangle())
             .onTapGesture {
+                dismissKeepAliveInfoIfNeeded()
+                dismissPiPStatusInfoIfNeeded()
                 dismissSettingsIfNeeded()
             }
 
+            keepAliveInfoPopover
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.top, layout.homeKeepAliveInfoTop)
+                .padding(.leading, layout.headerHorizontalPadding)
+                .opacity(isKeepAliveInfoVisible ? 1 : 0)
+                .scaleEffect(isKeepAliveInfoVisible ? 1 : 0.92, anchor: .topLeading)
+                .allowsHitTesting(isKeepAliveInfoVisible)
+                .accessibilityHidden(!isKeepAliveInfoVisible)
+                .zIndex(9)
+
+            if isPiPStatusInfoVisible {
+                pipStatusInfoPopover
+                    .frame(maxWidth: .infinity, alignment: .center)
+                    .padding(.top, layout.homePiPStatusInfoTop)
+                    .padding(.horizontal, layout.headerHorizontalPadding)
+                    .transition(.opacity)
+                    .zIndex(9)
+            }
+
             settingsPopover
-                .padding(.top, 82)
-                .padding(.trailing, 20)
+                .padding(.top, layout.homeSettingsTop)
+                .padding(.trailing, layout.homeSettingsTrailing)
                 .opacity(isSettingsVisible ? 1 : 0)
-                .scaleEffect(isSettingsVisible ? 1 : 0.92, anchor: .topTrailing)
+                .scaleEffect(isSettingsVisible ? 1 : 0.985, anchor: .topTrailing)
+                .blur(radius: isSettingsVisible ? 0 : 6)
                 .allowsHitTesting(isSettingsVisible)
                 .accessibilityHidden(!isSettingsVisible)
                 .zIndex(10)
@@ -99,53 +183,268 @@ struct PiPHomeView: View {
         .onChange(of: isSettingsExpanded) { newValue in
             animateSettingsVisibility(newValue)
         }
+        .onChange(of: overlayResetToken) { _ in
+            dismissKeepAliveInfoIfNeeded()
+            dismissPiPStatusInfoIfNeeded()
+            dismissSettingsIfNeeded()
+        }
     }
 
     private var homeHeader: some View {
-        HStack(alignment: .center) {
-            Text("首页")
-                .font(.system(size: 34, weight: .black, design: .rounded))
-                .foregroundColor(Color(UIColor.label))
+        HStack(alignment: .top) {
+            VStack(alignment: .leading, spacing: 7) {
+                Text("首页")
+                    .font(.system(size: layout.headerTitleSize, weight: .black, design: .rounded))
+                    .foregroundColor(Color(UIColor.label))
+
+                HStack(spacing: 7) {
+                    Text("当前保活模式")
+                        .font(.system(size: 14, weight: .semibold))
+                        .foregroundColor(Color(UIColor.secondaryLabel))
+
+                    Button {
+                        UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                        dismissSettingsIfNeeded()
+                        withAnimation(.interpolatingSpring(mass: 0.45, stiffness: 420, damping: 36, initialVelocity: 0.12)) {
+                            isKeepAliveInfoVisible.toggle()
+                        }
+                    } label: {
+                        HStack(spacing: 4) {
+                            Text(keepAliveMode)
+                                .font(.system(size: 13, weight: .bold))
+                            Image(systemName: "exclamationmark.circle.fill")
+                                .font(.system(size: 12, weight: .bold))
+                        }
+                        .foregroundColor(Color(UIColor.systemBlue))
+                        .padding(.leading, 10)
+                        .padding(.trailing, 8)
+                        .frame(height: 26)
+                        .background(keepAliveModeBadgeBackground)
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
 
             Spacer()
 
             Button {
                 UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                dismissKeepAliveInfoIfNeeded()
+                dismissPiPStatusInfoIfNeeded()
                 onToggleSettings()
             } label: {
                 SettingsGearButton(isExpanded: isSettingsVisible)
             }
             .buttonStyle(.plain)
         }
-        .padding(.horizontal, 20)
-        .padding(.top, 22)
-        .padding(.bottom, 12)
+        .padding(.horizontal, layout.headerHorizontalPadding)
+        .padding(.top, layout.headerTopPadding)
+        .padding(.bottom, layout.headerBottomPadding)
+    }
+
+    private var keepAliveModeBadgeBackground: some View {
+        let shape = Capsule()
+        return Group {
+            if #available(iOS 26.0, *) {
+                shape
+                    .fill(Color(UIColor.secondarySystemGroupedBackground).opacity(0.22))
+                    .glassEffect(.regular.interactive(), in: shape)
+            } else if #available(iOS 15.0, *) {
+                shape
+                    .fill(.ultraThinMaterial)
+                    .overlay(shape.fill(Color(UIColor.secondarySystemGroupedBackground).opacity(0.36)))
+                    .overlay(shape.strokeBorder(legacyGlassStrokeColor, lineWidth: 1))
+            } else {
+                shape
+                    .fill(Color(UIColor.secondarySystemGroupedBackground).opacity(0.94))
+                    .overlay(shape.strokeBorder(legacyGlassStrokeColor, lineWidth: 1))
+            }
+        }
+    }
+
+    private var keepAliveInfoPopover: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 6) {
+                Image(systemName: "exclamationmark.circle.fill")
+                    .font(.system(size: 15, weight: .bold))
+                Text(keepAliveMode)
+                    .font(.system(size: 15, weight: .bold))
+            }
+            .foregroundColor(Color(UIColor.systemBlue))
+
+            Text(keepAliveModeDescription)
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundColor(Color(UIColor.secondaryLabel))
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 12)
+        .frame(width: layout.infoPanelWidth282, alignment: .leading)
+        .background(settingsPopoverBackground)
+        .overlay(
+            RoundedRectangle(cornerRadius: 20, style: .continuous)
+                .stroke(adaptiveGlassStrokeColor, lineWidth: 1)
+        )
+        .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
+        .shadow(color: Color.black.opacity(0.14), radius: 16, x: 0, y: 10)
+    }
+
+    private var pipStatusRow: some View {
+        HStack(spacing: 8) {
+            Text("悬浮窗状态")
+                .font(.system(size: 14, weight: .semibold))
+                .foregroundColor(Color(UIColor.secondaryLabel))
+
+            Button {
+                UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                dismissKeepAliveInfoIfNeeded()
+                dismissSettingsIfNeeded()
+                withAnimation(.easeOut(duration: 0.16)) {
+                    isPiPStatusInfoVisible.toggle()
+                }
+            } label: {
+                HStack(spacing: 4) {
+                    Text(pipStatusTitle)
+                        .font(.system(size: 13, weight: .bold))
+                    Image(systemName: "exclamationmark.circle.fill")
+                        .font(.system(size: 12, weight: .bold))
+                }
+                .foregroundColor(Color(pipStatusColor))
+                .padding(.leading, 10)
+                .padding(.trailing, 8)
+                .frame(height: 26)
+                .background(keepAliveModeBadgeBackground)
+            }
+            .buttonStyle(.plain)
+
+            Spacer(minLength: 0)
+        }
+        .padding(.horizontal, 4)
+        .padding(.top, 2)
+    }
+
+    private var pipStatusInfoPopover: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 6) {
+                Image(systemName: "exclamationmark.circle.fill")
+                    .font(.system(size: 15, weight: .bold))
+                Text(pipStatusTitle)
+                    .font(.system(size: 15, weight: .bold))
+            }
+            .foregroundColor(Color(pipStatusColor))
+
+            PiPRuntimeText(
+                startedAt: pipRuntimeStartedAt,
+                fallbackDuration: pipRunningDuration
+            )
+            .font(.system(size: 14, weight: .semibold, design: .monospaced))
+            .foregroundColor(Color(UIColor.secondaryLabel))
+            .fixedSize(horizontal: false, vertical: true)
+
+            Text("上次关闭时间：\(pipStoppedAtText)")
+                .font(.system(size: 14, weight: .semibold))
+                .foregroundColor(Color(UIColor.secondaryLabel))
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 12)
+        .frame(width: layout.infoPanelWidth254, alignment: .leading)
+        .background(settingsPopoverBackground)
+        .overlay(
+            RoundedRectangle(cornerRadius: 20, style: .continuous)
+                .stroke(adaptiveGlassStrokeColor, lineWidth: 1)
+        )
+        .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
+        .shadow(color: Color.black.opacity(0.14), radius: 16, x: 0, y: 10)
+    }
+
+    private struct PiPRuntimeText: View {
+        let startedAt: Date?
+        let fallbackDuration: String
+        @State private var now = Date()
+
+        var body: some View {
+            Text("已运行时间：\(displayText)")
+                .lineLimit(1)
+                .minimumScaleFactor(0.78)
+                .allowsTightening(true)
+                .onReceive(timer) { date in
+                    guard startedAt != nil else { return }
+                    now = date
+                }
+        }
+
+        private var timer: Publishers.Autoconnect<Timer.TimerPublisher> {
+            Timer.publish(every: 1, on: .main, in: .default).autoconnect()
+        }
+
+        private var displayText: String {
+            guard let startedAt else {
+                return fallbackDuration
+            }
+            let duration = max(0, now.timeIntervalSince(startedAt))
+            let totalSeconds = max(0, Int(duration.rounded(.down)))
+            let hours = totalSeconds / 3600
+            let minutes = (totalSeconds % 3600) / 60
+            let seconds = totalSeconds % 60
+            return String(format: "%02d:%02d:%02d", hours, minutes, seconds)
+        }
+    }
+
+    private var keepAliveModeDescription: String {
+        keepAliveMode == "音频强保活"
+            ? "音频强保活，强力保活方案，缺点较为耗电，且小部分场景可能影响音频，已默认不再使用，仅适合超强保活且不在意耗电的需求用户"
+            : "新方案仅PiP保活，经实测较老方案更为省电，保活效果一致，并且解决音频冲突问题，优先推荐"
     }
 
     private var settingsPopover: some View {
-        VStack(alignment: .leading, spacing: 12) {
+        VStack(alignment: .leading, spacing: 7) {
             Text("设置")
                 .font(.system(size: 18, weight: .black, design: .rounded))
                 .foregroundColor(Color(UIColor.label))
 
-            SettingsToggleRow(
-                title: "记忆悬浮窗高度",
-                systemImage: "slider.horizontal.3",
-                isOn: rememberHeightBinding
-            )
+            VStack(alignment: .leading, spacing: 2) {
+                SettingsToggleRow(
+                    title: "记忆悬浮窗高度",
+                    systemImage: "slider.horizontal.3",
+                    isOn: rememberHeightBinding,
+                    statusText: { isOn in
+                        isOn ? "下次打开自动恢复当前高度" : "每次打开使用默认高度"
+                    }
+                )
 
-            Text("高度记忆为0.1pt时，可能无法直接启用悬浮窗，因此会自动恢复成44pt")
-                .font(.system(size: 12, weight: .semibold))
-                .foregroundColor(Color(UIColor.secondaryLabel))
-                .fixedSize(horizontal: false, vertical: true)
-                .padding(.horizontal, 4)
+                Text("高度记忆为0.1pt时，可能无法直接启用悬浮窗，因此会自动恢复成44pt")
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundColor(Color(UIColor.secondaryLabel))
+                    .fixedSize(horizontal: false, vertical: true)
+                    .padding(.horizontal, 4)
+            }
+
+            Divider()
+                .opacity(0.42)
+
+            VStack(alignment: .leading, spacing: 2) {
+                SettingsToggleRow(
+                    title: "悬浮窗内容滚动",
+                    systemImage: "text.line.first.and.arrowtriangle.forward",
+                    isOn: scrollingBinding,
+                    isEnabled: !isClockModeEnabled
+                )
+
+                Text("关闭后可停止文本滚动，仅防止晃眼，并不影响全局120")
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundColor(Color(UIColor.secondaryLabel))
+                    .fixedSize(horizontal: false, vertical: true)
+                    .padding(.horizontal, 4)
+                    .opacity(isClockModeEnabled ? 0.42 : 1)
+            }
         }
-        .padding(16)
-        .frame(width: 306)
+        .padding(14)
+        .frame(width: layout.homeSettingsPanelWidth)
         .background(settingsPopoverBackground)
         .overlay(
             RoundedRectangle(cornerRadius: 22, style: .continuous)
-                .stroke(Color.white.opacity(0.18), lineWidth: 1)
+                .stroke(adaptiveGlassStrokeColor, lineWidth: 1)
         )
         .clipShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
         .shadow(color: Color.black.opacity(0.16), radius: 18, x: 0, y: 10)
@@ -174,7 +473,34 @@ struct PiPHomeView: View {
             set: { newValue in
                 guard newValue != remembersPiPHeight else { return }
                 UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                dismissPiPStatusInfoIfNeeded()
                 onSetRememberPiPHeight(newValue)
+            }
+        )
+    }
+
+    private var scrollingBinding: Binding<Bool> {
+        Binding(
+            get: { isScrollingEnabled },
+            set: { newValue in
+                guard !isClockModeEnabled else { return }
+                guard newValue != isScrollingEnabled else { return }
+                UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                dismissPiPStatusInfoIfNeeded()
+                onToggleScrolling()
+            }
+        )
+    }
+
+    private var textModeBinding: Binding<Bool> {
+        Binding(
+            get: { !isClockModeEnabled },
+            set: { newValue in
+                let shouldEnableClock = !newValue
+                guard shouldEnableClock != isClockModeEnabled else { return }
+                UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                dismissPiPStatusInfoIfNeeded()
+                onSetClockMode(shouldEnableClock)
             }
         )
     }
@@ -187,7 +513,23 @@ struct PiPHomeView: View {
         }
     }
 
+    private func dismissKeepAliveInfoIfNeeded() {
+        guard isKeepAliveInfoVisible else { return }
+        withAnimation(.interpolatingSpring(mass: 0.45, stiffness: 420, damping: 36, initialVelocity: 0.12)) {
+            isKeepAliveInfoVisible = false
+        }
+    }
+
+    private func dismissPiPStatusInfoIfNeeded() {
+        guard isPiPStatusInfoVisible else { return }
+        withAnimation(.easeOut(duration: 0.12)) {
+            isPiPStatusInfoVisible = false
+        }
+    }
+
     private func runAfterDismissingSettings(_ action: @escaping () -> Void) {
+        dismissKeepAliveInfoIfNeeded()
+        dismissPiPStatusInfoIfNeeded()
         guard isSettingsVisible || isSettingsExpanded else {
             action()
             return
@@ -203,11 +545,12 @@ struct PiPHomeView: View {
     }
 
     private func animateSettingsVisibility(_ isVisible: Bool) {
-        withAnimation(.interpolatingSpring(mass: 0.45, stiffness: 420, damping: 36, initialVelocity: 0.12)) {
+        withAnimation(.easeInOut(duration: 0.18)) {
             isSettingsVisible = isVisible
         }
     }
 
+    private var layout: AdaptiveLayoutMetrics { .current }
 }
 
 private struct SettingsGearButton: View {
@@ -283,48 +626,49 @@ private struct SettingsGlassContainer: ViewModifier {
 struct VersionPageView: View {
     let isDebugModeEnabled: Bool
     let isIOS26AudioKeepAliveEnabled: Bool
+    let isDebugDiagnosticsEnabled: Bool
     let debugPanelResetToken: Int
     let onShowChangelog: () -> Void
     let onShowFAQ: () -> Void
-    let onCopyDebugLog: () -> Void
-    let onCopyPowerLog: () -> Void
-    let onCopyMetricLog: () -> Void
-    let onCopyKeepAliveLog: () -> Void
+    let onCopyDiagnosticsLog: () -> Void
+    let onToggleDebugDiagnostics: () -> Void
     let onSetDebugMode: (Bool) -> Void
     let onRequestEnableDebugMode: () -> Void
     let onSetIOS26AudioKeepAlive: (Bool) -> Void
     @State private var isDebugPanelVisible = false
+    @State private var isKeepAliveInfoVisible = false
+    @State private var isDebugDiagnosticsInfoVisible = false
     @State private var displayedDebugModeEnabled: Bool
     @State private var displayedIOS26AudioKeepAliveEnabled: Bool
+    @State private var displayedDebugDiagnosticsEnabled: Bool
 
     init(
         isDebugModeEnabled: Bool,
         isIOS26AudioKeepAliveEnabled: Bool,
+        isDebugDiagnosticsEnabled: Bool,
         debugPanelResetToken: Int,
         onShowChangelog: @escaping () -> Void,
         onShowFAQ: @escaping () -> Void,
-        onCopyDebugLog: @escaping () -> Void,
-        onCopyPowerLog: @escaping () -> Void,
-        onCopyMetricLog: @escaping () -> Void,
-        onCopyKeepAliveLog: @escaping () -> Void,
+        onCopyDiagnosticsLog: @escaping () -> Void,
+        onToggleDebugDiagnostics: @escaping () -> Void,
         onSetDebugMode: @escaping (Bool) -> Void,
         onRequestEnableDebugMode: @escaping () -> Void,
         onSetIOS26AudioKeepAlive: @escaping (Bool) -> Void
     ) {
         self.isDebugModeEnabled = isDebugModeEnabled
         self.isIOS26AudioKeepAliveEnabled = isIOS26AudioKeepAliveEnabled
+        self.isDebugDiagnosticsEnabled = isDebugDiagnosticsEnabled
         self.debugPanelResetToken = debugPanelResetToken
         self.onShowChangelog = onShowChangelog
         self.onShowFAQ = onShowFAQ
-        self.onCopyDebugLog = onCopyDebugLog
-        self.onCopyPowerLog = onCopyPowerLog
-        self.onCopyMetricLog = onCopyMetricLog
-        self.onCopyKeepAliveLog = onCopyKeepAliveLog
+        self.onCopyDiagnosticsLog = onCopyDiagnosticsLog
+        self.onToggleDebugDiagnostics = onToggleDebugDiagnostics
         self.onSetDebugMode = onSetDebugMode
         self.onRequestEnableDebugMode = onRequestEnableDebugMode
         self.onSetIOS26AudioKeepAlive = onSetIOS26AudioKeepAlive
         _displayedDebugModeEnabled = State(initialValue: isDebugModeEnabled)
         _displayedIOS26AudioKeepAliveEnabled = State(initialValue: isIOS26AudioKeepAliveEnabled)
+        _displayedDebugDiagnosticsEnabled = State(initialValue: isDebugDiagnosticsEnabled)
     }
 
     var body: some View {
@@ -333,6 +677,8 @@ struct VersionPageView: View {
                 .edgesIgnoringSafeArea(.all)
                 .onTapGesture {
                     dismissDebugPanel()
+                    dismissKeepAliveInfoPanel()
+                    dismissDebugDiagnosticsInfoPanel()
                 }
 
             HStack(alignment: .center) {
@@ -359,9 +705,9 @@ struct VersionPageView: View {
             }
             .frame(maxHeight: .infinity, alignment: .top)
 
-            VStack(spacing: 24) {
+            VStack(spacing: layout.versionMainSpacing) {
                 Text("全局高刷悬浮窗")
-                    .font(.system(size: 34, weight: .black, design: .rounded))
+                    .font(.system(size: layout.versionTitleSize, weight: .black, design: .rounded))
                     .foregroundColor(Color(UIColor.label))
                     .lineLimit(1)
                     .minimumScaleFactor(0.78)
@@ -371,69 +717,65 @@ struct VersionPageView: View {
                         .font(.system(size: 15, weight: .semibold))
                         .foregroundColor(Color(UIColor.secondaryLabel))
 
-                    HStack(spacing: 8) {
-                        Text("1.0.6")
-                            .font(.system(size: 32, weight: .bold, design: .rounded))
+                    VStack(spacing: 7) {
+                        Text("1.0.7")
+                            .font(.system(size: layout.versionNumberSize, weight: .bold, design: .rounded))
                             .foregroundColor(Color(UIColor.label))
 
-                        if displayedDebugModeEnabled {
-                            Text(displayedIOS26AudioKeepAliveEnabled ? "音频强保活" : "仅PiP保活")
-                                .font(.system(size: 12, weight: .bold))
-                                .foregroundColor(Color(UIColor.systemBlue))
-                                .padding(.horizontal, 9)
-                                .frame(height: 24)
-                                .background(versionFlagBackground)
+                        Button {
+                            UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                            dismissDebugPanel()
+                            dismissDebugDiagnosticsInfoPanel()
+                            withAnimation(.interpolatingSpring(mass: 0.45, stiffness: 420, damping: 36, initialVelocity: 0.12)) {
+                                isKeepAliveInfoVisible.toggle()
+                            }
+                        } label: {
+                            HStack(spacing: 4) {
+                                Text(keepAliveModeTitle)
+                                    .font(.system(size: 12, weight: .bold))
+                                Image(systemName: "questionmark.circle.fill")
+                                    .font(.system(size: 12, weight: .bold))
+                            }
+                            .foregroundColor(Color(UIColor.systemBlue))
+                            .padding(.leading, 9)
+                            .padding(.trailing, 7)
+                            .frame(height: 24)
+                            .background(versionFlagBackground)
                         }
+                        .buttonStyle(.plain)
                     }
                     .lineLimit(1)
                     .minimumScaleFactor(0.72)
                 }
 
                 Divider()
-                    .padding(.horizontal, 52)
+                    .padding(.horizontal, layout.versionDividerPadding)
 
-                VersionDescriptionView()
+                VersionDescriptionView(isCompact: layout.isCompact)
 
                 Color.clear
-                    .frame(height: 46)
-                .padding(.top, 24)
+                    .frame(height: layout.versionReservedControlsHeight)
+                    .padding(.top, layout.versionReservedControlsTopPadding)
 
-                VStack(spacing: 10) {
-                    HStack(spacing: 10) {
-                        CopyLogButton(title: "复制调试日志", systemImage: "doc.on.doc") {
-                            dismissDebugPanel()
-                            onCopyDebugLog()
-                        }
-
-                        CopyLogButton(title: "复制耗电日志", systemImage: "bolt.batteryblock") {
-                            dismissDebugPanel()
-                            onCopyPowerLog()
-                        }
-                    }
-
-                    HStack(spacing: 10) {
-                        CopyLogButton(title: "复制系统指标日志", systemImage: "waveform.path.ecg.rectangle") {
-                            dismissDebugPanel()
-                            onCopyMetricLog()
-                        }
-
-                        CopyLogButton(title: "复制保活日志", systemImage: "timer.circle") {
-                            dismissDebugPanel()
-                            onCopyKeepAliveLog()
-                        }
+                if !layout.isCompact {
+                    copyDiagnosticsLogButton
+                        .frame(height: layout.versionCopyLogRowHeight)
+                    if shouldShowDebugDiagnosticsStatus {
+                        debugDiagnosticsStatusLabel
                     }
                 }
-                .opacity(displayedDebugModeEnabled ? 1 : 0)
-                .allowsHitTesting(displayedDebugModeEnabled)
-                .frame(height: 98)
             }
-            .padding(.horizontal, 28)
-            .padding(.top, 104)
+            .padding(.horizontal, layout.versionHorizontalPadding)
+            .padding(.top, layout.versionContentTopPadding)
             .frame(maxHeight: .infinity, alignment: .top)
             .animation(nil, value: displayedDebugModeEnabled)
 
             fixedFAQButtons
+            if layout.isCompact {
+                fixedCompactDiagnosticsControls
+            }
             fixedDebugPanel
+            keepAliveInfoPanel
         }
         .onChange(of: isDebugModeEnabled) { newValue in
             guard newValue != displayedDebugModeEnabled else { return }
@@ -443,8 +785,17 @@ struct VersionPageView: View {
             guard newValue != displayedIOS26AudioKeepAliveEnabled else { return }
             displayedIOS26AudioKeepAliveEnabled = newValue
         }
+        .onChange(of: isDebugDiagnosticsEnabled) { newValue in
+            guard newValue != displayedDebugDiagnosticsEnabled else { return }
+            displayedDebugDiagnosticsEnabled = newValue
+            if !newValue {
+                dismissDebugDiagnosticsInfoPanel()
+            }
+        }
         .onChange(of: debugPanelResetToken) { _ in
             dismissDebugPanel()
+            dismissKeepAliveInfoPanel()
+            dismissDebugDiagnosticsInfoPanel()
         }
     }
 
@@ -458,6 +809,20 @@ struct VersionPageView: View {
         guard isDebugPanelVisible else { return }
         withAnimation(.interpolatingSpring(mass: 0.45, stiffness: 420, damping: 36, initialVelocity: 0.12)) {
             isDebugPanelVisible = false
+        }
+    }
+
+    private func dismissKeepAliveInfoPanel() {
+        guard isKeepAliveInfoVisible else { return }
+        withAnimation(.interpolatingSpring(mass: 0.45, stiffness: 420, damping: 36, initialVelocity: 0.12)) {
+            isKeepAliveInfoVisible = false
+        }
+    }
+
+    private func dismissDebugDiagnosticsInfoPanel() {
+        guard isDebugDiagnosticsInfoVisible else { return }
+        withAnimation(.interpolatingSpring(mass: 0.45, stiffness: 420, damping: 36, initialVelocity: 0.12)) {
+            isDebugDiagnosticsInfoVisible = false
         }
     }
 
@@ -484,11 +849,39 @@ struct VersionPageView: View {
         onSetIOS26AudioKeepAlive(isEnabled)
     }
 
+    private func openGitHubLink() {
+        UIImpactFeedbackGenerator(style: .light).impactOccurred()
+        DiagnosticsRuntimeState.recordUserAction("打开GitHub")
+        dismissKeepAliveInfoPanel()
+        dismissDebugPanel()
+        if let url = URL(string: "https://github.com/Yoroin/GlobalRefresh-PiP") {
+            UIApplication.shared.open(url)
+        }
+    }
+
+    private var keepAliveModeTitle: String {
+        displayedIOS26AudioKeepAliveEnabled ? "音频强保活" : "PiP保活-低功耗"
+    }
+
+    private var keepAliveModeDescription: String {
+        displayedIOS26AudioKeepAliveEnabled
+            ? "音频强保活，强力保活方案，缺点较为耗电，且小部分场景可能影响音频，已默认不再使用，仅适合超强保活且不在意耗电的需求用户"
+            : "新方案仅PiP保活，经实测较老方案更为省电，保活效果一致，并且解决音频冲突问题，优先推荐"
+    }
+
     private var fixedFAQButtons: some View {
         GeometryReader { proxy in
             HStack(spacing: 10) {
                 Button {
+                    openGitHubLink()
+                } label: {
+                    GitHubLinkIcon()
+                }
+                .buttonStyle(.plain)
+
+                Button {
                     UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                    dismissKeepAliveInfoPanel()
                     dismissDebugPanel()
                     onShowFAQ()
                 } label: {
@@ -506,6 +899,7 @@ struct VersionPageView: View {
 
                 Button {
                     UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                    dismissKeepAliveInfoPanel()
                     toggleDebugPanel()
                 } label: {
                     DebugModeButton(isExpanded: isDebugPanelVisible)
@@ -516,6 +910,86 @@ struct VersionPageView: View {
             .position(x: proxy.size.width / 2, y: fixedFAQRowCenterY)
         }
         .zIndex(4)
+    }
+
+    private var copyDiagnosticsLogButton: some View {
+        HStack(spacing: 10) {
+            CopyLogButton(
+                title: "复制诊断日志",
+                systemImage: "doc.text.magnifyingglass",
+                onLongPress: {
+                    dismissDebugPanel()
+                    dismissKeepAliveInfoPanel()
+                    dismissDebugDiagnosticsInfoPanel()
+                    onToggleDebugDiagnostics()
+                }
+            ) {
+                dismissDebugPanel()
+                dismissKeepAliveInfoPanel()
+                dismissDebugDiagnosticsInfoPanel()
+                onCopyDiagnosticsLog()
+            }
+        }
+        .opacity(displayedDebugModeEnabled ? 1 : 0)
+        .allowsHitTesting(displayedDebugModeEnabled)
+    }
+
+    private var debugDiagnosticsStatusLabel: some View {
+        Button {
+            UIImpactFeedbackGenerator(style: .light).impactOccurred()
+            dismissDebugPanel()
+            dismissKeepAliveInfoPanel()
+            withAnimation(.interpolatingSpring(mass: 0.45, stiffness: 420, damping: 36, initialVelocity: 0.12)) {
+                isDebugDiagnosticsInfoVisible.toggle()
+            }
+        } label: {
+            HStack(spacing: 4) {
+                Text("线程日志记录中")
+                    .font(.system(size: 12, weight: .bold))
+                Image(systemName: "questionmark.circle.fill")
+                    .font(.system(size: 12, weight: .bold))
+            }
+            .foregroundColor(Color(UIColor.systemRed))
+            .padding(.leading, 9)
+            .padding(.trailing, 7)
+            .frame(height: 24)
+            .background(diagnosticsStatusBackground)
+        }
+        .buttonStyle(.plain)
+        .opacity(shouldShowDebugDiagnosticsStatus ? 1 : 0)
+        .allowsHitTesting(shouldShowDebugDiagnosticsStatus)
+        .overlay(
+            debugDiagnosticsInfoPanelContent
+                .offset(y: -debugDiagnosticsInfoPanelHeight - 10)
+                .scaleEffect(isDebugDiagnosticsInfoVisible ? 1 : 0.92, anchor: .bottom)
+                .opacity(isDebugDiagnosticsInfoVisible ? 1 : 0)
+                .allowsHitTesting(isDebugDiagnosticsInfoVisible),
+            alignment: .top
+        )
+    }
+
+    private var fixedCopyDiagnosticsLogButton: some View {
+        GeometryReader { proxy in
+            copyDiagnosticsLogButton
+                .frame(height: layout.versionCopyLogRowHeight)
+                .position(x: proxy.size.width / 2, y: fixedFAQRowCenterY - 58)
+        }
+        .zIndex(4.5)
+    }
+
+    private var fixedCompactDiagnosticsControls: some View {
+        GeometryReader { proxy in
+            VStack(spacing: 6) {
+                copyDiagnosticsLogButton
+                    .frame(height: layout.versionCopyLogRowHeight)
+                if shouldShowDebugDiagnosticsStatus {
+                    debugDiagnosticsStatusLabel
+                }
+            }
+            .frame(height: shouldShowDebugDiagnosticsStatus ? 74 : layout.versionCopyLogRowHeight)
+            .position(x: proxy.size.width / 2, y: fixedFAQRowCenterY - (shouldShowDebugDiagnosticsStatus ? 70 : 58))
+        }
+        .zIndex(4.55)
     }
 
     private var fixedDebugPanel: some View {
@@ -529,15 +1003,94 @@ struct VersionPageView: View {
             .scaleEffect(isDebugPanelVisible ? 1 : 0.92, anchor: .top)
             .opacity(isDebugPanelVisible ? 1 : 0)
             .allowsHitTesting(isDebugPanelVisible)
-            .position(x: proxy.size.width / 2, y: fixedFAQRowCenterY + 54 + debugPanelCenterOffset)
+            .position(x: proxy.size.width / 2, y: debugPanelCenterY)
         }
         .zIndex(5)
     }
 
-    private var fixedFAQRowCenterY: CGFloat { 442 }
+    private var keepAliveInfoPanel: some View {
+        GeometryReader { proxy in
+            VStack(alignment: .leading, spacing: 8) {
+                HStack(spacing: 6) {
+                    Image(systemName: "questionmark.circle.fill")
+                        .font(.system(size: 15, weight: .bold))
+                    Text(keepAliveModeTitle)
+                        .font(.system(size: 15, weight: .bold))
+                }
+                .foregroundColor(Color(UIColor.systemBlue))
+
+                Text(keepAliveModeDescription)
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundColor(Color(UIColor.secondaryLabel))
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            .padding(.horizontal, 14)
+            .padding(.vertical, 12)
+            .frame(width: layout.infoPanelWidth282, alignment: .leading)
+            .background(infoPanelBackground)
+            .overlay(
+                RoundedRectangle(cornerRadius: 20, style: .continuous)
+                    .stroke(adaptiveGlassStrokeColor, lineWidth: 1)
+            )
+            .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
+            .shadow(color: Color.black.opacity(0.14), radius: 16, x: 0, y: 10)
+            .scaleEffect(isKeepAliveInfoVisible ? 1 : 0.92, anchor: .top)
+            .opacity(isKeepAliveInfoVisible ? 1 : 0)
+            .allowsHitTesting(isKeepAliveInfoVisible)
+            .position(x: proxy.size.width / 2, y: keepAliveInfoPanelCenterY)
+        }
+        .zIndex(6)
+    }
+
+    private var debugDiagnosticsInfoPanelContent: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 6) {
+                Image(systemName: "waveform.path.ecg")
+                    .font(.system(size: 15, weight: .bold))
+                Text("线程日志记录中")
+                    .font(.system(size: 15, weight: .bold))
+            }
+            .foregroundColor(Color(UIColor.systemRed))
+
+            Text("会记录主线程响应、UI帧间隔异常、CPU、内存、线程状态、热状态、电量、当前页面、悬浮窗状态和最近操作，可帮助开发者分析卡死、发热和后台异常。再次长按复制诊断日志可关闭。")
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundColor(Color(UIColor.secondaryLabel))
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 12)
+        .frame(width: layout.infoPanelWidth282, height: debugDiagnosticsInfoPanelHeight, alignment: .leading)
+        .background(infoPanelBackground)
+        .overlay(
+            RoundedRectangle(cornerRadius: 20, style: .continuous)
+                .stroke(adaptiveGlassStrokeColor, lineWidth: 1)
+        )
+        .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
+        .shadow(color: Color.black.opacity(0.14), radius: 16, x: 0, y: 10)
+        .zIndex(6.2)
+    }
+
+    private var shouldShowDebugDiagnosticsStatus: Bool {
+        displayedDebugModeEnabled && displayedDebugDiagnosticsEnabled
+    }
+
+    private var fixedFAQRowCenterY: CGFloat { layout.versionFAQRowCenterY }
+
+    private var keepAliveInfoPanelCenterY: CGFloat { layout.versionKeepAliveInfoCenterY }
+
+    private var debugDiagnosticsInfoPanelHeight: CGFloat {
+        layout.isCompact ? 132 : 122
+    }
+
+    private var debugPanelCenterY: CGFloat {
+        let normalY = fixedFAQRowCenterY + 54 + debugPanelCenterOffset
+        guard layout.isCompact else { return normalY }
+        let maxY = layout.size.height - (displayedDebugModeEnabled ? 126 : 74)
+        return min(normalY, maxY)
+    }
 
     private var debugPanelCenterOffset: CGFloat {
-        displayedDebugModeEnabled ? 82 : 44
+        displayedDebugModeEnabled ? 92 : 48
     }
 
     private var versionFlagBackground: some View {
@@ -550,12 +1103,54 @@ struct VersionPageView: View {
             } else if #available(iOS 15.0, *) {
                 shape
                     .fill(.ultraThinMaterial)
-                    .overlay(shape.fill(Color(UIColor.secondarySystemGroupedBackground).opacity(0.28)))
+                    .overlay(shape.fill(Color(UIColor.secondarySystemGroupedBackground).opacity(0.36)))
+                    .overlay(shape.strokeBorder(legacyGlassStrokeColor, lineWidth: 1))
+            } else {
+                shape
+                    .fill(Color(UIColor.secondarySystemGroupedBackground).opacity(0.94))
+                    .overlay(shape.strokeBorder(legacyGlassStrokeColor, lineWidth: 1))
+            }
+        }
+    }
+
+    private var diagnosticsStatusBackground: some View {
+        let shape = Capsule()
+        return Group {
+            if #available(iOS 26.0, *) {
+                shape
+                    .fill(Color(UIColor.systemRed).opacity(0.08))
+                    .glassEffect(.regular.interactive(), in: shape)
+            } else if #available(iOS 15.0, *) {
+                shape
+                    .fill(.ultraThinMaterial)
+                    .overlay(shape.fill(Color(UIColor.systemRed).opacity(0.08)))
+                    .overlay(shape.strokeBorder(Color(UIColor.systemRed).opacity(0.34), lineWidth: 1))
+            } else {
+                shape
+                    .fill(Color(UIColor.systemRed).opacity(0.1))
+                    .overlay(shape.strokeBorder(Color(UIColor.systemRed).opacity(0.34), lineWidth: 1))
+            }
+        }
+    }
+
+    private var infoPanelBackground: some View {
+        let shape = RoundedRectangle(cornerRadius: 20, style: .continuous)
+        return Group {
+            if #available(iOS 26.0, *) {
+                shape
+                    .fill(Color(UIColor.secondarySystemGroupedBackground).opacity(0.08))
+                    .glassEffect(.regular.interactive(), in: shape)
+            } else if #available(iOS 15.0, *) {
+                shape
+                    .fill(.ultraThinMaterial)
+                    .overlay(shape.fill(Color(UIColor.secondarySystemGroupedBackground).opacity(0.36)))
             } else {
                 shape.fill(Color(UIColor.secondarySystemGroupedBackground).opacity(0.9))
             }
         }
     }
+
+    private var layout: AdaptiveLayoutMetrics { .current }
 }
 
 private struct DebugModeButton: View {
@@ -595,13 +1190,58 @@ private struct DebugModeButton: View {
     }
 }
 
+private struct GitHubLinkIcon: View {
+    var body: some View {
+        let shape = Circle()
+
+        Image("github-mark")
+            .renderingMode(.template)
+            .resizable()
+            .scaledToFit()
+            .foregroundColor(Color(UIColor.label))
+            .frame(width: 25, height: 25)
+        .frame(width: 44, height: 44)
+        .background(glassBackground(shape: shape))
+        .overlay(
+            shape.strokeBorder(
+                Color(UIColor.separator).opacity(0.52),
+                lineWidth: 1
+            )
+        )
+        .clipShape(Circle())
+        .contentShape(Circle())
+        .accessibilityLabel("GitHub")
+    }
+
+    @ViewBuilder
+    private func glassBackground(shape: Circle) -> some View {
+        if #available(iOS 26.0, *) {
+            shape
+                .fill(Color(UIColor.secondarySystemGroupedBackground).opacity(0.22))
+                .glassEffect(.regular.interactive(), in: shape)
+        } else if #available(iOS 15.0, *) {
+            shape
+                .fill(.regularMaterial)
+                .overlay(shape.fill(Color(UIColor.secondarySystemBackground).opacity(0.38)))
+        } else {
+            shape.fill(Color(UIColor.secondarySystemBackground).opacity(0.64))
+        }
+    }
+}
+
 private struct CopyLogButton: View {
     let title: String
     let systemImage: String
+    var onLongPress: (() -> Void)?
     let action: () -> Void
+    @State private var didLongPress = false
 
     var body: some View {
         Button {
+            if didLongPress {
+                didLongPress = false
+                return
+            }
             UIImpactFeedbackGenerator(style: .light).impactOccurred()
             action()
         } label: {
@@ -620,6 +1260,17 @@ private struct CopyLogButton: View {
             .frame(height: 44)
         }
         .buttonStyle(GlassCapsuleButtonStyle())
+        .simultaneousGesture(
+            LongPressGesture()
+                .onEnded { _ in
+                    didLongPress = true
+                    UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+                    onLongPress?()
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) {
+                        didLongPress = false
+                    }
+                }
+        )
     }
 }
 
@@ -660,7 +1311,7 @@ private struct DebugModePanel: View {
             }
             .frame(height: 32)
 
-            Text("开启后显示调试、耗电和系统指标日志按钮")
+            Text("开启后可复制诊断日志、切换保活方案")
                 .font(.system(size: 12, weight: .semibold))
                 .foregroundColor(Color(UIColor.secondaryLabel))
                 .lineLimit(1)
@@ -678,14 +1329,14 @@ private struct DebugModePanel: View {
                         .font(.system(size: 16, weight: .bold))
                         .lineLimit(1)
                     Spacer(minLength: 10)
-                    Toggle("", isOn: iOS26AudioBinding)
+                    Toggle("", isOn: lowPowerPiPBinding)
                         .labelsHidden()
                 }
                 .frame(height: 32)
 
                 VStack(alignment: .leading, spacing: 4) {
-                    Text("开启：默认音频强保活，小概率影响铃声音量调节按钮，推荐使用")
-                    Text("关闭：仅 PiP 保活，更省电且减少音频冲突，但是会降低存活几率以及可能出现低版本兼容性问题，谨慎选择")
+                    Text("开启：新方案仅PiP保活，经实测较老方案更为省电，保活效果一致，并且解决音频冲突问题，优先推荐")
+                    Text("关闭：音频强保活，强力保活方案，缺点较为耗电，且小部分场景可能影响音频，已默认不再使用，仅适合超强保活且不在意耗电的需求用户")
                 }
                 .font(.system(size: 12, weight: .semibold))
                 .foregroundColor(Color(UIColor.secondaryLabel))
@@ -695,11 +1346,11 @@ private struct DebugModePanel: View {
         .foregroundColor(Color(UIColor.label))
         .padding(.horizontal, 16)
         .padding(.vertical, 14)
-        .frame(width: 300)
+        .frame(width: AdaptiveLayoutMetrics.current.panelWidth300)
         .background(panelBackground)
         .overlay(
             RoundedRectangle(cornerRadius: 22, style: .continuous)
-                .stroke(Color.white.opacity(0.18), lineWidth: 1)
+                .stroke(adaptiveGlassStrokeColor, lineWidth: 1)
         )
         .clipShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
         .shadow(color: Color.black.opacity(0.16), radius: 18, x: 0, y: 10)
@@ -724,13 +1375,14 @@ private struct DebugModePanel: View {
         )
     }
 
-    private var iOS26AudioBinding: Binding<Bool> {
+    private var lowPowerPiPBinding: Binding<Bool> {
         Binding(
-            get: { displayedIOS26AudioKeepAliveEnabled },
+            get: { !displayedIOS26AudioKeepAliveEnabled },
             set: { newValue in
-                guard newValue != displayedIOS26AudioKeepAliveEnabled else { return }
-                displayedIOS26AudioKeepAliveEnabled = newValue
-                onSetIOS26AudioKeepAlive(newValue)
+                let audioKeepAliveEnabled = !newValue
+                guard audioKeepAliveEnabled != displayedIOS26AudioKeepAliveEnabled else { return }
+                displayedIOS26AudioKeepAliveEnabled = audioKeepAliveEnabled
+                onSetIOS26AudioKeepAlive(audioKeepAliveEnabled)
             }
         )
     }
@@ -754,8 +1406,10 @@ private struct DebugModePanel: View {
 }
 
 private struct VersionDescriptionView: View {
+    var isCompact = false
+
     var body: some View {
-        VStack(spacing: 6) {
+        VStack(spacing: isCompact ? 4 : 6) {
             Text("增加悬浮窗后台保活和修改侧边栏大小功能，")
             Text("挂在侧边栏可保持系统全局120hz，")
             Text("适配ios26液态玻璃特性")
@@ -768,10 +1422,10 @@ private struct VersionDescriptionView: View {
                     .foregroundColor(Color(UIColor.systemBlue))
             }
         }
-        .font(.system(size: 16, weight: .medium))
+        .font(.system(size: isCompact ? 14 : 16, weight: .medium))
         .foregroundColor(Color(UIColor.secondaryLabel))
         .multilineTextAlignment(.center)
-        .lineSpacing(4)
+        .lineSpacing(isCompact ? 2 : 4)
         .fixedSize(horizontal: false, vertical: true)
     }
 }
@@ -791,28 +1445,30 @@ private struct PrimaryPiPButton: View {
                         .fill(Color(UIColor.systemBlue).opacity(0.18))
 
                     Image(systemName: "pip.enter")
-                        .font(.system(size: 21, weight: .black))
+                        .font(.system(size: layout.isCompact ? 19 : 21, weight: .black))
                 }
-                .frame(width: 44, height: 44)
+                .frame(width: layout.isCompact ? 40 : 44, height: layout.isCompact ? 40 : 44)
 
                 Text(title)
-                    .font(.system(size: 19, weight: .black, design: .rounded))
+                    .font(.system(size: layout.isCompact ? 18 : 19, weight: .black, design: .rounded))
                     .multilineTextAlignment(.center)
                     .lineLimit(1)
                     .minimumScaleFactor(0.78)
                     .frame(maxWidth: .infinity)
 
                 Color.clear
-                    .frame(width: 44, height: 44)
+                    .frame(width: layout.isCompact ? 40 : 44, height: layout.isCompact ? 40 : 44)
             }
             .foregroundColor(Color(UIColor.label))
-            .padding(.horizontal, 16)
+            .padding(.horizontal, layout.isNarrow ? 14 : 16)
             .frame(maxWidth: 286)
-            .frame(height: 72)
+            .frame(height: layout.isCompact ? 62 : 72)
         }
         .buttonStyle(PrimaryLiquidGlassButtonStyle())
         .contentShape(RoundedRectangle(cornerRadius: 26, style: .continuous))
     }
+
+    private var layout: AdaptiveLayoutMetrics { .current }
 }
 
 private struct ActionButton: View {
@@ -834,19 +1490,19 @@ private struct ActionButton: View {
                         .fill(Color(UIColor.systemBlue).opacity(isEnabled ? 0.12 : 0.04))
 
                     Image(systemName: systemImage)
-                        .font(.system(size: 18, weight: .semibold))
+                        .font(.system(size: layout.isCompact ? 17 : 18, weight: .semibold))
                 }
-                .frame(width: 38, height: 38)
+                .frame(width: layout.isCompact ? 34 : 38, height: layout.isCompact ? 34 : 38)
 
                 Text(title)
-                    .font(.system(size: 17, weight: .bold))
+                    .font(.system(size: layout.isCompact ? 16 : 17, weight: .bold))
                     .lineLimit(2)
                     .multilineTextAlignment(.leading)
                     .fixedSize(horizontal: false, vertical: true)
 
                 if let detail {
                     Text(detail)
-                        .font(.system(size: 15, weight: .black, design: .rounded))
+                        .font(.system(size: layout.isCompact ? 14 : 15, weight: .black, design: .rounded))
                         .foregroundColor(Color(UIColor.secondaryLabel))
                         .lineLimit(1)
                 }
@@ -854,33 +1510,45 @@ private struct ActionButton: View {
                 Spacer(minLength: 8)
             }
             .foregroundColor(isEnabled ? Color(UIColor.label) : Color(UIColor.tertiaryLabel))
-            .padding(.horizontal, 18)
+            .padding(.horizontal, layout.isNarrow ? 14 : 18)
             .frame(maxWidth: .infinity)
-            .frame(height: 66)
+            .frame(height: layout.isCompact ? 56 : 66)
         }
         .buttonStyle(LiquidGlassButtonStyle())
         .disabled(!isEnabled)
         .opacity(isEnabled ? 1 : 0.58)
         .contentShape(RoundedRectangle(cornerRadius: 24, style: .continuous))
     }
+
+    private var layout: AdaptiveLayoutMetrics { .current }
 }
 
 private struct SettingsToggleRow: View {
     let title: String
     let systemImage: String
     let isOn: Binding<Bool>
+    let isEnabled: Bool
+    let statusText: ((Bool) -> String)?
     @State private var displayedIsOn: Bool
 
-    init(title: String, systemImage: String, isOn: Binding<Bool>) {
+    init(
+        title: String,
+        systemImage: String,
+        isOn: Binding<Bool>,
+        isEnabled: Bool = true,
+        statusText: ((Bool) -> String)? = nil
+    ) {
         self.title = title
         self.systemImage = systemImage
         self.isOn = isOn
+        self.isEnabled = isEnabled
+        self.statusText = statusText
         _displayedIsOn = State(initialValue: isOn.wrappedValue)
     }
 
     var body: some View {
-        HStack(spacing: 12) {
-            VStack(alignment: .leading, spacing: 4) {
+        HStack(spacing: 10) {
+            VStack(alignment: .leading, spacing: 3) {
                 HStack(spacing: 8) {
                     Image(systemName: systemImage)
                         .font(.system(size: 16, weight: .bold))
@@ -892,21 +1560,25 @@ private struct SettingsToggleRow: View {
                         .minimumScaleFactor(0.78)
                 }
 
-                Text(displayedIsOn ? "下次打开自动恢复当前高度" : "每次打开使用默认高度")
-                    .font(.system(size: 12, weight: .semibold))
-                    .foregroundColor(Color(UIColor.secondaryLabel))
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.8)
+                if let statusText {
+                    Text(statusText(displayedIsOn))
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundColor(Color(UIColor.secondaryLabel))
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.8)
+                }
             }
 
-            Spacer(minLength: 8)
+            Spacer(minLength: 6)
 
             Toggle("", isOn: immediateBinding)
                 .labelsHidden()
         }
-        .foregroundColor(Color(UIColor.label))
-        .padding(.horizontal, 4)
-        .frame(height: 76)
+        .foregroundColor(isEnabled ? Color(UIColor.label) : Color(UIColor.tertiaryLabel))
+        .padding(.horizontal, 3)
+        .frame(height: statusText == nil ? (layout.isCompact ? 42 : 46) : (layout.isCompact ? 56 : 60))
+        .opacity(isEnabled ? 1 : 0.54)
+        .allowsHitTesting(isEnabled)
         .onChange(of: isOn.wrappedValue) { newValue in
             guard newValue != displayedIsOn else { return }
             displayedIsOn = newValue
@@ -924,6 +1596,8 @@ private struct SettingsToggleRow: View {
         )
     }
 
+    private var layout: AdaptiveLayoutMetrics { .current }
+
 }
 
 private struct SettingsLiquidGlassButtonStyle: ButtonStyle {
@@ -934,7 +1608,7 @@ private struct SettingsLiquidGlassButtonStyle: ButtonStyle {
             .background(settingsBackground(isPressed: configuration.isPressed, shape: shape))
             .overlay(
                 shape.strokeBorder(
-                    Color.white.opacity(configuration.isPressed ? 0.38 : 0.22),
+                    adaptiveGlassStrokeColor.opacity(configuration.isPressed ? 1 : 0.86),
                     lineWidth: 1
                 )
             )
@@ -1021,7 +1695,7 @@ private struct GlassCapsuleButtonStyle: ButtonStyle {
             .background(glassBackground(isPressed: configuration.isPressed, shape: shape))
             .overlay(
                 shape.strokeBorder(
-	                    legacyStrokeColor(isPressed: configuration.isPressed),
+                    legacyStrokeColor(isPressed: configuration.isPressed),
                     lineWidth: 1
                 )
             )
@@ -1041,10 +1715,10 @@ private struct GlassCapsuleButtonStyle: ButtonStyle {
                 .glassEffect(.regular.interactive(), in: shape)
         } else if #available(iOS 15.0, *) {
             shape
-	                .fill(.regularMaterial)
-	                .overlay(
-	                    shape.fill(Color(UIColor.secondarySystemBackground).opacity(isPressed ? 0.54 : 0.38))
-	                )
+                .fill(.regularMaterial)
+                .overlay(
+                    shape.fill(Color(UIColor.secondarySystemBackground).opacity(isPressed ? 0.54 : 0.38))
+                )
         } else {
             shape
                 .fill(Color(UIColor.secondarySystemBackground).opacity(isPressed ? 0.84 : 0.64))
@@ -1055,8 +1729,19 @@ private struct GlassCapsuleButtonStyle: ButtonStyle {
         if #available(iOS 26.0, *) {
             return Color.white.opacity(isPressed ? 0.34 : 0.22)
         }
-        return Color(UIColor.separator).opacity(isPressed ? 0.72 : 0.52)
+        return legacyGlassStrokeColor.opacity(isPressed ? 1 : 0.86)
     }
+}
+
+private var legacyGlassStrokeColor: Color {
+    Color(UIColor.separator).opacity(0.62)
+}
+
+private var adaptiveGlassStrokeColor: Color {
+    if #available(iOS 26.0, *) {
+        return Color.white.opacity(0.22)
+    }
+    return legacyGlassStrokeColor
 }
 
 private struct LiquidGlassButtonStyle: ButtonStyle {
@@ -1067,7 +1752,7 @@ private struct LiquidGlassButtonStyle: ButtonStyle {
             .background(glassBackground(isPressed: configuration.isPressed, shape: shape))
             .overlay(
                 shape.strokeBorder(
-                    Color.white.opacity(configuration.isPressed ? 0.36 : 0.22),
+                    adaptiveGlassStrokeColor.opacity(configuration.isPressed ? 1 : 0.86),
                     lineWidth: 1
                 )
             )

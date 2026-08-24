@@ -15,6 +15,7 @@ final class MainTabBarController: UITabBarController, UITabBarControllerDelegate
     override func viewDidLoad() {
         super.viewDidLoad()
         delegate = self
+        DiagnosticsRuntimeState.updateCurrentPage("悬浮窗")
 
         let pipController = ViewController()
         pipController.tabBarItem = UITabBarItem(
@@ -78,6 +79,9 @@ final class MainTabBarController: UITabBarController, UITabBarControllerDelegate
             let targetIndex = velocity.x < 0 ? selectedIndex + 1 : selectedIndex - 1
             guard controllers.indices.contains(targetIndex) else { return }
 
+            dismissVisibleTransientOverlays()
+            DiagnosticsRuntimeState.recordUserAction("底栏左右滑动切换：\(diagnosticPageName(for: targetIndex))")
+            DiagnosticsRuntimeState.updateCurrentPage(diagnosticPageName(for: targetIndex))
             isInteractive = true
             interactionController = UIPercentDrivenInteractiveTransition()
             selectedIndex = targetIndex
@@ -133,7 +137,39 @@ final class MainTabBarController: UITabBarController, UITabBarControllerDelegate
         }
 
         UIImpactFeedbackGenerator(style: .light).impactOccurred()
+        dismissVisibleTransientOverlays()
+        if let index = viewControllers?.firstIndex(of: viewController) {
+            DiagnosticsRuntimeState.recordUserAction("底栏点击切换：\(diagnosticPageName(for: index))")
+            DiagnosticsRuntimeState.updateCurrentPage(diagnosticPageName(for: index))
+        }
         return true
+    }
+
+    func tabBarController(_ tabBarController: UITabBarController, didSelect viewController: UIViewController) {
+        if let index = viewControllers?.firstIndex(of: viewController) {
+            DiagnosticsRuntimeState.updateCurrentPage(diagnosticPageName(for: index))
+        }
+    }
+
+    private func dismissVisibleTransientOverlays() {
+        if let controller = selectedViewController as? ViewController {
+            controller.dismissTransientOverlays()
+        } else if let controller = selectedViewController as? VersionViewController {
+            controller.dismissTransientOverlays()
+        }
+    }
+
+    private func diagnosticPageName(for index: Int) -> String {
+        switch index {
+        case 0:
+            return "悬浮窗"
+        case 1:
+            return "帧率演示"
+        case 2:
+            return "版本"
+        default:
+            return "未知页面\(index)"
+        }
     }
 
     private func startRefreshDriver() {
@@ -173,7 +209,7 @@ final class MainTabBarController: UITabBarController, UITabBarControllerDelegate
     }
 }
 
-private final class TabSlideAnimator: NSObject, UIViewControllerAnimatedTransitioning {
+final class TabSlideAnimator: NSObject, UIViewControllerAnimatedTransitioning {
     enum Direction {
         case forward
         case backward
@@ -208,14 +244,17 @@ private final class TabSlideAnimator: NSObject, UIViewControllerAnimatedTransiti
         UIView.animate(
             withDuration: transitionDuration(using: transitionContext),
             delay: 0,
-            options: [.curveEaseOut, .allowUserInteraction],
+            options: [.curveEaseOut, .allowUserInteraction, .beginFromCurrentState],
             animations: {
                 fromView.frame = container.bounds.offsetBy(dx: -offset * 0.32, dy: 0)
                 toView.frame = container.bounds
             },
             completion: { finished in
                 fromView.frame = container.bounds
-                let completed = finished && !transitionContext.transitionWasCancelled
+                let completed = !transitionContext.transitionWasCancelled
+                if !finished || !completed {
+                    AppDebugLogger.log("Tab transition completion, finished=\(finished), cancelled=\(transitionContext.transitionWasCancelled), completed=\(completed)")
+                }
                 transitionContext.completeTransition(completed)
             }
         )

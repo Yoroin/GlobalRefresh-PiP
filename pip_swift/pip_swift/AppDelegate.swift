@@ -12,7 +12,14 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
     
     func application(_ application: UIApplication, didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]?) -> Bool {
         // Override point for customization after application launch.
-        MetricKitLogger.shared.start()
+        DiagnosticsResetManager.resetDiagnosticsIfBuildChanged()
+        KeepAliveModeText.migrateDefaultToLowPowerPiPIfNeeded()
+        if AppDebugLogger.isDebugModeEnabled {
+            DiagnosticsRuntimeState.startAppStateTracking()
+            DiagnosticsRuntimeState.refreshAppState()
+            MetricKitLogger.shared.start()
+            DebugDiagnosticsMonitor.startIfNeeded()
+        }
         return true
     }
     
