@@ -10,7 +10,10 @@ final class MainTabBarController: UITabBarController, UITabBarControllerDelegate
 
     private var interactionController: UIPercentDrivenInteractiveTransition?
     private var isInteractive = false
+    private var isTabTransitioning = false
+    private var tabTransitionResetWorkItem: DispatchWorkItem?
     private var refreshDisplayLink: CADisplayLink?
+    private var pendingShortcutRetryWorkItems: [DispatchWorkItem] = []
 
     override func viewDidLoad() {
         super.viewDidLoad()
@@ -52,10 +55,27 @@ final class MainTabBarController: UITabBarController, UITabBarControllerDelegate
             name: FrameRatePreference.didChangeNotification,
             object: nil
         )
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(handleShortcutActionNotification),
+            name: PiPShortcutActionCenter.didRequestActionNotification,
+            object: nil
+        )
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(handleAppDidBecomeActive),
+            name: UIApplication.didBecomeActiveNotification,
+            object: nil
+        )
+        DispatchQueue.main.async { [weak self] in
+            self?.performPendingShortcutAction(reason: "主界面加载")
+        }
     }
 
     deinit {
         NotificationCenter.default.removeObserver(self)
+        tabTransitionResetWorkItem?.cancel()
+        pendingShortcutRetryWorkItems.forEach { $0.cancel() }
         refreshDisplayLink?.invalidate()
     }
 
@@ -78,11 +98,16 @@ final class MainTabBarController: UITabBarController, UITabBarControllerDelegate
         case .began:
             let targetIndex = velocity.x < 0 ? selectedIndex + 1 : selectedIndex - 1
             guard controllers.indices.contains(targetIndex) else { return }
+            guard !isTabTransitioning else {
+                AppDebugLogger.log("忽略底栏左右滑动：转场中")
+                return
+            }
 
             dismissVisibleTransientOverlays()
             DiagnosticsRuntimeState.recordUserAction("底栏左右滑动切换：\(diagnosticPageName(for: targetIndex))")
             DiagnosticsRuntimeState.updateCurrentPage(diagnosticPageName(for: targetIndex))
             isInteractive = true
+            beginTabTransition(reason: "swipe")
             interactionController = UIPercentDrivenInteractiveTransition()
             selectedIndex = targetIndex
 
@@ -118,7 +143,9 @@ final class MainTabBarController: UITabBarController, UITabBarControllerDelegate
             return nil
         }
 
-        return TabSlideAnimator(direction: toIndex > fromIndex ? .forward : .backward)
+        return TabSlideAnimator(direction: toIndex > fromIndex ? .forward : .backward) { [weak self] completed, cancelled, finished in
+            self?.finishTabTransition(completed: completed, cancelled: cancelled, finished: finished)
+        }
     }
 
     func tabBarController(
@@ -129,11 +156,15 @@ final class MainTabBarController: UITabBarController, UITabBarControllerDelegate
     }
 
     func tabBarController(_ tabBarController: UITabBarController, shouldSelect viewController: UIViewController) -> Bool {
-        guard
-            !isInteractive,
-            selectedViewController !== viewController
-        else {
+        guard selectedViewController !== viewController else {
             return true
+        }
+
+        guard !isInteractive, !isTabTransitioning else {
+            AppDebugLogger.log("忽略底栏点击：转场中")
+            UISelectionFeedbackGenerator().selectionChanged()
+            normalizeSelectedViewAfterTabTransition()
+            return false
         }
 
         UIImpactFeedbackGenerator(style: .light).impactOccurred()
@@ -142,6 +173,7 @@ final class MainTabBarController: UITabBarController, UITabBarControllerDelegate
             DiagnosticsRuntimeState.recordUserAction("底栏点击切换：\(diagnosticPageName(for: index))")
             DiagnosticsRuntimeState.updateCurrentPage(diagnosticPageName(for: index))
         }
+        beginTabTransition(reason: "tap")
         return true
     }
 
@@ -157,6 +189,39 @@ final class MainTabBarController: UITabBarController, UITabBarControllerDelegate
         } else if let controller = selectedViewController as? VersionViewController {
             controller.dismissTransientOverlays()
         }
+    }
+
+    private func beginTabTransition(reason: String) {
+        tabTransitionResetWorkItem?.cancel()
+        isTabTransitioning = true
+
+        let workItem = DispatchWorkItem { [weak self] in
+            guard let self, self.isTabTransitioning else { return }
+            self.isTabTransitioning = false
+            self.normalizeSelectedViewAfterTabTransition()
+            AppDebugLogger.log("Tab transition watchdog reset, reason=\(reason)")
+        }
+        tabTransitionResetWorkItem = workItem
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.9, execute: workItem)
+    }
+
+    private func finishTabTransition(completed: Bool, cancelled: Bool, finished: Bool) {
+        tabTransitionResetWorkItem?.cancel()
+        tabTransitionResetWorkItem = nil
+        isTabTransitioning = false
+        normalizeSelectedViewAfterTabTransition()
+
+        if !finished || cancelled || !completed {
+            AppDebugLogger.log("Tab transition normalized, finished=\(finished), cancelled=\(cancelled), completed=\(completed)")
+        }
+    }
+
+    private func normalizeSelectedViewAfterTabTransition() {
+        guard let selectedView = selectedViewController?.view,
+              let container = selectedView.superview
+        else { return }
+        selectedView.frame = container.bounds
+        selectedView.isUserInteractionEnabled = true
     }
 
     private func diagnosticPageName(for index: Int) -> String {
@@ -177,7 +242,8 @@ final class MainTabBarController: UITabBarController, UITabBarControllerDelegate
 
         let displayLink = CADisplayLink(target: self, selector: #selector(stepRefreshDriver))
         configureRefreshDriver(displayLink)
-        displayLink.add(to: .main, forMode: .common)
+        // BETA2 ANCHOR: 避免空 DisplayLink 在滑动 tracking mode 中抢主线程。
+        displayLink.add(to: .main, forMode: .default)
         refreshDisplayLink = displayLink
     }
 
@@ -189,19 +255,71 @@ final class MainTabBarController: UITabBarController, UITabBarControllerDelegate
         }
     }
 
+    @objc private func handleShortcutActionNotification() {
+        schedulePendingShortcutActionChecks(reason: "快捷方式通知")
+    }
+
+    @objc private func handleAppDidBecomeActive() {
+        schedulePendingShortcutActionChecks(reason: "App激活")
+    }
+
+    private func schedulePendingShortcutActionChecks(reason: String) {
+        pendingShortcutRetryWorkItems.forEach { $0.cancel() }
+        pendingShortcutRetryWorkItems.removeAll()
+
+        let delays: [TimeInterval] = [0.2, 0.6, 1.1, 1.8, 2.6]
+        for delay in delays {
+            let workItem = DispatchWorkItem { [weak self] in
+                self?.performPendingShortcutAction(reason: reason)
+            }
+            pendingShortcutRetryWorkItems.append(workItem)
+            DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: workItem)
+        }
+    }
+
+    @discardableResult
+    private func performPendingShortcutAction(reason: String) -> Bool {
+        guard PiPShortcutActionCenter.hasPendingAction else { return false }
+        AppDebugLogger.log("Route shortcut action to PiP page, reason=\(reason)")
+        dismissVisibleTransientOverlays()
+
+        if selectedIndex != 0 {
+            tabTransitionResetWorkItem?.cancel()
+            tabTransitionResetWorkItem = nil
+            isTabTransitioning = false
+            isInteractive = false
+            interactionController?.cancel()
+            interactionController = nil
+            selectedIndex = 0
+            DiagnosticsRuntimeState.updateCurrentPage("悬浮窗")
+            loadViewIfNeeded()
+            view.layoutIfNeeded()
+        }
+
+        guard let pipController = viewControllers?.first as? ViewController else {
+            PiPShortcutActionCenter.notifyPendingActionIfNeeded()
+            return false
+        }
+        guard pipController.isViewLoaded, pipController.view.window != nil else {
+            AppDebugLogger.log("Delay shortcut action: PiP page not visible yet, reason=\(reason)")
+            return false
+        }
+        return pipController.performPendingShortcutActionIfNeeded(reason: reason)
+    }
+
     @objc private func stepRefreshDriver() {
     }
 
     private func configureRefreshDriver(_ displayLink: CADisplayLink) {
         let maximumFramesPerSecond = UIScreen.main.maximumFramesPerSecond
-        let targetFramesPerSecond = min(FrameRatePreference.targetFrameRate, maximumFramesPerSecond)
+        let targetFramesPerSecond = max(60, maximumFramesPerSecond)
 
         if #available(iOS 15.0, *) {
             let target = Float(targetFramesPerSecond)
             displayLink.preferredFrameRateRange = CAFrameRateRange(
-                minimum: target,
+                minimum: 30,
                 maximum: target,
-                preferred: target
+                preferred: FrameRatePreference.preferredFrameRateValue(target: target)
             )
         } else {
             displayLink.preferredFramesPerSecond = targetFramesPerSecond
@@ -216,9 +334,11 @@ final class TabSlideAnimator: NSObject, UIViewControllerAnimatedTransitioning {
     }
 
     private let direction: Direction
+    private let onCompletion: ((Bool, Bool, Bool) -> Void)?
 
-    init(direction: Direction) {
+    init(direction: Direction, onCompletion: ((Bool, Bool, Bool) -> Void)? = nil) {
         self.direction = direction
+        self.onCompletion = onCompletion
     }
 
     func transitionDuration(using transitionContext: UIViewControllerContextTransitioning?) -> TimeInterval {
@@ -231,6 +351,7 @@ final class TabSlideAnimator: NSObject, UIViewControllerAnimatedTransitioning {
             let toView = transitionContext.view(forKey: .to)
         else {
             transitionContext.completeTransition(false)
+            onCompletion?(false, true, false)
             return
         }
 
@@ -251,11 +372,16 @@ final class TabSlideAnimator: NSObject, UIViewControllerAnimatedTransitioning {
             },
             completion: { finished in
                 fromView.frame = container.bounds
-                let completed = !transitionContext.transitionWasCancelled
+                toView.frame = container.bounds
+                let cancelled = transitionContext.transitionWasCancelled
+                let completed = !cancelled
                 if !finished || !completed {
-                    AppDebugLogger.log("Tab transition completion, finished=\(finished), cancelled=\(transitionContext.transitionWasCancelled), completed=\(completed)")
+                    AppDebugLogger.log("Tab transition completion, finished=\(finished), cancelled=\(cancelled), completed=\(completed)")
                 }
                 transitionContext.completeTransition(completed)
+                DispatchQueue.main.async {
+                    self.onCompletion?(completed, cancelled, finished)
+                }
             }
         )
     }

@@ -14,6 +14,7 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
         // Override point for customization after application launch.
         DiagnosticsResetManager.resetDiagnosticsIfBuildChanged()
         KeepAliveModeText.migrateDefaultToLowPowerPiPIfNeeded()
+        KeepAliveNotificationTester.sanitizeOnLaunch()
         if AppDebugLogger.isDebugModeEnabled {
             DiagnosticsRuntimeState.startAppStateTracking()
             DiagnosticsRuntimeState.refreshAppState()

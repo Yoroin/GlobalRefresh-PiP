@@ -25,7 +25,7 @@ enum PowerUsageLogger {
     private static let foregroundEntryCountKey = "pip.power.foregroundEntryCount"
 
     static func markLaunch() {
-        guard AppDebugLogger.isDebugModeEnabled else { return }
+        guard shouldTrackState else { return }
         UIDevice.current.isBatteryMonitoringEnabled = true
         let defaults = UserDefaults.standard
         if defaults.object(forKey: launchDateKey) == nil {
@@ -36,42 +36,42 @@ enum PowerUsageLogger {
     }
 
     static func markForegroundStart() {
-        guard AppDebugLogger.isDebugModeEnabled else { return }
+        guard shouldTrackState else { return }
         stopTimer(startKey: backgroundStartKey, totalKey: backgroundTotalKey)
         startTimerIfNeeded(foregroundStartKey)
         increment(foregroundEntryCountKey)
     }
 
     static func markBackgroundStart() {
-        guard AppDebugLogger.isDebugModeEnabled else { return }
+        guard shouldTrackState else { return }
         stopTimer(startKey: foregroundStartKey, totalKey: foregroundTotalKey)
         startTimerIfNeeded(backgroundStartKey)
         increment(backgroundEntryCountKey)
     }
 
     static func markPiPStart() {
-        guard AppDebugLogger.isDebugModeEnabled else { return }
+        guard shouldTrackState else { return }
         if startTimerIfNeeded(pipStartKey) {
             increment(pipStartCountKey)
         }
     }
 
     static func markPiPStop() {
-        guard AppDebugLogger.isDebugModeEnabled else { return }
+        guard shouldTrackState else { return }
         if stopTimer(startKey: pipStartKey, totalKey: pipTotalKey) {
             increment(pipStopCountKey)
         }
     }
 
     static func markKeepAliveStart() {
-        guard AppDebugLogger.isDebugModeEnabled else { return }
+        guard shouldTrackState else { return }
         if startTimerIfNeeded(keepAliveStartKey) {
             increment(keepAliveStartCountKey)
         }
     }
 
     static func markKeepAliveStop() {
-        guard AppDebugLogger.isDebugModeEnabled else { return }
+        guard shouldTrackState else { return }
         if stopTimer(startKey: keepAliveStartKey, totalKey: keepAliveTotalKey) {
             increment(keepAliveStopCountKey)
         }
@@ -79,7 +79,7 @@ enum PowerUsageLogger {
 
     static func exportText() -> String {
         UIDevice.current.isBatteryMonitoringEnabled = true
-        if !AppDebugLogger.isDebugModeEnabled {
+        if !shouldTrackState {
             resetStatistics()
         }
         rotateStatisticsIfNeeded()
@@ -256,13 +256,17 @@ enum PowerUsageLogger {
         }
     }
 
-    private static var beijingFormatter: DateFormatter {
+    private static var shouldTrackState: Bool {
+        AppDebugLogger.isDebugModeEnabled || KeepAliveNotificationTester.isAnyNotificationEnabled
+    }
+
+    private static let beijingFormatter: DateFormatter = {
         let formatter = DateFormatter()
         formatter.locale = Locale(identifier: "en_US_POSIX")
         formatter.timeZone = TimeZone(identifier: "Asia/Shanghai")
         formatter.dateFormat = "yyyy-MM-dd HH:mm:ss.SSS"
         return formatter
-    }
+    }()
 
     private static var deviceModelIdentifier: String {
         var systemInfo = utsname()
