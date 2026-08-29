@@ -1029,8 +1029,8 @@ class ViewController: UIViewController, AVPictureInPictureControllerDelegate {
                     defaults: defaults,
                     fallback: KeepAliveLogger.lastHeartbeatDate ?? Date(timeIntervalSince1970: timestamp)
                 )
-                pipRuntimeDuration = max(lastConfirmedDate.timeIntervalSince1970 - timestamp, lastDuration)
-                pipRuntimeStoppedAtText = formattedStopTime(lastConfirmedDate)
+                pipRuntimeDuration = max(detectedStopDate.timeIntervalSince1970 - timestamp, lastDuration)
+                pipRuntimeStoppedAtText = formattedStopTime(detectedStopDate)
                 defaults.set(pipRuntimeStoppedAtText, forKey: userDefaultsPiPRuntimeStoppedAtTextKey)
                 defaults.set(lastConfirmedDate.timeIntervalSince1970, forKey: userDefaultsPiPRuntimeLastConfirmedAtKey)
                 defaults.set(pipRuntimeDuration, forKey: userDefaultsPiPRuntimeDurationKey)
@@ -3003,7 +3003,7 @@ class ViewController: UIViewController, AVPictureInPictureControllerDelegate {
             if reason.hasPrefix("进入前台") {
                 let detectedAt = Date()
                 let lastConfirmedDate = runtimeLastConfirmedDate(defaults: .standard, fallback: detectedAt)
-                finishPiPRuntimeSession(stoppedAt: lastConfirmedDate)
+                finishPiPRuntimeSession(stoppedAt: detectedAt)
                 AppDebugLogger.log(
                     "PiP invalidation discovered in foreground, lastConfirmed=\(formattedStopTime(lastConfirmedDate)), detectedAt=\(formattedStopTime(detectedAt))"
                 )
@@ -5410,7 +5410,9 @@ class ViewController: UIViewController, AVPictureInPictureControllerDelegate {
                 && pipTransitionExpectedActive != false
         )
         pipExpectedActiveBeforeStop = nil
-        let wasExpectedStop = !expectedActiveBeforeStop || isStoppingPiP || didRecoverStalePiPStop
+        // `isStoppingPiP` is also used as a legacy animation state on iOS 15-18.
+        // The value captured in willStop preserves whether the stop was user initiated.
+        let wasExpectedStop = !expectedActiveBeforeStop || didRecoverStalePiPStop
         let stoppedMode = currentKeepAlivePolicy.diagnosticsName
         detachLegacyCustomViewIfNeeded()
         restorePiPVisualSurfaces()

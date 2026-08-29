@@ -139,6 +139,11 @@ Use your own Apple ID, certificate, or device environment to sign and install th
 
 ## Changelog
 
+### 1.1.0fix (2026.8.29)
+
+- Fixed PiP conflict alerts sometimes not being delivered after another Picture in Picture app displaced the floating window on iOS 15 through iOS 18.
+- Improved the Last Stopped time display logic.
+
 ### 1.1.0 (2026.8.22)
 
 - Added Lock-screen Audio Boost beta: it stays PiP-only while the screen is on so media playback is unaffected, then automatically enables Audio Keep-alive after lock for users who need stronger background retention. The existing always-on Audio Keep-alive remains available.
