@@ -671,6 +671,16 @@ struct AppChangelogSection {
 enum AppChangelogCatalog {
     static var latest: AppChangelogSection {
         AppChangelogSection(
+            version: L10n.text("1.1.0fix（26.8.29）", "1.1.0fix (2026.8.29)"),
+            items: [
+                L10n.text("修复 iOS 15-iOS 18 悬浮窗被其他画中画应用挤掉后可能收不到通知的问题", "Fixed PiP conflict alerts sometimes not being delivered after another Picture in Picture app displaced the floating window on iOS 15 through iOS 18."),
+                L10n.text("优化 上次关闭时间 显示逻辑", "Improved the Last Stopped time display logic.")
+            ]
+        )
+    }
+
+    static var version110: AppChangelogSection {
+        AppChangelogSection(
             version: L10n.text("1.1.0（26.8.22）", "1.1.0 (2026.8.22)"),
             items: [
                 L10n.text("版本页新增手动清理缓存按钮；长按可清空全部应用数据并重新进入首次使用流程", "Added manual cache cleanup on the Version page; long press to reset all app data and return to first-time setup."),
@@ -849,6 +859,7 @@ final class ChangelogViewController: UIViewController {
 
         let stackView = UIStackView(arrangedSubviews: [
             makeSection(section: AppChangelogCatalog.latest),
+            makeSection(section: AppChangelogCatalog.version110),
             makeSection(
                 version: L10n.text("1.0.9 （26.7.8）", "1.0.9 (2026.7.8)"),
                 items: [
