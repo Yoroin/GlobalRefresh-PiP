@@ -11,6 +11,7 @@ import CoreVideo
 import SnapKit
 import SwiftUI
 import Darwin
+import ObjectiveC
 
 enum PiPEngineRoute: String, CaseIterable, Hashable {
     case videoCall
@@ -67,20 +68,22 @@ enum AppAppearancePreference {
     }
 
     static var isStyleForced: Bool {
-        isDarkModeForced || isLightModeForced
+        isDarkModeForced
     }
 
     static var preferredStyle: UIUserInterfaceStyle {
         if isDarkModeForced {
             return .dark
         }
-        if isLightModeForced {
-            return .light
-        }
         return .unspecified
     }
 
     static func apply(to window: UIWindow?) {
+        // Older 1.0.9+ builds could leave the app permanently forced light,
+        // although this control is defined as Force Dark / Follow System.
+        if isLightModeForced {
+            UserDefaults.standard.set(false, forKey: lightModeForcedKey)
+        }
         window?.overrideUserInterfaceStyle = preferredStyle
         window?.rootViewController?.overrideUserInterfaceStyle = preferredStyle
     }
@@ -281,6 +284,10 @@ class ViewController: UIViewController, AVPictureInPictureControllerDelegate {
 
     private var playerLayer: AVPlayerLayer!
     private var pipController: AVPictureInPictureController!
+    private let pipCoexistenceExperiment = PiPCoexistenceExperiment()
+    private var isHiddenReferenceSession = false
+    private var hiddenReferenceSessionID: UUID?
+    private var hiddenReferenceRenderView: PiPHiddenReferenceRenderView?
     private lazy var pipDelegateProxy = PiPDelegateProxy(owner: self)
     private var pipSourceView: UIView!
     private var pipSourceWidthConstraint: Constraint?
@@ -338,6 +345,7 @@ class ViewController: UIViewController, AVPictureInPictureControllerDelegate {
     private var didRecoverStalePiPStop = false
     private var pendingShortcutPiPStartRetry: DispatchWorkItem?
     private var shortcutPiPStartRetryRemaining = 0
+    private var shortcutRetryPreservesMinimumHeight = false
     private var pendingPiPEngineRouteAfterStop: PiPEngineRoute?
     private var pendingShortcutPiPStopRetry: DispatchWorkItem?
     private var pendingShortcutPiPStopRetryRemaining = 0
@@ -369,7 +377,7 @@ class ViewController: UIViewController, AVPictureInPictureControllerDelegate {
     private var isOwnPiPConfirmedActive = false
     private var pipRuntimeStartedAt: Date?
     private var pipRuntimeDuration: TimeInterval = 0
-    private var pipRuntimeStoppedAtText = "暂无"
+    private var pipRuntimeStoppedAtText = L10n.text("暂无", "None")
     private var isPiPStatusInfoVisible = false {
         didSet {
             guard oldValue != isPiPStatusInfoVisible else { return }
@@ -391,6 +399,7 @@ class ViewController: UIViewController, AVPictureInPictureControllerDelegate {
                 prefersTextScrolling = isScrollingEnabled
                 UserDefaults.standard.set(isScrollingEnabled, forKey: userDefaultsScrollingEnabledKey)
             }
+            hiddenReferenceRenderView?.setTextScrollingEnabled(isScrollingEnabled)
             updateHomeView()
         }
     }
@@ -587,6 +596,8 @@ class ViewController: UIViewController, AVPictureInPictureControllerDelegate {
     private let userDefaultsPiPRuntimeWasActiveKey = "pip.home.runtimeWasActive"
     private let userDefaultsPiPRuntimeStoppedAtTextKey = "pip.home.runtimeStoppedAtText"
     private let userDefaultsPiPRuntimeLastConfirmedAtKey = "pip.home.runtimeLastConfirmedAt"
+    private let userDefaultsPiPRuntimeExpectedStopAtKey = "pip.home.runtimeExpectedStopAt"
+    private let pipRuntimeHeartbeatTimeout: TimeInterval = 90
     private let userDefaultsPiPStatusInfoPersistentKey = "pip.home.pipStatusInfoPersistent"
     private let userDefaultsPiPEngineRouteKey = "pip.home.engineRoute"
     private let userDefaultsPlayerLayerRouteEnabledKey = "pip.home.playerLayerRouteEnabled"
@@ -599,13 +610,13 @@ class ViewController: UIViewController, AVPictureInPictureControllerDelegate {
     static let iOS26KeepAliveModeDidChangeNotification = Notification.Name("pip.iOS26KeepAliveModeDidChange")
     static let piPEngineRuntimeModeDidChangeNotification = Notification.Name("pip.engineRuntimeModeDidChange")
     private var currentPiPSize: CGSize {
-        CGSize(width: currentPiPWidth, height: effectivePiPSurfaceHeight)
+        return CGSize(width: currentPiPWidth, height: effectivePiPSurfaceHeight)
     }
     private var currentPiPWidth: CGFloat {
         shouldRenderClockMode ? clockPiPWidth : textPiPWidth
     }
     private var clampedPiPHeight: CGFloat {
-        clampedHeight(pipHeight)
+        return clampedHeight(pipHeight)
     }
     private var currentMinimumPiPHeight: CGFloat {
         shouldUsePlayerLayerPiPCompatibility ? playerLayerHiddenSurfaceHeight : minPiPHeight
@@ -757,6 +768,9 @@ class ViewController: UIViewController, AVPictureInPictureControllerDelegate {
     }
 
     deinit {
+        hiddenReferenceRenderView?.stop()
+        if let token = hiddenReferenceSessionID { PiPHiddenReferenceMode.end(owner: token) }
+        if isHiddenReferenceSession { pipSourceView?.removeFromSuperview() }
         if let playerEndObserver = playerEndObserver {
             NotificationCenter.default.removeObserver(playerEndObserver)
         }
@@ -1029,14 +1043,20 @@ class ViewController: UIViewController, AVPictureInPictureControllerDelegate {
                     defaults: defaults,
                     fallback: KeepAliveLogger.lastHeartbeatDate ?? Date(timeIntervalSince1970: timestamp)
                 )
-                pipRuntimeDuration = max(detectedStopDate.timeIntervalSince1970 - timestamp, lastDuration)
-                pipRuntimeStoppedAtText = formattedStopTime(detectedStopDate)
+                let estimatedStopDate = estimatedPiPRuntimeStopDate(
+                    defaults: defaults,
+                    lastConfirmedAt: lastConfirmedDate,
+                    detectedAt: detectedStopDate
+                )
+                pipRuntimeDuration = max(0, lastConfirmedDate.timeIntervalSince1970 - timestamp)
+                pipRuntimeStoppedAtText = formattedStopTime(estimatedStopDate)
                 defaults.set(pipRuntimeStoppedAtText, forKey: userDefaultsPiPRuntimeStoppedAtTextKey)
                 defaults.set(lastConfirmedDate.timeIntervalSince1970, forKey: userDefaultsPiPRuntimeLastConfirmedAtKey)
                 defaults.set(pipRuntimeDuration, forKey: userDefaultsPiPRuntimeDurationKey)
                 defaults.set(false, forKey: userDefaultsPiPRuntimeWasActiveKey)
+                defaults.removeObject(forKey: userDefaultsPiPRuntimeExpectedStopAtKey)
                 AppDebugLogger.log(
-                    "PiP runtime recovered after abnormal interruption, lastConfirmed=\(pipRuntimeStoppedAtText), detectedAt=\(formattedStopTime(detectedStopDate)), duration=\(formattedRuntime(pipRuntimeDuration))"
+                    "PiP runtime recovered after abnormal interruption, lastConfirmed=\(formattedStopTime(lastConfirmedDate)), estimatedStop=\(pipRuntimeStoppedAtText), detectedAt=\(formattedStopTime(detectedStopDate)), duration=\(formattedRuntime(pipRuntimeDuration))"
                 )
                 return
             }
@@ -1050,6 +1070,15 @@ class ViewController: UIViewController, AVPictureInPictureControllerDelegate {
         return Date(timeIntervalSince1970: timestamp)
     }
 
+    private func estimatedPiPRuntimeStopDate(
+        defaults: UserDefaults,
+        lastConfirmedAt: Date,
+        detectedAt: Date
+    ) -> Date {
+        // A missed heartbeat has no guaranteed deadline when iOS suspends the app.
+        return min(detectedAt, lastConfirmedAt)
+    }
+
     private func syncPiPRuntimeDisplayState() {
         if let pipRuntimeStartedAt {
             pipRuntimeDuration = max(0, Date().timeIntervalSince(pipRuntimeStartedAt))
@@ -1060,7 +1089,7 @@ class ViewController: UIViewController, AVPictureInPictureControllerDelegate {
 
     private func normalizedStoredPiPRuntimeStoppedAtText() -> String {
         let storedText = UserDefaults.standard.string(forKey: userDefaultsPiPRuntimeStoppedAtTextKey) ?? "暂无"
-        guard !storedText.isEmpty, storedText != "暂无" else {
+        guard !storedText.isEmpty, storedText != "暂无", storedText != "None" else {
             return L10n.text("暂无", "None")
         }
         return storedText
@@ -1092,76 +1121,33 @@ class ViewController: UIViewController, AVPictureInPictureControllerDelegate {
     }
 
     private func toggleAppearanceMode() {
+        let shouldForceDark = !AppAppearancePreference.isDarkModeForced
+        DiagnosticsRuntimeState.recordUserAction(shouldForceDark ? "切换深色模式" : "恢复跟随系统")
+
         if #unavailable(iOS 26.0) {
-            let shouldForceDark = !AppAppearancePreference.isDarkModeForced
-            DiagnosticsRuntimeState.recordUserAction(shouldForceDark ? "切换深色模式" : "恢复跟随系统")
             UIView.performWithoutAnimation {
                 isDarkModeForced = shouldForceDark
                 view.layoutIfNeeded()
             }
-            lastObservedSystemAppearance = currentSystemAppearance
-            startSystemAppearanceFollowTimerIfNeeded()
             DispatchQueue.main.async { [weak self] in
                 self?.rebuildHomeHostingControllerForLegacyAppearance()
             }
             return
         }
 
-        let targetStyle: UIUserInterfaceStyle
-        if AppAppearancePreference.isDarkModeForced {
-            targetStyle = .light
-        } else if AppAppearancePreference.isLightModeForced {
-            targetStyle = .dark
-        } else {
-            targetStyle = isCurrentAppearanceDark ? .light : .dark
-        }
-        DiagnosticsRuntimeState.recordUserAction(targetStyle == .dark ? "切换深色模式" : "切换浅色模式")
-        lastObservedSystemAppearance = currentSystemAppearance
-        AppAppearancePreference.setPreferredStyle(targetStyle, animated: true)
-        isSyncingAppearancePreferenceState = true
-        isDarkModeForced = AppAppearancePreference.isDarkModeForced
-        isSyncingAppearancePreferenceState = false
-        startSystemAppearanceFollowTimerIfNeeded()
+        shouldAnimateNextAppearancePreferenceChange = true
+        isDarkModeForced = shouldForceDark
+        shouldAnimateNextAppearancePreferenceChange = false
         updateHomeView()
     }
 
     private func startSystemAppearanceFollowTimerIfNeeded() {
         stopSystemAppearanceFollowTimer()
-        guard UIApplication.shared.applicationState != .background else { return }
-        guard AppAppearancePreference.isStyleForced else { return }
-        let timer = Timer(timeInterval: 0.8, repeats: true) { [weak self] _ in
-            self?.handleSystemAppearanceFollowTick()
-        }
-        RunLoop.main.add(timer, forMode: .common)
-        systemAppearanceFollowTimer = timer
     }
 
     private func stopSystemAppearanceFollowTimer() {
         systemAppearanceFollowTimer?.invalidate()
         systemAppearanceFollowTimer = nil
-    }
-
-    private func handleSystemAppearanceFollowTick() {
-        guard AppAppearancePreference.isStyleForced else {
-            stopSystemAppearanceFollowTimer()
-            lastObservedSystemAppearance = currentSystemAppearance
-            return
-        }
-
-        let systemAppearance = currentSystemAppearance
-        guard systemAppearance != .unspecified else { return }
-        if lastObservedSystemAppearance == .unspecified {
-            lastObservedSystemAppearance = systemAppearance
-            return
-        }
-        guard systemAppearance != lastObservedSystemAppearance else { return }
-
-        lastObservedSystemAppearance = systemAppearance
-        DiagnosticsRuntimeState.recordUserAction("系统外观变化，恢复跟随系统")
-        AppAppearancePreference.clearForcedStyle(animated: true)
-        isDarkModeForced = AppAppearancePreference.isDarkModeForced
-        stopSystemAppearanceFollowTimer()
-        updateHomeView()
     }
 
     private func setPiPStoppedNotificationEnabled(_ isEnabled: Bool) {
@@ -1319,10 +1305,7 @@ class ViewController: UIViewController, AVPictureInPictureControllerDelegate {
     }
 
     private func presentPlayerLayerRouteConfirmation(onConfirm: @escaping () -> Void) {
-        let message = L10n.text(
-            "请确认默认方案解锁120后会导致你日常的b站弹幕以及锁60hz的游戏一顿一顿，可以通过切换新方案解决，但是无法完全隐藏悬浮窗，没有这两个需求就使用默认方案即可",
-            "Please confirm that the default route causes your usual Bilibili danmaku or games locked to 60 Hz to stutter after unlocking 120 Hz. Switching to the new route may solve this, but it cannot fully hide the floating window. If you do not need these fixes, keep using the default route."
-        )
+        let message = PiPRouteDescriptions.playerLayerText
         let alert = UIAlertController(
             title: L10n.text("确认切换新方案", "Confirm New Route"),
             message: message,
@@ -1467,6 +1450,10 @@ class ViewController: UIViewController, AVPictureInPictureControllerDelegate {
         let defaults = UserDefaults.standard
         defaults.set(start.timeIntervalSince1970, forKey: userDefaultsPiPRuntimeStartedAtKey)
         defaults.set(start.timeIntervalSince1970, forKey: userDefaultsPiPRuntimeLastConfirmedAtKey)
+        defaults.set(
+            start.addingTimeInterval(pipRuntimeHeartbeatTimeout).timeIntervalSince1970,
+            forKey: userDefaultsPiPRuntimeExpectedStopAtKey
+        )
         defaults.set(0, forKey: userDefaultsPiPRuntimeDurationKey)
         defaults.set(true, forKey: userDefaultsPiPRuntimeWasActiveKey)
         startPiPRuntimeTimerIfNeeded()
@@ -1474,7 +1461,7 @@ class ViewController: UIViewController, AVPictureInPictureControllerDelegate {
         updateHomeView()
     }
 
-    private func finishPiPRuntimeSession(stoppedAt: Date = Date()) {
+    private func finishPiPRuntimeSession(stoppedAt: Date = Date(), detectedAt: Date? = nil) {
         stopPiPRuntimeTimer()
         if let pipRuntimeStartedAt {
             pipRuntimeDuration = max(0, stoppedAt.timeIntervalSince(pipRuntimeStartedAt))
@@ -1486,6 +1473,16 @@ class ViewController: UIViewController, AVPictureInPictureControllerDelegate {
         defaults.set(pipRuntimeDuration, forKey: userDefaultsPiPRuntimeDurationKey)
         defaults.set(pipRuntimeStoppedAtText, forKey: userDefaultsPiPRuntimeStoppedAtTextKey)
         defaults.set(stoppedAt.timeIntervalSince1970, forKey: userDefaultsPiPRuntimeLastConfirmedAtKey)
+        defaults.removeObject(forKey: userDefaultsPiPRuntimeExpectedStopAtKey)
+        LightweightRuntimeDiagnostics.recordPiPCheckpoint(
+            reason: detectedAt == nil ? "PiP停止" : "再次打开时发现PiP失效",
+            isActive: false,
+            engineRoute: pipEngineRoute.rawValue,
+            keepAlivePolicy: currentKeepAlivePolicy.rawValue,
+            height: clampedPiPHeight,
+            audioPlaying: shouldUsePiPOnlyKeepAlive ? false : BackgroundTaskManager.shared.isPlaying,
+            force: true
+        )
         updateDiagnosticsPiPState()
         AppDebugLogger.log("PiP runtime stopped at \(pipRuntimeStoppedAtText)")
         updateHomeView()
@@ -1519,6 +1516,10 @@ class ViewController: UIViewController, AVPictureInPictureControllerDelegate {
             return
         }
         pipRuntimeDuration = max(0, Date().timeIntervalSince(pipRuntimeStartedAt))
+        recordPiPRuntimeHealthCheckpoint()
+        guard UIApplication.shared.applicationState == .active,
+              isViewLoaded, view.window != nil,
+              tabBarController?.selectedViewController === self else { return }
         updateHomeView()
     }
 
@@ -1546,6 +1547,27 @@ class ViewController: UIViewController, AVPictureInPictureControllerDelegate {
         updateDisplaySleepDiagnostics()
     }
 
+    private func logPiPCompetitionProbe(_ event: String, controller: AVPictureInPictureController? = nil) {
+        let observedController = controller ?? pipController
+        let appState: String
+        switch UIApplication.shared.applicationState {
+        case .active: appState = "active"
+        case .inactive: appState = "inactive"
+        case .background: appState = "background"
+        @unknown default: appState = "unknown"
+        }
+        AppDebugLogger.log(
+            "PiP competition probe [\(event)]: active=\(observedController?.isPictureInPictureActive ?? false), " +
+            "suspended=\(observedController?.isPictureInPictureSuspended ?? false), " +
+            "possible=\(observedController?.isPictureInPicturePossible ?? false), " +
+            "app=\(appState), locked=\(!UIApplication.shared.isProtectedDataAvailable), " +
+            "route=\(pipEngineRoute.diagnosticsName), height=\(formattedHeight(clampedPiPHeight)), " +
+            "\(pipCoexistenceExperiment.diagnosticDescription), " +
+            "wants=\(wantsPiPActive), transitioning=\(isPiPTransitioning), own=\(isOwnPiPConfirmedActive). " +
+            "Suspension cause is unknown without external-app evidence."
+        )
+    }
+
     private var pipSurfaceDiagnosticsText: String {
         let contentView = videoCallContentController?.view
         let parts = [
@@ -1556,6 +1578,7 @@ class ViewController: UIViewController, AVPictureInPictureControllerDelegate {
             "custom=\(viewDiagnosticsText(customView))",
             "text=\(viewDiagnosticsText(textView))",
             "clock=\(viewDiagnosticsText(clockLabel))",
+            "hiddenProbe=\(isHiddenReferenceSession ? PiPHiddenReferenceOptions.summary + ";" + (hiddenReferenceRenderView?.diagnosticSummary ?? "none") : "disabled")",
             "playerLayer=\(layerDiagnosticsText(playerLayer))"
         ]
         return "surface{\(parts.joined(separator: ";"))}"
@@ -1696,7 +1719,25 @@ class ViewController: UIViewController, AVPictureInPictureControllerDelegate {
         return formatter.string(from: date)
     }
 
+    private var isHiddenReferenceRequested: Bool {
+        PiPHiddenReferenceMode.supports(
+            systemMajorVersion: ProcessInfo.processInfo.operatingSystemVersion.majorVersion,
+            isPlayerLayer: shouldUsePlayerLayerPiPCompatibility,
+            isPiPOnly: currentKeepAlivePolicy == .pipOnly
+        )
+    }
+
+    private var needsHiddenReferenceInfrastructureRefresh: Bool {
+        pipController?.isPictureInPictureActive != true && !isPiPTransitioning
+            && isHiddenReferenceRequested != isHiddenReferenceSession
+    }
+
     private func preparePiPInfrastructureIfNeeded() -> Bool {
+        let referenceRequested = isHiddenReferenceRequested
+        if hasPreparedPiPInfrastructure, referenceRequested != isHiddenReferenceSession,
+           pipController?.isPictureInPictureActive != true, !isPiPTransitioning {
+            teardownPiPInfrastructure()
+        }
         guard !hasPreparedPiPInfrastructure else {
             return pipController != nil
         }
@@ -1708,6 +1749,11 @@ class ViewController: UIViewController, AVPictureInPictureControllerDelegate {
         }
 
         AppDebugLogger.log("Prepare PiP infrastructure begin")
+        isHiddenReferenceSession = referenceRequested
+        if referenceRequested {
+            hiddenReferenceSessionID = UUID()
+            AppDebugLogger.logCritical("Default VideoCall beta prepared: iOS15-27/pipOnly; actualSystem=\(ProcessInfo.processInfo.operatingSystemVersionString); original centered source alpha=1; adjustable content=\(currentPiPSize); black host; no backing player; \(PiPHiddenReferenceOptions.summary); post-start delay=\(PiPCoexistenceExperiment.postStartTransitionDelay)s. iOS15-26 compatibility is experimental; other systems and policies retain the compatibility routes; runtime signatures and remote behavior require device validation.")
+        }
         setupPiPSourceView()
         setupCustomView()
         if shouldUsePlayerLayerPiPCompatibility {
@@ -1739,6 +1785,8 @@ class ViewController: UIViewController, AVPictureInPictureControllerDelegate {
     }
 
     private func teardownPiPInfrastructure() {
+        endHiddenReferenceDriverSuppression()
+        pipCoexistenceExperiment.restore()
         stopClockTimer()
         resetLockScreenAudioBoost(reason: "拆除悬浮窗底层")
         stopPlayerLayerActivityDisplayLink(reason: "拆除悬浮窗底层")
@@ -1764,6 +1812,12 @@ class ViewController: UIViewController, AVPictureInPictureControllerDelegate {
         pipController?.removeObserver(self, forKeyPath: "isPictureInPictureSuspended")
         pipController = nil
         videoCallContentController = nil
+        hiddenReferenceRenderView?.stop()
+        if let probe = hiddenReferenceRenderView, clockOverlayView === probe.clockOverlay {
+            clockOverlayView = nil
+        }
+        hiddenReferenceRenderView?.removeFromSuperview()
+        hiddenReferenceRenderView = nil
         customView?.removeFromSuperview()
         customView = nil
         textView = nil
@@ -1775,6 +1829,63 @@ class ViewController: UIViewController, AVPictureInPictureControllerDelegate {
         legacyCustomViewWidthConstraint = nil
         legacyCustomViewHeightConstraint = nil
         hasPreparedPiPInfrastructure = false
+        isHiddenReferenceSession = false
+        hiddenReferenceSessionID = nil
+    }
+
+    private func endHiddenReferenceDriverSuppression() {
+        hiddenReferenceRenderView?.stop()
+        if let token = hiddenReferenceSessionID { PiPHiddenReferenceMode.end(owner: token) }
+    }
+
+    private func configureHiddenReferenceRenderProbe(reason: String) {
+        guard isHiddenReferenceSession, let host = videoCallContentController?.view else { return }
+        let needsProbe = PiPHiddenReferenceOptions.animatesContent || PiPHiddenReferenceOptions.preservesMinimumSurface
+        if needsProbe {
+            if hiddenReferenceRenderView == nil {
+                let probe = PiPHiddenReferenceRenderView(frame: host.bounds)
+                probe.autoresizingMask = [.flexibleWidth, .flexibleHeight]
+                clockOverlayView = probe.clockOverlay
+                probe.onClockFrame = { [weak self] link in
+                    guard let self, self.isHiddenReferenceSession, self.shouldRenderClockMode else { return }
+                    self.updateClockOverlay(timestamp: link.timestamp, forceNetworkSample: false)
+                }
+                probe.onClockVisibilityChange = { [weak self] visible in
+                    guard let self, self.isHiddenReferenceSession else { return }
+                    self.resetClockMetrics(preservingNetworkText: true)
+                    if visible {
+                        self.updateClockOverlay(timestamp: CACurrentMediaTime(), forceNetworkSample: true)
+                    }
+                }
+                let tapGesture = UITapGestureRecognizer(target: self, action: #selector(handlePiPContentTap(_:)))
+                tapGesture.cancelsTouchesInView = false
+                probe.addGestureRecognizer(tapGesture)
+                pipContentTapGesture = tapGesture
+                host.addSubview(probe)
+                hiddenReferenceRenderView = probe
+            }
+            hiddenReferenceRenderView?.setText(originalPiPText)
+            hiddenReferenceRenderView?.setTextScrollingEnabled(isScrollingEnabled)
+            hiddenReferenceRenderView?.setClockMode(shouldRenderClockMode, isHidden: isPiPVisuallyHidden, height: clampedPiPHeight)
+            host.clipsToBounds = !PiPHiddenReferenceOptions.preservesMinimumSurface
+            hiddenReferenceRenderView?.configure(isActive: pipController?.isPictureInPictureActive == true)
+        } else {
+            hiddenReferenceRenderView?.stop()
+            hiddenReferenceRenderView?.removeFromSuperview()
+            hiddenReferenceRenderView = nil
+            host.clipsToBounds = true
+        }
+        AppDebugLogger.logCritical("Hidden reference probe [\(reason)]: \(PiPHiddenReferenceOptions.summary); preferredContentSize=\(videoCallContentController?.preferredContentSize ?? .zero); actualHost=\(host.bounds.size); \(hiddenReferenceRenderView?.diagnosticSummary ?? "no render probe"); no AVPlayer introduced")
+    }
+
+    private func applyHiddenReferenceContentAppearance() {
+        guard isHiddenReferenceSession else { return }
+        let color: UIColor = shouldRenderClockMode ? .white : .black
+        videoCallContentController?.view.backgroundColor = color
+        videoCallContentController?.view.layer.backgroundColor = color.cgColor
+        videoCallContentController?.view.isOpaque = true
+        videoCallContentController?.view.layer.isOpaque = true
+        videoCallContentController?.view.alpha = 1
     }
 
     private func setupPiPSourceView() {
@@ -1849,13 +1960,29 @@ class ViewController: UIViewController, AVPictureInPictureControllerDelegate {
             contentController.view.layer.isOpaque = false
             contentController.view.clipsToBounds = true
             videoCallContentController = contentController
+            if isHiddenReferenceSession {
+                contentController.view.frame = CGRect(origin: .zero, size: currentPiPSize)
+                applyHiddenReferenceContentAppearance()
+                configureHiddenReferenceRenderProbe(reason: "prepare")
+            }
             attachCustomViewToPiPContent()
 
             let contentSource = AVPictureInPictureController.ContentSource(
                 activeVideoCallSourceView: pipSourceView,
                 contentViewController: contentController
             )
-            pipController = AVPictureInPictureController(contentSource: contentSource)
+            if isHiddenReferenceSession {
+                pipController = PiPHiddenReferenceControls.makeController(source: contentSource)
+                AppDebugLogger.logCritical("Default VideoCall beta construction: scoped style-5 policy; first content type=4, post-start type=6 after \(PiPCoexistenceExperiment.postStartTransitionDelay)s; initial content=\(currentPiPSize). Source and content-only policy unchanged; shortened timing requires device validation")
+                if let controller = pipController,
+                   !pipCoexistenceExperiment.prepareHiddenReference(controller: controller) {
+                    pipController = nil
+                    AppDebugLogger.logCritical("Hidden reference startup canceled: early provider preparation failed; normal routes unchanged")
+                }
+                AppDebugLogger.logCritical("Hidden reference build refresh opt-in: CADisableMinimumFrameDurationOnPhone=\(Bundle.main.object(forInfoDictionaryKey: "CADisableMinimumFrameDurationOnPhone") ?? "absent"); \(PiPHiddenReferenceOptions.summary); source=original centered constraints, preferredContentSize=\(currentPiPSize), source alpha=\(pipSourceView.alpha)")
+            } else {
+                pipController = AVPictureInPictureController(contentSource: contentSource)
+            }
             AppDebugLogger.log("PiP content source: videoCall")
         } else {
             guard let playerLayer else { return }
@@ -1908,6 +2035,7 @@ class ViewController: UIViewController, AVPictureInPictureControllerDelegate {
     }
 
     private func setupCustomView() {
+        guard !isHiddenReferenceSession else { return }
         customView = UIView()
         customView.backgroundColor = .white
         customView.isOpaque = true
@@ -1977,11 +2105,15 @@ class ViewController: UIViewController, AVPictureInPictureControllerDelegate {
         DiagnosticsRuntimeState.recordUserAction((pipController?.isPictureInPictureActive ?? false) ? "点击关闭悬浮窗" : "点击开启悬浮窗")
         updateDiagnosticsPiPState()
         AppDebugLogger.log("Toggle PiP tapped, active=\(pipController?.isPictureInPictureActive ?? false), prepared=\(hasPreparedPiPInfrastructure), wants=\(wantsPiPActive)")
-        if pipController?.isPictureInPictureActive != true {
+        if pipController?.isPictureInPictureActive != true, isHiddenReferenceRequested {
+            startHiddenReferencePiP(atMinimumHeight: false, source: "首页开启")
+            return
+        }
+        if pipController?.isPictureInPictureActive != true, !isPiPTransitioning {
             promotePlayerLayerMinimumHeightForNormalStartIfNeeded(reason: "首页普通开启")
             resetPiPControlsStyleExperimentForNewStartIfNeeded(reason: "首页普通开启")
         }
-        if pipController == nil, !preparePiPInfrastructureIfNeeded() {
+        if (pipController == nil || needsHiddenReferenceInfrastructureRefresh), !preparePiPInfrastructureIfNeeded() {
             isPiPActiveForUI = false
             showMessage(L10n.text("当前环境不支持悬浮窗", "Floating window is not supported here."))
             return
@@ -2040,6 +2172,8 @@ class ViewController: UIViewController, AVPictureInPictureControllerDelegate {
         guard pipController?.isPictureInPictureActive == true else { return }
         AppDebugLogger.log("Stop PiP requested: \(reason)")
         wantsPiPActive = false
+        shouldHidePiPAfterShortcutStart = false
+        cancelShortcutPiPStartRetry()
         cancelDelayedPiPHideCountdown(reason: reason)
         updatePiPAutomaticStartPolicy()
         pendingPiPStartWorkItem?.cancel()
@@ -2049,14 +2183,70 @@ class ViewController: UIViewController, AVPictureInPictureControllerDelegate {
     }
 
     private func startPiPAndHideFromHome() {
-        applyOneTapMinimumHeight(source: "首页")
+        if pipController?.isPictureInPictureActive == true {
+            applyOneTapMinimumHeight(source: "首页")
+        } else if isHiddenReferenceRequested {
+            startHiddenReferencePiP(atMinimumHeight: true, source: "首页")
+        } else {
+            startPiPFromShortcut(shouldHideAfterStart: true)
+        }
+    }
+
+    private func startHiddenReferencePiP(atMinimumHeight: Bool, source: String, fromShortcut: Bool = false) {
+        recoverStalePiPTransitionIfNeeded(reason: "\(source)隐藏路径开启")
+        guard !isPiPTransitioning else {
+            if isHiddenReferenceSession, wantsPiPActive, atMinimumHeight {
+                shouldHidePiPAfterShortcutStart = true
+            }
+            AppDebugLogger.log("Hidden-path start deferred to current transition: source=\(source), minimum=\(atMinimumHeight)")
+            return
+        }
+        if pipController?.isPictureInPictureActive == true {
+            if atMinimumHeight {
+                applyOneTapMinimumHeight(source: source)
+            } else {
+                showMessage(L10n.text("悬浮窗已开启", "Floating window is already on."))
+            }
+            return
+        }
+        DiagnosticsRuntimeState.recordUserAction("\(source)：\(atMinimumHeight ? "直接启动0.1pt悬浮窗" : "开启悬浮窗")")
+        // Legacy startup retries may restore 44pt; confirm the requested height after didStart.
+        shouldHidePiPAfterShortcutStart = atMinimumHeight
+        cancelDelayedPiPHideCountdown(reason: "\(source)隐藏路径开启")
+        if atMinimumHeight {
+            commitPiPHeight(currentMinimumPiPHeight)
+        }
+        if (pipController == nil || needsHiddenReferenceInfrastructureRefresh), !preparePiPInfrastructureIfNeeded() {
+            isPiPActiveForUI = false
+            shouldHidePiPAfterShortcutStart = false
+            cancelShortcutPiPStartRetry()
+            showMessage(L10n.text("当前环境不支持悬浮窗", "Floating window is not supported here."))
+            return
+        }
+        guard isHiddenReferenceSession, pipController != nil else {
+            shouldHidePiPAfterShortcutStart = false
+            cancelShortcutPiPStartRetry()
+            return
+        }
+        if fromShortcut {
+            prepareShortcutPiPStartRetryIfNeeded(preservingMinimumHeight: atMinimumHeight)
+        } else {
+            cancelShortcutPiPStartRetry()
+        }
+        wantsPiPActive = true
+        hasPrimedPlayerLayerPiPStart = false
+        updatePiPAutomaticStartPolicy()
+        didRetryLegacyPiPStart = false
+        isPiPActiveForUI = true
+        AppDebugLogger.logCritical("Unified hidden-path start: source=\(source), directMinimum=\(atMinimumHeight), preferredContentSize=\(currentPiPSize); content-only policy; coexistence transition=\(PiPCoexistenceExperiment.postStartTransitionDelay)s AFTER didStart, not after entry tap")
+        startPiPSmoothly(preservingMinimumHeight: atMinimumHeight)
     }
 
     @discardableResult
     func performPendingShortcutActionIfNeeded(reason: String) -> Bool {
         guard let action = PiPShortcutActionCenter.consumePendingAction() else { return false }
         DiagnosticsRuntimeState.recordUserAction("快捷方式：\(shortcutActionTitle(action))")
-        AppDebugLogger.log("Shortcut action requested: \(action.rawValue), reason=\(reason)")
+        AppDebugLogger.logCritical("Shortcut action requested: \(action.rawValue), reason=\(reason), system=\(ProcessInfo.processInfo.operatingSystemVersionString), route=\(pipEngineRoute.rawValue), policy=\(currentKeepAlivePolicy.rawValue), contentOnly=\(isHiddenReferenceRequested), active=\(pipController?.isPictureInPictureActive ?? false), transitioning=\(isPiPTransitioning), height=\(formattedHeight(clampedPiPHeight))")
 
         switch action {
         case .startFloatingWindow:
@@ -2073,6 +2263,14 @@ class ViewController: UIViewController, AVPictureInPictureControllerDelegate {
         let actionTitle = shouldUsePlayerLayerPiPCompatibility ? "一键1pt" : "一键0.1pt"
         DiagnosticsRuntimeState.recordUserAction("\(source)：\(actionTitle)")
         AppDebugLogger.log("\(source) \(actionTitle) requested")
+
+        if isPiPTransitioning {
+            if wantsPiPActive {
+                shouldHidePiPAfterShortcutStart = true
+            }
+            AppDebugLogger.log("\(source) minimum-height action during transition: deferred=\(wantsPiPActive)")
+            return
+        }
 
         guard let pipController, pipController.isPictureInPictureActive else {
             shouldHidePiPAfterShortcutStart = false
@@ -2093,18 +2291,25 @@ class ViewController: UIViewController, AVPictureInPictureControllerDelegate {
     }
 
     private func startPiPFromShortcut(shouldHideAfterStart: Bool) {
+        if isHiddenReferenceRequested {
+            startHiddenReferencePiP(atMinimumHeight: shouldHideAfterStart, source: "快捷指令", fromShortcut: true)
+            return
+        }
         // BETA5_ANCHOR_SHORTCUT_START_AND_HIDE:
         // 快捷指令“打开悬浮窗”只负责打开；“打开并隐藏悬浮窗”在 PiP 真正启动后缩到当前方案最小高度。
-        if !shouldHideAfterStart || shouldUsePlayerLayerPiPCompatibility {
-            promotePlayerLayerMinimumHeightForNormalStartIfNeeded(reason: "快捷指令普通开启")
+        if pipController?.isPictureInPictureActive != true, !isPiPTransitioning {
+            if !shouldHideAfterStart || shouldUsePlayerLayerPiPCompatibility {
+                promotePlayerLayerMinimumHeightForNormalStartIfNeeded(reason: "快捷指令普通开启")
+            }
+            resetPiPControlsStyleExperimentForNewStartIfNeeded(reason: shouldHideAfterStart ? "快捷指令启用并隐藏" : "快捷指令普通开启")
         }
-        resetPiPControlsStyleExperimentForNewStartIfNeeded(reason: shouldHideAfterStart ? "快捷指令启用并隐藏" : "快捷指令普通开启")
         if !shouldHideAfterStart {
             cancelDelayedPiPHideCountdown(reason: "普通开启悬浮窗")
         }
-        if pipController == nil, !preparePiPInfrastructureIfNeeded() {
+        if (pipController == nil || needsHiddenReferenceInfrastructureRefresh), !preparePiPInfrastructureIfNeeded() {
             isPiPActiveForUI = false
             shouldHidePiPAfterShortcutStart = false
+            cancelShortcutPiPStartRetry()
             cancelDelayedPiPHideCountdown(reason: "悬浮窗启动失败")
             showMessage(L10n.text("当前环境不支持悬浮窗", "Floating window is not supported here."))
             return
@@ -2113,6 +2318,7 @@ class ViewController: UIViewController, AVPictureInPictureControllerDelegate {
         guard let pipController else {
             isPiPActiveForUI = false
             shouldHidePiPAfterShortcutStart = false
+            cancelShortcutPiPStartRetry()
             cancelDelayedPiPHideCountdown(reason: "悬浮窗控制器为空")
             showMessage(L10n.text("当前环境不支持悬浮窗", "Floating window is not supported here."))
             return
@@ -2121,7 +2327,9 @@ class ViewController: UIViewController, AVPictureInPictureControllerDelegate {
         recoverStalePiPTransitionIfNeeded(reason: "快捷方式打开悬浮窗")
 
         guard !isPiPTransitioning else {
-            shouldHidePiPAfterShortcutStart = shouldHidePiPAfterShortcutStart || shouldHideAfterStart
+            if wantsPiPActive {
+                shouldHidePiPAfterShortcutStart = shouldHidePiPAfterShortcutStart || shouldHideAfterStart
+            }
             AppDebugLogger.log("Shortcut start ignored: PiP transitioning")
             return
         }
@@ -2152,12 +2360,13 @@ class ViewController: UIViewController, AVPictureInPictureControllerDelegate {
         startPiPSmoothly()
     }
 
-    private func prepareShortcutPiPStartRetryIfNeeded() {
+    private func prepareShortcutPiPStartRetryIfNeeded(preservingMinimumHeight: Bool = false) {
         guard pipController?.isPictureInPictureActive != true else {
             cancelShortcutPiPStartRetry()
             return
         }
         shortcutPiPStartRetryRemaining = 2
+        shortcutRetryPreservesMinimumHeight = preservingMinimumHeight
         pendingShortcutPiPStartRetry?.cancel()
     }
 
@@ -2165,6 +2374,7 @@ class ViewController: UIViewController, AVPictureInPictureControllerDelegate {
         pendingShortcutPiPStartRetry?.cancel()
         pendingShortcutPiPStartRetry = nil
         shortcutPiPStartRetryRemaining = 0
+        shortcutRetryPreservesMinimumHeight = false
     }
 
     private func scheduleShortcutPiPStartRetry(reason: String) -> Bool {
@@ -2187,7 +2397,7 @@ class ViewController: UIViewController, AVPictureInPictureControllerDelegate {
             self.updatePiPAutomaticStartPolicy()
             self.isPiPActiveForUI = true
             self.configureRunningText()
-            self.startPiPSmoothly()
+            self.startPiPSmoothly(preservingMinimumHeight: self.isHiddenReferenceSession && self.shortcutRetryPreservesMinimumHeight)
         }
         pendingShortcutPiPStartRetry = workItem
         DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: workItem)
@@ -2195,6 +2405,17 @@ class ViewController: UIViewController, AVPictureInPictureControllerDelegate {
     }
 
     private func hidePiPFromShortcut() {
+        if isHiddenReferenceRequested {
+            startHiddenReferencePiP(atMinimumHeight: true, source: "快捷指令一键0.1pt", fromShortcut: true)
+            return
+        }
+        if isPiPTransitioning {
+            if wantsPiPActive {
+                shouldHidePiPAfterShortcutStart = true
+                AppDebugLogger.logCritical("Shortcut hide deferred until didStart: compatibility route, target=\(formattedHeight(currentMinimumPiPHeight))")
+            }
+            return
+        }
         guard let pipController, pipController.isPictureInPictureActive else {
             shouldHidePiPAfterShortcutStart = false
             cancelDelayedPiPHideCountdown(reason: "手动隐藏但悬浮窗未开启")
@@ -2211,7 +2432,10 @@ class ViewController: UIViewController, AVPictureInPictureControllerDelegate {
 
     private func hidePiPAfterShortcutStartIfNeeded() {
         guard shouldHidePiPAfterShortcutStart else { return }
+        guard pipController?.isPictureInPictureActive == true, wantsPiPActive,
+              !shouldStopPiPAfterCurrentTransition else { return }
         shouldHidePiPAfterShortcutStart = false
+        AppDebugLogger.logCritical("Pending minimum-height action applied after didStart: before=\(formattedHeight(clampedPiPHeight)), target=\(formattedHeight(currentMinimumPiPHeight)), contentOnly=\(isHiddenReferenceSession)")
         if shouldUsePlayerLayerPiPCompatibility {
             applyPlayerLayerMinimumHeightImmediately(reason: "新方案启动完成")
             return
@@ -2475,6 +2699,10 @@ class ViewController: UIViewController, AVPictureInPictureControllerDelegate {
             return
         }
         recordPiPRuntimeHealthCheckpoint()
+        if isHiddenReferenceSession {
+            KeepAliveLogger.heartbeat()
+            return
+        }
         UIApplication.shared.isIdleTimerDisabled = false
         if shouldUsePlayerLayerPiPCompatibility {
             BackgroundTaskManager.shared.forceStopAndDeactivate()
@@ -2510,12 +2738,27 @@ class ViewController: UIViewController, AVPictureInPictureControllerDelegate {
     }
 
     private func recordPiPRuntimeHealthCheckpoint() {
-        guard pipRuntimeStartedAt != nil || isOwnPiPConfirmedActive else { return }
+        // An old in-memory session flag is not evidence that PiP is still active.
+        guard pipRuntimeStartedAt != nil,
+              pipController?.isPictureInPictureActive == true,
+              !isStoppingPiP else { return }
         let now = Date()
         let defaults = UserDefaults.standard
         let previous = defaults.double(forKey: userDefaultsPiPRuntimeLastConfirmedAtKey)
         guard previous <= 0 || now.timeIntervalSince1970 - previous >= 30 else { return }
         defaults.set(now.timeIntervalSince1970, forKey: userDefaultsPiPRuntimeLastConfirmedAtKey)
+        defaults.set(
+            now.addingTimeInterval(pipRuntimeHeartbeatTimeout).timeIntervalSince1970,
+            forKey: userDefaultsPiPRuntimeExpectedStopAtKey
+        )
+        LightweightRuntimeDiagnostics.recordPiPCheckpoint(
+            reason: "PiP定时采样",
+            isActive: true,
+            engineRoute: pipEngineRoute.rawValue,
+            keepAlivePolicy: currentKeepAlivePolicy.rawValue,
+            height: clampedPiPHeight,
+            audioPlaying: shouldUsePiPOnlyKeepAlive ? false : BackgroundTaskManager.shared.isPlaying
+        )
     }
 
     private func pauseBackingPlayerIfIdle() {
@@ -2839,6 +3082,7 @@ class ViewController: UIViewController, AVPictureInPictureControllerDelegate {
 
     private func recoverStalePiPTransition(reason: String) {
         guard isPiPTransitioning else { return }
+        pipCoexistenceExperiment.checkpoint("transition watchdog")
 
         let active = pipController?.isPictureInPictureActive ?? false
         let elapsed = pipTransitionStartedAt.map { Date().timeIntervalSince($0) } ?? 0
@@ -2877,8 +3121,11 @@ class ViewController: UIViewController, AVPictureInPictureControllerDelegate {
                 startDisplayLinks()
             }
             keepPlaybackAlive()
+            cancelShortcutPiPStartRetry()
+            hidePiPAfterShortcutStartIfNeeded()
             KeepAliveLogger.heartbeat()
         } else {
+            pipCoexistenceExperiment.restore()
             releaseTransientPlayerLayerPiPAudioSession(reason: "PiP过渡状态恢复未启动")
             handleOwnPiPInvalidated(reason: "PiP过渡状态恢复：\(reason)")
         }
@@ -2916,12 +3163,14 @@ class ViewController: UIViewController, AVPictureInPictureControllerDelegate {
     }
 
     private var shouldRunPiPContentUpdates: Bool {
+        guard !isHiddenReferenceSession else { return false }
         guard !isExtremeSilentModeEnabled else { return false }
         return (isOwnPiPConfirmedActive || isPiPTransitioning) && !isPiPSuspendedAtSide && !isPiPVisuallyHidden
     }
 
     private var shouldRunLowCostPiPContentUpdates: Bool {
-        (isOwnPiPConfirmedActive || isPiPTransitioning) && !isPiPSuspendedAtSide && !isPiPVisuallyHidden
+        guard !isHiddenReferenceSession else { return false }
+        return (isOwnPiPConfirmedActive || isPiPTransitioning) && !isPiPSuspendedAtSide && !isPiPVisuallyHidden
     }
 
     private func updateAutoHiddenOverheadState(reason: String) {
@@ -2971,6 +3220,9 @@ class ViewController: UIViewController, AVPictureInPictureControllerDelegate {
     }
 
     private func handleOwnPiPInvalidated(reason: String) {
+        endHiddenReferenceDriverSuppression()
+        shouldHidePiPAfterShortcutStart = false
+        cancelShortcutPiPStartRetry()
         let hadOwnSession = isOwnPiPConfirmedActive || pipRuntimeStartedAt != nil
         let shouldNotifyStopped = hadOwnSession
             && !isStoppingPiP
@@ -3003,7 +3255,7 @@ class ViewController: UIViewController, AVPictureInPictureControllerDelegate {
             if reason.hasPrefix("进入前台") {
                 let detectedAt = Date()
                 let lastConfirmedDate = runtimeLastConfirmedDate(defaults: .standard, fallback: detectedAt)
-                finishPiPRuntimeSession(stoppedAt: detectedAt)
+                finishPiPRuntimeSession(stoppedAt: lastConfirmedDate, detectedAt: detectedAt)
                 AppDebugLogger.log(
                     "PiP invalidation discovered in foreground, lastConfirmed=\(formattedStopTime(lastConfirmedDate)), detectedAt=\(formattedStopTime(detectedAt))"
                 )
@@ -3593,6 +3845,7 @@ class ViewController: UIViewController, AVPictureInPictureControllerDelegate {
             DispatchQueue.main.async { [weak self] in
                 guard let self else { return }
                 let isSuspended = self.pipController?.isPictureInPictureSuspended ?? false
+                self.logPiPCompetitionProbe("suspended changed to \(isSuspended)")
                 AppDebugLogger.log("PiP suspend state changed: \(isSuspended), height=\(self.formattedHeight(self.clampedPiPHeight)), clock=\(self.shouldRenderClockMode), scroll=\(self.isScrollingEnabled)")
                 if self.shouldUsePlayerLayerPiPCompatibility {
                     self.updateDiagnosticsPiPState()
@@ -3743,7 +3996,7 @@ class ViewController: UIViewController, AVPictureInPictureControllerDelegate {
         let renderTick = isContentExtremeModeEnabled
             ? Int(now.timeIntervalSince1970.rounded(.down))
             : Int((now.timeIntervalSince1970 * 10).rounded(.down))
-        let fpsText = isContentExtremeModeEnabled ? "" : "\(displayedFPS)Hz"
+        let fpsText = (isContentExtremeModeEnabled || isHiddenReferenceSession) ? "" : "\(displayedFPS)Hz"
         let networkText = isContentExtremeModeEnabled ? "" : currentNetworkSpeedText
         guard forceNetworkSample
             || renderTick != lastClockRenderTick
@@ -3834,7 +4087,7 @@ class ViewController: UIViewController, AVPictureInPictureControllerDelegate {
         return "\(Int(bytesPerSecond.rounded()))B"
     }
 
-    private func startPiPSmoothly() {
+    private func startPiPSmoothly(preservingMinimumHeight: Bool = false) {
         guard pipController != nil else {
             isPiPActiveForUI = false
             return
@@ -3848,7 +4101,9 @@ class ViewController: UIViewController, AVPictureInPictureControllerDelegate {
             isPiPActiveForUI = pipController.isPictureInPictureActive
             return
         }
-        restoreMinimumRememberedHeightIfNeeded()
+        if !preservingMinimumHeight || !isHiddenReferenceSession {
+            restoreMinimumRememberedHeightIfNeeded()
+        }
         beginPiPTransition(expectedActive: true, reason: "start smooth")
         isStoppingPiP = false
         AppDebugLogger.log("Start PiP smoothly, legacy=\(needsLegacyPiPCompatibility), size=\(Int(currentPiPSize.width))x\(Int(currentPiPSize.height))")
@@ -4237,7 +4492,26 @@ class ViewController: UIViewController, AVPictureInPictureControllerDelegate {
                 return
             }
 
-            let sourceReady = !pipSourceView.bounds.isEmpty && pipSourceView.window != nil
+            // Auto Layout can round a 0.1pt source to zero pixels; do not enlarge the experiment's source.
+            let acceptsSubpixelSource = self.isHiddenReferenceSession && self.isPiPVisuallyHidden
+                && pipSourceView.bounds.width > 0
+            let sourceReady = (!pipSourceView.bounds.isEmpty || acceptsSubpixelSource)
+                && pipSourceView.window != nil
+            if self.isPlayerReadyForPiP && sourceReady {
+                if let token = self.hiddenReferenceSessionID {
+                    PiPHiddenReferenceMode.begin(owner: token)
+                }
+                let prepared = self.pipCoexistenceExperiment.prepareForStartIfRequested(
+                    controller: pipController,
+                    isVideoCall: !self.shouldUsePlayerLayerPiPCompatibility
+                )
+                if self.isHiddenReferenceSession, !prepared {
+                    AppDebugLogger.logCritical("Hidden reference beta canceled: private content-type setup unavailable; no fallback to ordinary VideoCall")
+                    self.resetPiPStartStateAfterFailure()
+                    self.showMessage(L10n.text("当前系统无法准备默认方案，已取消启动。可在更多设置中尝试PlayerLayer兼容方案。", "The default route is unavailable on this system; startup was canceled. Try the PlayerLayer compatibility route in More Settings."))
+                    return
+                }
+            }
             let canStartNow = self.isPlayerReadyForPiP && sourceReady && pipController.isPictureInPicturePossible
 
             if canStartNow {
@@ -4318,7 +4592,13 @@ class ViewController: UIViewController, AVPictureInPictureControllerDelegate {
         shouldUsePlayerLayerPiPCompatibility ? 8.0 : 8.0
     }
 
-    private func resetPiPStartStateAfterFailure() {
+    private func resetPiPStartStateAfterFailure(preservingShortcutRetry: Bool = false) {
+        if !preservingShortcutRetry {
+            shouldHidePiPAfterShortcutStart = false
+            cancelShortcutPiPStartRetry()
+        }
+        endHiddenReferenceDriverSuppression()
+        pipCoexistenceExperiment.restore()
         pendingPiPStartWorkItem?.cancel()
         pipStartTimeoutWorkItem?.cancel()
         pipTransitionWatchdogWorkItem?.cancel()
@@ -4382,7 +4662,7 @@ class ViewController: UIViewController, AVPictureInPictureControllerDelegate {
         updateHomeView()
         finishPiPTransition()
 
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) { [weak self] in
+        let retry = DispatchWorkItem { [weak self] in
             guard
                 let self,
                 self.isPiPActiveForUI,
@@ -4392,6 +4672,8 @@ class ViewController: UIViewController, AVPictureInPictureControllerDelegate {
             }
             self.startPiPSmoothly()
         }
+        pendingPiPStartWorkItem = retry
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.2, execute: retry)
         return true
     }
 
@@ -4416,7 +4698,7 @@ class ViewController: UIViewController, AVPictureInPictureControllerDelegate {
         updateHomeView()
 
         finishPiPTransition()
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) { [weak self] in
+        let retry = DispatchWorkItem { [weak self] in
             guard
                 let self,
                 self.isPiPActiveForUI,
@@ -4427,6 +4709,8 @@ class ViewController: UIViewController, AVPictureInPictureControllerDelegate {
             }
             self.startPiPSmoothly()
         }
+        pendingPiPStartWorkItem = retry
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.2, execute: retry)
         return true
     }
 
@@ -4637,6 +4921,7 @@ class ViewController: UIViewController, AVPictureInPictureControllerDelegate {
             videoCallContentController?.view.layer.backgroundColor = UIColor.clear.cgColor
             videoCallContentController?.view.isOpaque = false
             videoCallContentController?.view.layer.isOpaque = false
+            applyHiddenReferenceContentAppearance()
             playerLayer?.opacity = shouldUsePlayerLayerPiPCompatibility ? 1 : 0
             playerLayer?.backgroundColor = UIColor.clear.cgColor
             view.layoutIfNeeded()
@@ -4704,6 +4989,13 @@ class ViewController: UIViewController, AVPictureInPictureControllerDelegate {
     }
 
     private func configureRunningText() {
+        if isHiddenReferenceSession {
+            stopDisplayLinks()
+            stopClockTimer()
+            applyHiddenReferenceContentAppearance()
+            configureHiddenReferenceRenderProbe(reason: "content mode or height changed")
+            return
+        }
         guard let textView else { return }
         if shouldUsePlayerLayerPiPCompatibility && !shouldAttachCustomViewInPlayerLayerPiP {
             stopDisplayLinks()
@@ -4845,6 +5137,9 @@ class ViewController: UIViewController, AVPictureInPictureControllerDelegate {
         DiagnosticsRuntimeState.recordUserAction(isScrollingEnabled ? "关闭悬浮窗内容滚动" : "开启悬浮窗内容滚动")
         isScrollingEnabled.toggle()
         AppDebugLogger.log("PiP text scrolling changed, enabled=\(isScrollingEnabled)")
+        if isHiddenReferenceSession {
+            AppDebugLogger.log("PiP content-only scrolling toggle: \(hiddenReferenceRenderView?.diagnosticSummary ?? "render view pending"); content-update link retained")
+        }
         if isScrollingEnabled, !shouldRenderClockMode {
             if pipController?.isPictureInPictureActive == true {
                 startDisplayLinks()
@@ -4932,6 +5227,9 @@ class ViewController: UIViewController, AVPictureInPictureControllerDelegate {
         UIView.performWithoutAnimation {
             videoCallContentController?.preferredContentSize = currentPiPSize
             updatePiPSourceGeometry()
+            if isHiddenReferenceSession {
+                hiddenReferenceRenderView?.setClockMode(shouldRenderClockMode, isHidden: isPiPVisuallyHidden, height: clampedPiPHeight)
+            }
             if textView != nil, shouldRenderClockMode {
                 updateClockAppearance()
             }
@@ -4963,7 +5261,7 @@ class ViewController: UIViewController, AVPictureInPictureControllerDelegate {
         if shouldUsePlayerLayerPiPCompatibility {
             updatePiPSourceGeometry()
         }
-        if textView != nil {
+        if textView != nil || isHiddenReferenceSession {
             configureRunningText()
         }
         updateAutoHiddenOverheadState(reason: "提交高度 \(formattedHeight(clampedPiPHeight))")
@@ -5224,6 +5522,7 @@ class ViewController: UIViewController, AVPictureInPictureControllerDelegate {
     }
 
     @objc private func handleLanguageDidChange() {
+        pipRuntimeStoppedAtText = normalizedStoredPiPRuntimeStoppedAtText()
         updateHomeView()
     }
 
@@ -5277,6 +5576,7 @@ class ViewController: UIViewController, AVPictureInPictureControllerDelegate {
     }
 
     func pictureInPictureControllerWillStartPictureInPicture(_ pictureInPictureController: AVPictureInPictureController) {
+        pipCoexistenceExperiment.checkpoint("willStart")
         AppDebugLogger.log("画中画初始化后，应用窗口数：\(allApplicationWindows().count)")
         updateDiagnosticsPiPState()
         AppDebugLogger.log("PiP will start")
@@ -5286,6 +5586,9 @@ class ViewController: UIViewController, AVPictureInPictureControllerDelegate {
     }
 
     func pictureInPictureControllerDidStartPictureInPicture(_ pictureInPictureController: AVPictureInPictureController) {
+        configureHiddenReferenceRenderProbe(reason: "didStart")
+        pipCoexistenceExperiment.checkpoint("didStart")
+        logPiPCompetitionProbe("didStart", controller: pictureInPictureController)
         pendingPiPStartWorkItem?.cancel()
         pipStartTimeoutWorkItem?.cancel()
         pendingPiPStartWorkItem = nil
@@ -5319,6 +5622,15 @@ class ViewController: UIViewController, AVPictureInPictureControllerDelegate {
         updateAutoHiddenOverheadState(reason: "PiP启动完成")
         PowerUsageLogger.markPiPStart()
         KeepAliveLogger.markPiPStarted(mode: currentKeepAlivePolicy.diagnosticsName)
+        LightweightRuntimeDiagnostics.recordPiPCheckpoint(
+            reason: "PiP启动完成",
+            isActive: true,
+            engineRoute: pipEngineRoute.rawValue,
+            keepAlivePolicy: currentKeepAlivePolicy.rawValue,
+            height: clampedPiPHeight,
+            audioPlaying: shouldUsePiPOnlyKeepAlive ? false : BackgroundTaskManager.shared.isPlaying,
+            force: true
+        )
         updateDiagnosticsPiPState()
         updateDisplaySleepDiagnostics(reason: "PiP启动完成", shouldLog: true)
         ProcessTerminationDiagnostics.recordCheckpoint(reason: "PiP启动完成")
@@ -5326,6 +5638,7 @@ class ViewController: UIViewController, AVPictureInPictureControllerDelegate {
         hidePiPForCurrentSuspendedStateIfNeeded(reason: "PiP启动后已吸附")
         performDeferredShortcutPiPStopIfNeeded(reason: "PiP启动完成")
         AppDebugLogger.log("PiP did start")
+        pipCoexistenceExperiment.schedulePostStartUpdateIfRequested(controller: pictureInPictureController)
         AppDebugLogger.log("画中画弹出后，应用窗口数：\(allApplicationWindows().count)")
     }
 
@@ -5358,6 +5671,7 @@ class ViewController: UIViewController, AVPictureInPictureControllerDelegate {
     }
 
     func pictureInPictureControllerWillStopPictureInPicture(_ pictureInPictureController: AVPictureInPictureController) {
+        logPiPCompetitionProbe("willStop", controller: pictureInPictureController)
         pipExpectedActiveBeforeStop = wantsPiPActive
             && !isStoppingPiP
             && !isClosingPiPFromCustomContentTap
@@ -5402,6 +5716,9 @@ class ViewController: UIViewController, AVPictureInPictureControllerDelegate {
     }
 
     func pictureInPictureControllerDidStopPictureInPicture(_ pictureInPictureController: AVPictureInPictureController) {
+        endHiddenReferenceDriverSuppression()
+        logPiPCompetitionProbe("didStop", controller: pictureInPictureController)
+        pipCoexistenceExperiment.restore()
         hidePiPContentForClosing()
         let expectedActiveBeforeStop = pipExpectedActiveBeforeStop ?? (
             wantsPiPActive
@@ -5498,7 +5815,7 @@ class ViewController: UIViewController, AVPictureInPictureControllerDelegate {
             return
         }
         if scheduleShortcutPiPStartRetry(reason: "画中画启动失败：\(error.localizedDescription)") {
-            resetPiPStartStateAfterFailure()
+            resetPiPStartStateAfterFailure(preservingShortcutRetry: true)
             return
         }
         resetPiPStartStateAfterFailure()
@@ -5659,7 +5976,7 @@ private final class PiPHeightEditorViewController: UIViewController {
         stackView.spacing = 20
         contentView.addSubview(stackView)
         stackView.snp.makeConstraints { make in
-            make.leading.trailing.equalTo(contentView.safeAreaLayoutGuide).inset(24)
+            make.leading.trailing.equalTo(contentView).inset(24)
             make.top.equalTo(contentView.safeAreaLayoutGuide).offset(28)
         }
 
@@ -5859,7 +6176,7 @@ private final class PiPHeightEditorViewController: UIViewController {
     }
 }
 
-private final class ClockOverlayView: UIView {
+final class ClockOverlayView: UIView {
     private let timeLabel = UILabel()
     private let fpsLabel = UILabel()
     private let networkLabel = UILabel()
@@ -5885,7 +6202,7 @@ private final class ClockOverlayView: UIView {
         }
     }
 
-    func configure(height: CGFloat, hidden: Bool) {
+    func configure(height: CGFloat, hidden: Bool, showsFPS: Bool = true) {
         isHidden = hidden
         alpha = hidden ? 0 : 1
         layer.opacity = hidden ? 0 : 1
@@ -5908,9 +6225,9 @@ private final class ClockOverlayView: UIView {
 
         let textColor: UIColor = hidden ? .clear : .black
 	        timeLabel.textColor = textColor
-        fpsLabel.textColor = shouldShowMetrics ? .darkGray : .clear
+        fpsLabel.textColor = shouldShowMetrics && showsFPS ? .darkGray : .clear
         networkLabel.textColor = shouldShowMetrics ? .darkGray : .clear
-        fpsLabel.isHidden = !shouldShowMetrics
+        fpsLabel.isHidden = !shouldShowMetrics || !showsFPS
         networkLabel.isHidden = !shouldShowMetrics
     }
 

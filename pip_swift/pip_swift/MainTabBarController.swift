@@ -51,6 +51,7 @@ final class MainTabBarController: UITabBarController, UITabBarControllerDelegate
     private var launchCelebrationController: UIHostingController<GlobalRefresh2LaunchCelebrationView>?
     private var latestChangelogController: LatestChangelogViewController?
     private var isShortcutDisabledAlertPending = false
+    private var lastTabBarFeedbackTimestamp: CFTimeInterval = 0
     private let tabContentFadeAnimator = TabContentFadeAnimator()
     private weak var floatingWindowController: ViewController?
     private static let shortcutDarwinNotificationCallback: CFNotificationCallback = { _, observer, _, _, _ in
@@ -156,8 +157,13 @@ final class MainTabBarController: UITabBarController, UITabBarControllerDelegate
 
     override func viewDidLoad() {
         super.viewDidLoad()
+        DemoFrameRatePreference.migrateLegacySettingIfNeeded()
+        view.backgroundColor = .systemGroupedBackground
         L10n.rememberCurrentSystemLanguageIfNeeded()
         delegate = self
+        if #available(iOS 26.0, *) {
+            tabBarMinimizeBehavior = .onScrollDown
+        }
         DiagnosticsRuntimeState.updateCurrentPage("悬浮窗")
 
         let pipController = ViewController()
@@ -187,8 +193,20 @@ final class MainTabBarController: UITabBarController, UITabBarControllerDelegate
         startRefreshDriver()
         NotificationCenter.default.addObserver(
             self,
+            selector: #selector(handleEngineRuntimeModeChange),
+            name: PiPHiddenReferenceMode.didChangeNotification,
+            object: nil
+        )
+        NotificationCenter.default.addObserver(
+            self,
             selector: #selector(handleFrameRatePreferenceChange),
             name: FrameRatePreference.didChangeNotification,
+            object: nil
+        )
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(handleDemoFrameRatePreferenceChange),
+            name: DemoFrameRatePreference.didChangeNotification,
             object: nil
         )
         NotificationCenter.default.addObserver(
@@ -253,6 +271,11 @@ final class MainTabBarController: UITabBarController, UITabBarControllerDelegate
         }
     }
 
+    override func viewDidLayoutSubviews() {
+        super.viewDidLayoutSubviews()
+        installTabBarFeedbackTargets(in: tabBar)
+    }
+
     deinit {
         NotificationCenter.default.removeObserver(self)
         CFNotificationCenterRemoveObserver(
@@ -266,11 +289,11 @@ final class MainTabBarController: UITabBarController, UITabBarControllerDelegate
     }
 
     func tabBarController(_ tabBarController: UITabBarController, shouldSelect viewController: UIViewController) -> Bool {
+        triggerTabBarFeedback()
         guard selectedViewController !== viewController else {
             return true
         }
 
-        UIImpactFeedbackGenerator(style: .light).impactOccurred()
         dismissVisibleTransientOverlays()
         if let index = viewControllers?.firstIndex(of: viewController) {
             DiagnosticsRuntimeState.recordUserAction("底栏点击切换：\(diagnosticPageName(for: index))")
@@ -279,10 +302,33 @@ final class MainTabBarController: UITabBarController, UITabBarControllerDelegate
         return true
     }
 
+    private func installTabBarFeedbackTargets(in view: UIView) {
+        if let control = view as? UIControl {
+            control.removeTarget(self, action: #selector(handleTabBarControlTouch), for: .touchDown)
+            control.addTarget(self, action: #selector(handleTabBarControlTouch), for: .touchDown)
+        }
+        view.subviews.forEach { installTabBarFeedbackTargets(in: $0) }
+    }
+
+    @objc private func handleTabBarControlTouch() {
+        triggerTabBarFeedback()
+    }
+
+    private func triggerTabBarFeedback() {
+        let now = CACurrentMediaTime()
+        guard now - lastTabBarFeedbackTimestamp > 0.08 else { return }
+        lastTabBarFeedbackTimestamp = now
+        let generator = UIImpactFeedbackGenerator(style: .light)
+        generator.prepare()
+        generator.impactOccurred()
+    }
+
     func tabBarController(_ tabBarController: UITabBarController, didSelect viewController: UIViewController) {
         if let index = viewControllers?.firstIndex(of: viewController) {
             DiagnosticsRuntimeState.updateCurrentPage(diagnosticPageName(for: index))
         }
+        startRefreshDriver()
+        NotificationCenter.default.post(name: DemoFrameRatePreference.didChangeNotification, object: nil)
     }
 
     func tabBarController(
@@ -322,15 +368,25 @@ final class MainTabBarController: UITabBarController, UITabBarControllerDelegate
         refreshDisplayLink?.invalidate()
         refreshDisplayLink = nil
 
+        // The visible demo owns its page-only refresh request; background PiP is unchanged.
+        guard UIApplication.shared.applicationState != .active || selectedIndex != 1 else { return }
         let isPlayerLayerRouteEnabled = UserDefaults.standard.bool(forKey: "pip.home.playerLayerRouteEnabled")
         let isExtremeSilentModeEnabled = UserDefaults.standard.bool(forKey: "pip.home.extremeSilentModeEnabled")
-        guard !isPlayerLayerRouteEnabled, !isExtremeSilentModeEnabled else {
+        guard UIApplication.shared.applicationState == .active || (!isPlayerLayerRouteEnabled && !isExtremeSilentModeEnabled) else {
             AppDebugLogger.log("RefreshDriver skipped: PlayerLayer/extreme silent route active")
             return
         }
 
         let displayLink = CADisplayLink(target: self, selector: #selector(stepRefreshDriver))
         configureRefreshDriver(displayLink)
+        if UIApplication.shared.applicationState == .active {
+            let request = DemoFrameRatePreference.isHighRefreshEnabled ? "120Hz" : "80Hz (released OFF policy, hardware capped)"
+            AppDebugLogger.log("Foreground App refresh request: \(request); actual display refresh remains system-managed; PiP preferences unchanged")
+        } else if PiPHiddenReferenceMode.suppressesStrictRefreshRequest {
+            AppDebugLogger.logCritical("Hidden reference beta refresh policy: fresh DisplayLink kept on common run loop; no preferredFrameRateRange/preferredFramesPerSecond assignment; high-refresh opt-in retained; 120Hz effect unverified")
+        } else if PiPHiddenReferenceMode.suppressesRefreshDriver {
+            AppDebugLogger.logCritical("Hidden reference beta refresh policy: explicit request enabled, target=\(min(120, UIScreen.main.maximumFramesPerSecond)); \(PiPHiddenReferenceOptions.summary)")
+        }
         // Use the 1.0.7 driver mode for every supported iOS version; hidden 0.1 pt PiP depends on this driver more than visible PiP content.
         displayLink.add(to: .main, forMode: .common)
         refreshDisplayLink = displayLink
@@ -352,6 +408,11 @@ final class MainTabBarController: UITabBarController, UITabBarControllerDelegate
     }
 
     @objc private func handleEngineRuntimeModeChange() {
+        startRefreshDriver()
+    }
+
+    @objc private func handleDemoFrameRatePreferenceChange() {
+        guard UIApplication.shared.applicationState == .active else { return }
         startRefreshDriver()
     }
 
@@ -483,8 +544,15 @@ final class MainTabBarController: UITabBarController, UITabBarControllerDelegate
     }
 
     private func configureRefreshDriver(_ displayLink: CADisplayLink) {
+        if UIApplication.shared.applicationState == .active {
+            DemoFrameRatePreference.configureForegroundRequest(displayLink)
+            return
+        }
+        // Session changes recreate the link, so the experiment never inherits a strict range.
+        guard !PiPHiddenReferenceMode.suppressesStrictRefreshRequest else { return }
         let maximumFramesPerSecond = UIScreen.main.maximumFramesPerSecond
-        let targetFramesPerSecond = min(FrameRatePreference.targetFrameRate, maximumFramesPerSecond)
+        let requested = PiPHiddenReferenceMode.suppressesRefreshDriver ? 120 : FrameRatePreference.targetFrameRate
+        let targetFramesPerSecond = min(requested, maximumFramesPerSecond)
 
         if #available(iOS 15.0, *) {
             let target = Float(targetFramesPerSecond)

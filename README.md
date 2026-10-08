@@ -8,11 +8,17 @@
   简体中文 | <a href="README_EN.md">English</a> | <a href="DEVELOPMENT_PRD.md">开发文档 PRD</a> | <a href="DEVELOPMENT_PRD_EN.md">Development Document PRD</a>
 </h3>
 
-> 基于 [CaiWanFeng/PiP](https://github.com/CaiWanFeng/PiP) 修改的个人学习与测试版本。
+> 基于 [CaiWanFeng/PiP](https://github.com/CaiWanFeng/PiP) 继续开发，完善：[Yoroin](http://www.coolapk.com/u/3233328)。
 
-全局高刷通过系统画中画悬浮窗辅助部分 iOS App 恢复更高的自适应刷新率表现1-120Hz。将悬浮窗拖动并吸附到屏幕侧边后，可用于改善部分被限制在 1-80Hz 的场景体验。
+增加悬浮窗后台保活、完全隐藏及与其他画中画并存保护。启用悬浮窗后，可帮助 ProMotion 设备和原本限制在 80Hz 左右的 App 获得最高 120Hz 的自适应刷新率表现。适配 iOS 15–iOS 27。
 
-它主要面向 ProMotion 设备在部分 App 或系统场景中被限制到 80Hz 左右的情况，通过画中画悬浮窗持续请求高刷新率，帮助这些场景恢复更接近 120Hz 的滑动和动画表现。具体效果仍取决于设备型号、系统版本、前台 App 自身策略以及悬浮窗是否正常吸附和存活。
+1.1.1 优化默认 VideoCall 方案：不再依靠悬浮窗固定请求 120Hz，而是保留 PiP 内容更新，在维持高刷效果的同时，修复部分锁 60 的游戏和 B 站弹幕卡顿问题，并优化直接隐藏后的自动熄屏行为。
+
+默认 VideoCall 与仅 PiP 保活组合支持直接以 0.1pt 启动隐藏悬浮窗，并新增悬浮窗共存保护：其他 App 开启画中画时，可继续同时运行，避免我们的悬浮窗被挤掉或打断，不必因此反复重新开启。
+
+此保护针对其他画中画的竞争，不代表 App 不会因内存压力、系统策略或其他异常被终止；兼容效果仍依赖系统及第三方 App。
+
+实际刷新率及后台存活仍由设备、系统、前台 App 和资源状态共同决定，不代表固定 120Hz 或永久后台权限；60Hz 屏幕和 App 自身固定 60 帧的内容不能因此提升到 120 帧。
 
 ## 说明
 
@@ -25,41 +31,56 @@
 - 60Hz 设备或本身锁定 60Hz 的 App 无法通过本项目变成 120Hz。
 - 后台保活并非系统级永久后台权限，仍可能受到内存压力、系统策略或其他画中画 App 的影响。
 
-底层方案说明：
+## 底层方案说明
 
-| 方案 | 优点 | 缺点 | 适合场景 |
+| 方案 | 隐藏能力 | 当前定位 | 注意事项 |
 | --- | --- | --- | --- |
-| 默认方案：VideoCall | 支持最低 0.1pt，可做到视觉上完全隐藏；兼容性更好，日常使用更稳定 | 会强拉全局 120Hz，部分自身锁 60Hz 的游戏或弹幕场景可能出现不同步卡顿 | 大多数 App、锁 80Hz 场景、需要完全隐藏悬浮窗的用户 |
-| 新方案：PlayerLayer | 可改善部分锁 60Hz App 与 120Hz 不同步导致的卡顿，例如 B 站弹幕一快一慢、荒野乱斗大厅偶尔掉帧 | 受底层限制最低 1pt，无法完全隐藏，视觉上可能留下一条细线；属于测试入口 | 仅建议遇到锁 60Hz 场景卡顿时尝试 |
+| 默认方案：VideoCall | 最低 0.1pt，可完全隐藏 | 日常推荐；与仅 PiP 保活组合使用本次内容更新、并存和熄屏优化 | ~~旧版部分锁 60 的游戏和弹幕可能因帧率不同步出现卡顿~~，本版已优化；效果仍依赖具体系统与 App |
+| 兼容备选：PlayerLayer | 最低 1pt，侧边可能留有细线 | 保留原有兼容流程，不再作为解决默认方案弹幕卡顿的首选 | 无法完全隐藏；默认方案表现异常时可自行尝试 |
 
-简单来说：默认方案隐藏能力更好，适合大多数用户；新方案主要用于解决特定锁 60Hz 场景的卡顿问题，但无法做到 0.1pt 完全隐藏。
+本次默认方案优化适用于 iOS 15–27 的 VideoCall 与仅 PiP 保活组合。音频强保活、锁屏音频增强及 PlayerLayer 保留兼容流程，不应视为相同实现。
 
 ## 主要功能
 
-- 悬浮窗后台保活
-- 自定义悬浮窗高度，最低支持 0.1pt
-- 支持调节侧边吸附框大小
-- 支持开启/停止悬浮窗内容滚动
-- 支持记忆悬浮窗高度
-- 帧率演示页面，用于对比 80Hz 和 120Hz 滑动体验
-- 使用教程与常见问题页面
-- iOS 26 液态玻璃风格适配
-- 旧版 iOS 使用高斯模糊风格适配
-- iOS 15 / iOS 16 低版本兼容优化
-- 调试模式，可复制最近运行日志用于反馈问题
+- 帮助部分 ProMotion 设备和锁 80Hz 场景获得最高 120Hz 表现
+- 默认悬浮窗支持后台保活、0.1pt 完全隐藏
+- 悬浮窗共存保护：与其他画中画同时运行，避免被其他悬浮窗挤掉或打断
+- 一键开启并隐藏；悬浮窗已开启时，一键调整为 0.1pt
+- 自定义悬浮窗高度、侧边吸附框大小及高度记忆
+- 支持开启或停止文字滚动，默认组合仍保留内容更新
+- 帧率演示及 80Hz、120Hz 动画对比；刷新开关仅作用于 App 前台页面和动画
+- 教程、默认方案升级演示及常见问题
+- iPhone Duo 布局适配，iOS 26 及以上 Liquid Glass 风格和旧系统模糊背景
+- 自动和手动缓存清理、正式版及 Beta 版更新检测
+- 调试日志、有限的低频运行记录和系统诊断，辅助排查异常中断
 
 ## 使用方式
 
-1. 打开 App，点击首页的“开启悬浮窗”按钮。
-2. 将悬浮窗拖动到屏幕侧边并吸附。
-3. 如需隐藏悬浮窗，可在开启后将悬浮窗高度调节至 0.1pt。
-4. 如遇问题，可在“关于”页点击“常见问题”右侧的工具按钮，打开调试模式后复制调试日志。
+1. 日常推荐使用默认 VideoCall 与仅 PiP 保活。
+2. 直接隐藏：未开启悬浮窗时，点击“一键开启并隐藏”，以 0.1pt 启动。
+3. 可见悬浮窗：点击“开启悬浮窗”，按需要拖到侧边；点击“一键 0.1pt”或调节高度即可隐藏。
+4. 快捷指令需先在更多设置中开启并确认风险。iOS 26 及以上提供原生“打开并隐藏悬浮窗”动作；iOS 15–25 可手动导入，控制中心添加快捷指令需 iOS 18 及以上。
+5. 如遇异常，请附上 App 版本、系统版本、设备型号、底层与保活模式、复现步骤及诊断日志，在 [GitHub Issues](https://github.com/Yoroin/GlobalRefresh-PiP/issues) 提问，或在酷安评论区留言/私信。
+
+其他兼容模式仍建议先开启并拖至侧边再缩小；PlayerLayer 最低 1pt。
 
 ![使用演示](assets/demo.gif)
 
 ## 开发者参考
 
-如果你只是想借用默认 `VideoCall` 方案实现一个可自定义高度的画中画悬浮窗，而不需要本项目的“强拉 120Hz”能力，可以保留 `AVPictureInPictureVideoCallViewController` + `AVPictureInPictureController.ContentSource` 这条路线。
+本项目可作为已有悬浮窗 App 的底层方案参考，通常以默认 VideoCall 为主，不必照搬本 App 的首页与其他功能。
+
+VideoCall 容器、高度调节仍采用 `AVPictureInPictureVideoCallViewController`、`AVPictureInPictureController.ContentSource` 和 `preferredContentSize`。1.1.1 默认 VideoCall 与仅 PiP 保活组合改为保留内容更新，不再沿用旧版悬浮窗固定请求 120Hz 的驱动方式。
+
+以下旧用法在该默认组合中标记为不再使用，而非从整个工程统一删除：
+
+- ~~将悬浮窗驱动的 `CADisplayLink.preferredFrameRateRange` 固定为 `minimum = maximum = preferred = 120`~~
+- ~~将悬浮窗驱动的 `preferredFramesPerSecond` 固定为 `120`~~
+- ~~使用帧率演示开关同步改变后台悬浮窗的刷新与播放策略~~
+
+App 前台页面仍有独立的刷新请求，因此不能把 `CADisableMinimumFrameDurationOnPhone` 或全部 DisplayLink 一概标记为废弃。帧率演示开关不再控制后台悬浮窗。
+
+画中画并存保护包含系统内部接口适配，并非 Apple 公开承诺的多 PiP 能力。不要将其写成公开 API 保证，也不要保证所有系统和第三方 App 都能共存；若用于上架产品，应单独评估私有接口的审核和兼容风险。
 
 核心思路是创建一个透明的 `AVPictureInPictureVideoCallViewController`，通过 `preferredContentSize` 控制悬浮窗尺寸，再把自己的自定义 View 挂到这个 content view 里：
 
@@ -79,26 +100,14 @@ let pipController = AVPictureInPictureController(contentSource: contentSource)
 
 后续调节高度时，同步更新 `preferredContentSize` 和你自己的内容 View 约束即可。需要视觉隐藏时，可以把高度调到很小，例如 `0.1pt`；如果不需要完全隐藏，也可以使用更保守的高度。
 
-如果不需要强拉 120Hz，建议不要复制本项目的高刷驱动字段：
+### 实现路径
 
-- 不需要在 `Info.plist` 中启用 `CADisableMinimumFrameDurationOnPhone`
-- 不要把 `CADisplayLink.preferredFrameRateRange` 固定为 `minimum = maximum = preferred = 120`
-- 不要把 `preferredFramesPerSecond` 固定为 `120`
-- 如需保留 DisplayLink，用系统自适应即可，例如：
+- `pip_swift/pip_swift/ViewController.swift`：悬浮窗入口、两套底层创建、高度调节及保活策略
+- `pip_swift/pip_swift/PiPCoexistenceExperiment.swift`：默认内容更新和画中画并存保护适配
+- `pip_swift/pip_swift/PiPShortcutIntents.swift`：原生快捷指令入口
+- `pip_swift/pip_swift/FrameRateTestTabBarController.swift`：App 前台帧率演示
 
-```swift
-if #available(iOS 15.0, *) {
-    displayLink.preferredFrameRateRange = CAFrameRateRange(
-        minimum: 30,
-        maximum: Float(UIScreen.main.maximumFramesPerSecond),
-        preferred: 0
-    )
-} else {
-    displayLink.preferredFramesPerSecond = 0
-}
-```
-
-简单来说：只做自定义高度时，保留 `VideoCall` 的 PiP 容器和 `preferredContentSize`；关闭强制 120Hz 相关字段，让系统自己决定刷新率。
+旧版开发文档中的固定 120Hz 说明也需要按此范围同步修订，不应把“刷新内容”描述为跨系统保证有效的公开解锁 API。
 
 ## 自签安装
 
@@ -112,6 +121,21 @@ if #available(iOS 15.0, *) {
 请使用自己的 Apple ID、证书或设备环境完成签名安装。
 
 ## 版本日志
+
+### 1.1.1（26.10.9）
+
+- \* 优化默认悬浮窗VideoCall方案，修复部分锁60的游戏和B站弹幕卡顿的问题
+- \* 新增悬浮窗共存保护，与其他画中画同时运行，避免被其他悬浮窗挤掉或打断
+- \* 修复 悬浮窗未拖至侧面而导致的无法熄屏
+- 适配iPhone Duo
+- 优化一键0.1pt：未开启时点击可直接启动隐藏悬浮窗，已开启时则调整高度；首页、快捷指令及URL入口保持一致，其他兼容模式保留原开启流程
+- 精简快捷指令入口，仅保留打开并隐藏悬浮窗
+- 优化 上次关闭时间 显示逻辑
+- 减少仅PiP模式的音频预加载及后台页面刷新开销，内存紧张时清理未使用的音频和诊断缓存，不销毁悬浮窗
+- 补充轻量运行记录和系统诊断，便于排查异常中断；关闭调试模式时仍保留有限的低频记录，不强行判断唯一原因
+- 帧率演示的120Hz开关仅改变App前台页面和动画的刷新请求，关闭后按旧正式版请求最高80Hz，不再更改后台悬浮窗的刷新与播放策略；实际帧率仍由系统决定
+- 新增默认悬浮窗方案升级演示，优化首次显示与重播动画，并同步常见问题说明
+- 默认方案优化适用于iOS15-27的VideoCall与仅PiP保活组合；并存、熄屏及高刷效果仍依赖系统、设备与前台App，其他模式保留兼容流程
 
 ### 1.1.0fix（26.8.29）
 
@@ -225,14 +249,14 @@ if #available(iOS 15.0, *) {
 
 ## 致谢与署名
 
-本项目基于 [CaiWanFeng/PiP](https://github.com/CaiWanFeng/PiP) 修改开发，感谢原作者 CaiWanFeng 提供原始 PiP 示例。
+本项目以 [CaiWanFeng/PiP](https://github.com/CaiWanFeng/PiP) 的原始 PiP Demo 为起点，由 Yoroin 持续开发与维护，逐步完善高刷辅助、后台保活、完全隐藏、画中画共存保护及界面与兼容适配。感谢 CaiWanFeng 提供原始示例。
 
-- 原项目：[CaiWanFeng/PiP](https://github.com/CaiWanFeng/PiP)
+- 原 Demo 项目：[CaiWanFeng/PiP](https://github.com/CaiWanFeng/PiP)
 - 原作者：CaiWanFeng
 - 当前项目：[Yoroin/GlobalRefresh-PiP](https://github.com/Yoroin/GlobalRefresh-PiP)
-- 当前修改版维护：Yoroin
+- 后续功能开发与维护：Yoroin
 
-如果基于本项目继续修改、分发或发布 App，请保留原作者 CaiWanFeng、当前修改版 Yoroin 以及对应项目地址。请勿将本项目或其修改版声称为完全原创作品。
+如果基于本项目继续开发、集成、分发或发布 App，请保留原始 Demo 作者 CaiWanFeng、后续开发者 Yoroin 及对应项目地址，明确所使用代码的来源。请勿将包含这些代码的项目声称为全部由自己原创。
 
 ## 免责声明
 
