@@ -7,6 +7,7 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		C61005010000000000000001 /* PiPCoexistenceExperiment.swift in Sources */ = {isa = PBXBuildFile; fileRef = C61005010000000000000002 /* PiPCoexistenceExperiment.swift */; };
 		68FE9A1F302F1B3ECE88FA4F /* Pods_pip_swift.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = D8853957D05B22C22DA37BB8 /* Pods_pip_swift.framework */; };
 		D93F3C1328BF36E600BB696D /* BackgroundTaskManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = D93F3C1228BF36E600BB696D /* BackgroundTaskManager.swift */; };
 			D950ED0F265E319D006DD1A6 /* AppDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = D950ED0E265E319D006DD1A6 /* AppDelegate.swift */; };
@@ -37,6 +38,7 @@
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
+		C61005010000000000000002 /* PiPCoexistenceExperiment.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PiPCoexistenceExperiment.swift; sourceTree = "<group>"; };
 		195E9AB234881DC0FD74D5D6 /* Pods-pip_swift.debug.xcconfig */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.xcconfig; name = "Pods-pip_swift.debug.xcconfig"; path = "Target Support Files/Pods-pip_swift/Pods-pip_swift.debug.xcconfig"; sourceTree = "<group>"; };
 		6F54F6C5FA5D84ABA948B4A5 /* Pods-pip_swift.release.xcconfig */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.xcconfig; name = "Pods-pip_swift.release.xcconfig"; path = "Target Support Files/Pods-pip_swift/Pods-pip_swift.release.xcconfig"; sourceTree = "<group>"; };
 		D8853957D05B22C22DA37BB8 /* Pods_pip_swift.framework */ = {isa = PBXFileReference; explicitFileType = wrapper.framework; includeInIndex = 0; path = Pods_pip_swift.framework; sourceTree = BUILT_PRODUCTS_DIR; };
@@ -131,6 +133,7 @@
 		D950ED0D265E319D006DD1A6 /* pip_swift */ = {
 			isa = PBXGroup;
 			children = (
+				C61005010000000000000002 /* PiPCoexistenceExperiment.swift */,
 					D93F3C1128BF34B800BB696D /* BackgroundTaskManager */,
 						D950ED12265E319D006DD1A6 /* ViewController.swift */,
 						AA50ED20265E319E006DD1A6 /* MainTabBarController.swift */,
@@ -143,7 +146,7 @@
 									AA50ED2C265E319E006DD1A6 /* AppDebugLogger.swift */,
 											AA50ED2E265E319E006DD1A6 /* PowerUsageLogger.swift */,
 											AA50ED30265E319E006DD1A6 /* MetricKitLogger.swift */,
-											AA50ED32265E319E006DD1A6 /* KeepAliveLogger.swift */,
+										AA50ED32265E319E006DD1A6 /* KeepAliveLogger.swift */,
 											AA50ED34265E319E006DD1A6 /* KeepAliveModeText.swift */,
 											AA50ED36265E319E006DD1A6 /* DiagnosticsResetManager.swift */,
 											AA50ED38265E319E006DD1A6 /* PiPShortcutIntents.swift */,
@@ -304,6 +307,7 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				C61005010000000000000001 /* PiPCoexistenceExperiment.swift in Sources */,
 					D93F3C1328BF36E600BB696D /* BackgroundTaskManager.swift in Sources */,
 					D950ED13265E319D006DD1A6 /* ViewController.swift in Sources */,
 					AA50ED22265E319E006DD1A6 /* MainTabBarController.swift in Sources */,

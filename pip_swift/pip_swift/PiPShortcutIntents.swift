@@ -52,7 +52,7 @@ enum PiPShortcutInstallLinks {
     static let primaryScheme = "globalrefresh"
 
     static var installableActions: [PiPShortcutAction] {
-        [.startAndHideFloatingWindow, .startFloatingWindow, .hideFloatingWindow]
+        [.startAndHideFloatingWindow]
     }
 
     static func fallbackURLString(for action: PiPShortcutAction) -> String {
@@ -261,7 +261,8 @@ public struct StartFloatingWindowIntent: AppIntent {
     public static var title: LocalizedStringResource = "打开悬浮窗"
     public static var description = IntentDescription("打开全局高刷悬浮窗")
     public static var openAppWhenRun: Bool = true
-    public static var isDiscoverable: Bool { PiPShortcutFeatureAccess.isEnabled }
+    // Preserve existing saved shortcuts without offering duplicate actions for new ones.
+    public static var isDiscoverable: Bool { false }
     public static var authenticationPolicy: IntentAuthenticationPolicy = .alwaysAllowed
 
     public static var supportedModes: IntentModes {
@@ -279,9 +280,9 @@ public struct StartFloatingWindowIntent: AppIntent {
 @available(iOS 26.0, *)
 public struct HideFloatingWindowIntent: AppIntent {
     public static var title: LocalizedStringResource = "一键0.1pt"
-    public static var description = IntentDescription("将已吸附的悬浮窗缩小到0.1pt")
+    public static var description = IntentDescription("将悬浮窗缩小到0.1pt；iOS27默认方案的仅PiP模式支持未开启时直接启动")
     public static var openAppWhenRun: Bool = true
-    public static var isDiscoverable: Bool { PiPShortcutFeatureAccess.isEnabled }
+    public static var isDiscoverable: Bool { false }
     public static var authenticationPolicy: IntentAuthenticationPolicy = .alwaysAllowed
 
     public static var supportedModes: IntentModes {
@@ -299,7 +300,7 @@ public struct HideFloatingWindowIntent: AppIntent {
 @available(iOS 26.0, *)
 public struct StartAndHideFloatingWindowIntent: AppIntent {
     public static var title: LocalizedStringResource = "打开并一键0.1pt"
-    public static var description = IntentDescription("打开全局高刷悬浮窗并缩小到0.1pt")
+    public static var description = IntentDescription("默认VideoCall与仅PiP模式直接以0.1pt启动；已开启时调整至0.1pt，其他模式保留兼容流程")
     public static var openAppWhenRun: Bool = true
     public static var isDiscoverable: Bool { PiPShortcutFeatureAccess.isEnabled }
     public static var authenticationPolicy: IntentAuthenticationPolicy = .alwaysAllowed
@@ -329,25 +330,6 @@ public struct AppShortcuts: AppShortcutsProvider {
             systemImageName: "pip.remove"
         )
 
-        AppShortcut(
-            intent: StartFloatingWindowIntent(),
-            phrases: [
-                "\(.applicationName) 打开悬浮窗",
-                "\(.applicationName) 开启悬浮窗"
-            ],
-            shortTitle: "打开悬浮窗",
-            systemImageName: "pip"
-        )
-
-        AppShortcut(
-            intent: HideFloatingWindowIntent(),
-            phrases: [
-                "\(.applicationName) 一键0.1pt",
-                "\(.applicationName) 隐藏悬浮窗"
-            ],
-            shortTitle: "一键0.1pt",
-            systemImageName: "eye.slash"
-        )
     }
 
     public static var shortcutTileColor: ShortcutTileColor = .blue

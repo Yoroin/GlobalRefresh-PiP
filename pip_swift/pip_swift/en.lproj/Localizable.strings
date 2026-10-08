@@ -6,8 +6,10 @@
 "打开全局高刷悬浮窗后自动缩小到0.1pt" = "Open Global Refresh PiP, then shrink it to 0.1 pt";
 "一键0.1pt" = "One-tap 0.1 pt";
 "将已吸附的悬浮窗缩小到0.1pt" = "Shrink the docked floating window to 0.1 pt";
+"将悬浮窗缩小到0.1pt；iOS27默认方案的仅PiP模式支持未开启时直接启动" = "Shrink PiP to 0.1 pt; the iOS 27 default with PiP-only keep-alive can start it directly when inactive";
 "打开并一键0.1pt" = "Open and Set to 0.1 pt";
 "打开全局高刷悬浮窗并缩小到0.1pt" = "Open Global Refresh PiP and shrink it to 0.1 pt";
+"默认VideoCall与仅PiP模式直接以0.1pt启动；已开启时调整至0.1pt，其他模式保留兼容流程" = "Default VideoCall with PiP-only keep-alive starts directly at 0.1 pt, or adjusts to 0.1 pt if already active. Other modes retain their compatibility flow.";
 "关闭悬浮窗" = "Stop Floating Window";
 "关闭全局高刷悬浮窗" = "Close Global Refresh PiP";
 "Open Floating Window" = "Open Floating Window";

@@ -14,7 +14,7 @@ class BackgroundTaskManager: NSObject, AVAudioPlayerDelegate {
     static let shared = BackgroundTaskManager()
     
     func startPlay() {
-        guard let audioPlayer else {
+        guard prepareAudioPlayerIfNeeded(), let audioPlayer else {
             AppDebugLogger.logCritical("静音音频保活启动失败：播放器不存在")
             return
         }
@@ -43,15 +43,28 @@ class BackgroundTaskManager: NSObject, AVAudioPlayerDelegate {
     }
 
     func forceStopAndDeactivate() {
-        guard isKeepAliveAudioActive || audioPlayer?.isPlaying == true else { return }
-        audioPlayer?.stop()
-        audioPlayer?.currentTime = 0
+        let wasActive = isKeepAliveAudioActive || audioPlayer?.isPlaying == true
+        if wasActive {
+            audioPlayer?.stop()
+            audioPlayer?.currentTime = 0
+        }
         isKeepAliveAudioActive = false
-        deactivateAudioSession()
+        if wasActive {
+            deactivateAudioSession()
+        }
+        // PiP-only mode must not keep a prepared decoder and audio buffer resident.
+        // Re-entering an audio policy recreates only this player; the active PiP
+        // controller and floating-window content source are left untouched.
+        audioPlayer = nil
     }
 
     var isPlaying: Bool {
         isKeepAliveAudioActive && audioPlayer?.isPlaying == true
+    }
+
+    func releasePreparedAudioIfInactive() {
+        guard !isKeepAliveAudioActive, audioPlayer?.isPlaying != true else { return }
+        audioPlayer = nil
     }
 
     var diagnosticsText: String {
@@ -75,19 +88,32 @@ class BackgroundTaskManager: NSObject, AVAudioPlayerDelegate {
     
     private override init() {
         super.init()
+    }
+
+    @discardableResult
+    private func prepareAudioPlayerIfNeeded() -> Bool {
+        if audioPlayer != nil {
+            return true
+        }
         guard let mp3URL = Bundle.main.url(forResource: "slience", withExtension: "mp3") else {
-            print("未找到静音音频")
-            return
+            AppDebugLogger.logCritical("静音音频初始化失败：未找到资源")
+            return false
         }
 
+        let startedAt = CFAbsoluteTimeGetCurrent()
         do {
-            try audioPlayer = AVAudioPlayer(contentsOf: mp3URL)
-            audioPlayer?.volume = 0
-            audioPlayer?.numberOfLoops = -1
-            audioPlayer?.delegate = self
-            audioPlayer?.prepareToPlay()
+            let player = try AVAudioPlayer(contentsOf: mp3URL)
+            player.volume = 0
+            player.numberOfLoops = -1
+            player.delegate = self
+            player.prepareToPlay()
+            audioPlayer = player
+            let elapsedMS = (CFAbsoluteTimeGetCurrent() - startedAt) * 1_000
+            AppDebugLogger.log(String(format: "静音音频按需加载完成：%.1fms", elapsedMS))
+            return true
         } catch {
             AppDebugLogger.logCritical("静音音频初始化失败：\(error.localizedDescription)")
+            return false
         }
     }
 

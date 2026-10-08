@@ -19,6 +19,7 @@ enum DiagnosticsLogExporter {
     static func exportText() -> String {
         [
             AppDebugLogger.exportText(),
+            LightweightRuntimeDiagnostics.exportText(),
             PowerUsageLogger.exportText(),
             KeepAliveLogger.exportText(),
             MetricKitLogger.shared.exportText()
@@ -671,6 +672,59 @@ struct AppChangelogSection {
 enum AppChangelogCatalog {
     static var latest: AppChangelogSection {
         AppChangelogSection(
+            version: L10n.text("1.1.1（26.10.9）", "1.1.1 (2026.10.9)"),
+            items: [
+                L10n.text("优化默认悬浮窗VideoCall方案，修复部分锁60的游戏和B站弹幕卡顿的问题", "Improved the default VideoCall route to fix stuttering in some 60 Hz games and Bilibili danmaku."),
+                L10n.text("新增与其他画中画并存，减少悬浮窗被其他画中画挤掉的问题", "Added coexistence with other Picture in Picture windows to reduce displacement."),
+                L10n.text("修复 悬浮窗未拖至侧面而导致的无法熄屏", "Fixed auto-lock being blocked when the default floating window was not docked to the edge."),
+                L10n.text("适配iPhone Duo", "Added support for iPhone Duo."),
+                L10n.text("优化一键0.1pt：未开启时点击可直接启动隐藏悬浮窗，已开启时则调整高度；首页、快捷指令及URL入口保持一致，其他兼容模式保留原开启流程", "Improved One-tap 0.1 pt: starts hidden PiP when inactive and adjusts height when active. Home, Shortcuts and URL entries share the same flow; compatibility modes retain their original startup behavior."),
+                L10n.text("精简快捷指令入口，仅保留打开并隐藏悬浮窗", "Simplified shortcut entries to Start & Hide PiP."),
+                L10n.text("优化 上次关闭时间 显示逻辑", "Improved the Last Stopped time display logic."),
+                L10n.text("减少仅PiP模式的音频预加载及后台页面刷新开销，内存紧张时清理未使用的音频和诊断缓存，不销毁悬浮窗", "Reduced silent-audio preloading and background page refresh work in PiP-only mode. Memory warnings trim unused audio and diagnostic caches without destroying PiP."),
+                L10n.text("补充轻量运行记录和系统诊断，便于排查异常中断；关闭调试模式时仍保留有限的低频记录，不强行判断唯一原因", "Added lightweight runtime records and system diagnostics for unexpected interruptions. Limited low-frequency records remain with Debug Mode off; no single termination cause is assumed."),
+                L10n.text("帧率演示的120Hz开关仅改变App前台页面和动画的刷新请求，关闭后按旧正式版请求最高80Hz，不再更改后台悬浮窗的刷新与播放策略；实际帧率仍由系统决定", "The Frame Rate Demo 120 Hz switch changes foreground page and animation refresh requests only. Turning it off requests up to 80 Hz as in earlier releases without changing background PiP refresh or playback policy. Actual frame rate remains system-managed."),
+                L10n.text("新增默认悬浮窗方案升级演示，优化首次显示与重播动画，并同步常见问题说明", "Added a default PiP upgrade demo, improved its initial display and replay, and updated the FAQ."),
+                L10n.text("默认方案优化适用于iOS15-27的VideoCall与仅PiP保活组合；并存、熄屏及高刷效果仍依赖系统、设备与前台App，其他模式保留兼容流程", "The improved default applies to VideoCall with PiP-only keep-alive on iOS 15-27. Coexistence, auto-lock and higher refresh still depend on the system, device and foreground app; other modes retain their compatibility flows.")
+            ]
+        )
+    }
+
+    static var version111Beta3: AppChangelogSection {
+        AppChangelogSection(
+            version: L10n.text("1.1.1beta3（26.10.8）", "1.1.1beta3 (2026.10.8)"),
+            items: [
+                L10n.text("优化首页一键隐藏按钮：未开启时显示一键开启并隐藏，开启后显示当前方案的最小高度操作", "Improved the Home hide button: shows Start & Hide PiP when inactive and the current route's minimum-height action when active."),
+                L10n.text("精简快捷指令入口，仅保留打开并隐藏悬浮窗；已保存的旧指令继续兼容，默认方案与首页按钮保持一致", "Simplified shortcut entries to Start & Hide PiP. Previously saved actions remain compatible; the default route shares the Home button's behavior."),
+                L10n.text("统一App内120Hz开关对前台页面及动画的作用，关闭后不主动请求120Hz，由系统自适应，不改变悬浮窗内容、播放或并存策略", "Unified the in-app 120 Hz switch across foreground pages and animations. Turning it off releases the explicit 120 Hz request to the system without changing PiP content, playback or coexistence policy."),
+                L10n.text("优化默认悬浮窗方案升级演示，修复首次显示和重播时可能闪过结束画面的问题", "Improved the default PiP upgrade demo to prevent a flash of the final frame on first display or replay."),
+                L10n.text("精简升级弹窗底部说明，保留功能亮点及操作按钮", "Simplified the upgrade popup by removing its bottom explanatory text while retaining highlights and action buttons.")
+            ]
+        )
+    }
+
+    static var version111Beta2: AppChangelogSection {
+        AppChangelogSection(
+            version: L10n.text("1.1.1beta2（26.10.7）", "1.1.1beta2 (2026.10.7)"),
+            items: [
+                L10n.text("优化默认悬浮窗方案，改善部分游戏和B站弹幕卡顿，支持与其他画中画并存；需使用仅PiP保活，本次开放iOS15-27实验，当前设备已验证，iOS15-26及长期效果待测试", "Improved default PiP behavior for some games and Bilibili danmaku, with coexistence support. Requires PiP-only keep-alive; this experiment is enabled on iOS 15-27. Tested on the current device, with iOS 15-26 and long-term behavior still pending."),
+                L10n.text("优化一键0.1pt：未开启时直接启动隐藏悬浮窗，已开启时调整高度；首页、快捷指令及URL入口保持一致，其他兼容模式保留原开启流程", "Improved One-tap 0.1 pt: starts hidden PiP when inactive and adjusts height when active. Home, Shortcuts and URL entries share the same flow; compatibility modes retain their original startup behavior."),
+                L10n.text("并存切换改为悬浮窗启动成功后1秒，默认启用并移除两个实验开关；本次缩短时序仍需测试", "Coexistence is attempted 1 second after successful PiP startup, enabled by default with both experiment switches removed. The shorter delay still needs testing."),
+                L10n.text("默认方案内容保持60fps刷新，时钟保留原有白底样式、时间和网速，隐藏帧率显示并停止帧率采样；不另启旧时钟刷新器，隐藏后停止网速采样", "Default-route content stays at 60 fps. The clock retains its original white style, time and network speed, with FPS display and sampling disabled. No second clock driver is started; network sampling stops when hidden."),
+                L10n.text("修复默认方案关闭悬浮窗内容滚动后仍滚动的问题，暂停文字时保留内容刷新，不改变并存时序", "Fixed text continuing to scroll after PiP Text Scrolling was disabled on the default route. Pausing text retains content updates without changing coexistence timing."),
+                L10n.text("对齐首页、快捷指令和URL的开启与隐藏行为，修复低版本启动重试后未隐藏及过渡中隐藏动作丢失，关闭或启动失败时清理待执行动作，已运行时普通开启不改变高度", "Aligned Home, Shortcuts and URL start/hide behavior. Fixed lost hiding during startup and older-iOS retries, cleared queued actions on stop or terminal failure, and preserved height when opening an already active window."),
+                L10n.text("优化 上次关闭时间 显示逻辑", "Improved the Last Stopped time display logic."),
+                L10n.text("减少仅PiP模式的音频预加载及后台页面刷新开销，内存紧张时清理未使用的音频和诊断缓存，不销毁悬浮窗", "Reduced silent-audio preloading and background page refresh work in PiP-only mode. Memory warnings trim unused audio and diagnostic caches without destroying PiP."),
+                L10n.text("补充轻量运行记录和系统诊断，便于排查异常中断；关闭调试模式时仍保留有限的低频记录，不强行判断唯一原因", "Added lightweight runtime records and system diagnostics for unexpected interruptions. Limited low-frequency records remain with Debug Mode off; no single termination cause is assumed."),
+                L10n.text("适配iPhone Duo布局 进行了界面调整", "Adjusted the interface layout for iPhone Duo."),
+                L10n.text("帧率演示的120Hz开关仅改变App前台页面的刷新请求，不再更改后台悬浮窗的刷新与播放策略；实际帧率仍由系统决定", "The Frame Rate Demo 120 Hz switch changes foreground app refresh requests only, without changing background PiP refresh or playback policy. Actual frame rate remains system-managed."),
+                L10n.text("beta兼容实验：将默认VideoCall内容更新与画中画并存路径开放至iOS15-27；需使用仅PiP保活，iOS15-26的启动、高刷、弹幕与熄屏效果待实测，不支持所需系统接口时取消实验启动，其他模式保留原流程", "Beta compatibility experiment: enabled the default VideoCall content-update and PiP coexistence path on iOS 15-27 with PiP-only keep-alive. Startup, higher refresh, danmaku and auto-lock on iOS 15-26 need device testing; startup is canceled if required system interfaces are unsupported. Other modes retain their previous flow.")
+            ]
+        )
+    }
+
+    static var version110Fix: AppChangelogSection {
+        AppChangelogSection(
             version: L10n.text("1.1.0fix（26.8.29）", "1.1.0fix (2026.8.29)"),
             items: [
                 L10n.text("修复 iOS 15-iOS 18 悬浮窗被其他画中画应用挤掉后可能收不到通知的问题", "Fixed PiP conflict alerts sometimes not being delivered after another Picture in Picture app displaced the floating window on iOS 15 through iOS 18."),
@@ -703,9 +757,142 @@ enum AppChangelogCatalog {
     }
 }
 
+// Playback is limited to this visible presentation; the real PiP session is untouched.
+private struct PiPUpgradePreviewState {
+    let startedAt: Date
+    let isRunning: Bool
+    let restingElapsed: TimeInterval
+}
+
+private final class PiPUpgradePreviewPlayback: ObservableObject {
+    @Published private(set) var state = PiPUpgradePreviewState(startedAt: Date(), isRunning: false, restingElapsed: 0)
+    var startedAt: Date { state.startedAt }
+    var isRunning: Bool { state.isRunning }
+    var restingElapsed: TimeInterval { state.restingElapsed }
+    private var finishWorkItem: DispatchWorkItem?
+
+    func play() {
+        finishWorkItem?.cancel()
+        finishWorkItem = nil
+        guard !UIAccessibility.isReduceMotionEnabled,
+              UIApplication.shared.applicationState == .active else {
+            stop()
+            return
+        }
+        // Publish the new playback state once, without briefly showing the final frame.
+        state = PiPUpgradePreviewState(startedAt: Date(), isRunning: true, restingElapsed: 0)
+        let workItem = DispatchWorkItem { [weak self] in self?.stop() }
+        finishWorkItem = workItem
+        DispatchQueue.main.asyncAfter(deadline: .now() + 10.8, execute: workItem)
+    }
+
+    func stop() {
+        finishWorkItem?.cancel()
+        finishWorkItem = nil
+        state = PiPUpgradePreviewState(startedAt: state.startedAt, isRunning: false, restingElapsed: 10.8)
+    }
+
+    deinit { finishWorkItem?.cancel() }
+}
+
+private struct PiPUpgradeTutorialPreview: View {
+    @ObservedObject var playback: PiPUpgradePreviewPlayback
+
+    var body: some View {
+        TimelineView(.animation(minimumInterval: 1.0 / 60.0, paused: !playback.isRunning)) { context in
+            let elapsed = playback.isRunning
+                ? min(10.8, max(0, context.date.timeIntervalSince(playback.startedAt)))
+                : playback.restingElapsed
+            LaunchPiPTutorialStage(elapsed: elapsed, showsCoexistence: true)
+                .frame(maxWidth: 370)
+                .frame(maxWidth: .infinity)
+        }
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(L10n.text(
+            "演示：点击开启、拖向侧边、另一个画中画出现，再一键隐藏；两个悬浮窗继续同时运行。",
+            "Demo: open PiP, dock it, open another PiP, then hide ours. Both windows keep running."
+        ))
+    }
+}
+
+private final class PiPUpgradePreviewView: UIView {
+    private let playback: PiPUpgradePreviewPlayback
+    private let hostingController: UIHostingController<PiPUpgradeTutorialPreview>
+    private var isPresented = false
+
+    init(parent: UIViewController) {
+        let playback = PiPUpgradePreviewPlayback()
+        self.playback = playback
+        hostingController = UIHostingController(rootView: PiPUpgradeTutorialPreview(playback: playback))
+        super.init(frame: .zero)
+        parent.addChild(hostingController)
+        hostingController.view.backgroundColor = .clear
+        addSubview(hostingController.view)
+        hostingController.view.snp.makeConstraints { make in
+            make.edges.equalToSuperview()
+        }
+        hostingController.didMove(toParent: parent)
+        NotificationCenter.default.addObserver(self, selector: #selector(pausePreview), name: UIApplication.willResignActiveNotification, object: nil)
+        NotificationCenter.default.addObserver(self, selector: #selector(resumePreview), name: UIApplication.didBecomeActiveNotification, object: nil)
+        NotificationCenter.default.addObserver(self, selector: #selector(resumePreview), name: UIAccessibility.reduceMotionStatusDidChangeNotification, object: nil)
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
+
+    deinit { NotificationCenter.default.removeObserver(self) }
+
+    func startPreview() {
+        isPresented = true
+        playback.play()
+    }
+
+    func stopPreview() {
+        isPresented = false
+        playback.stop()
+    }
+
+    @objc private func pausePreview() { playback.stop() }
+    @objc private func resumePreview() {
+        if isPresented { playback.play() }
+    }
+    func replayPreview() {
+        if isPresented { playback.play() }
+    }
+}
+
 final class LatestChangelogViewController: UIViewController {
     private let onDismiss: () -> Void
     private let onOpenFullChangelog: () -> Void
+    private var upgradePreview: PiPUpgradePreviewView?
+    private weak var upgradeItems: UIStackView?
+    private weak var upgradeScrollView: UIScrollView?
+    private var upgradeScrollHeight: NSLayoutConstraint?
+
+    override func viewDidLayoutSubviews() {
+        super.viewDidLayoutSubviews()
+        guard let items = upgradeItems, let scrollView = upgradeScrollView,
+              let height = upgradeScrollHeight, scrollView.bounds.width > 0 else { return }
+        let fittedSize = items.systemLayoutSizeFitting(
+            CGSize(width: scrollView.bounds.width, height: UIView.layoutFittingCompressedSize.height),
+            withHorizontalFittingPriority: .required,
+            verticalFittingPriority: .fittingSizeLevel
+        )
+        let contentHeight = ceil(fittedSize.height)
+        if abs(height.constant - contentHeight) > 0.5 {
+            height.constant = contentHeight
+        }
+    }
+
+    override func viewDidAppear(_ animated: Bool) {
+        super.viewDidAppear(animated)
+        upgradePreview?.startPreview()
+    }
+
+    override func viewWillDisappear(_ animated: Bool) {
+        super.viewWillDisappear(animated)
+        upgradePreview?.stopPreview()
+    }
 
     init(onDismiss: @escaping () -> Void, onOpenFullChangelog: @escaping () -> Void) {
         self.onDismiss = onDismiss
@@ -749,42 +936,98 @@ final class LatestChangelogViewController: UIViewController {
         card.addSubview(glassView)
 
         let titleLabel = UILabel()
-        titleLabel.text = L10n.text("本次更新", "What's New")
-        titleLabel.font = .systemFont(ofSize: 26, weight: .black)
+        let showsUpgradePreview = PiPHiddenReferenceMode.supportsSystemMajorVersion(ProcessInfo.processInfo.operatingSystemVersion.majorVersion)
+        titleLabel.text = showsUpgradePreview
+            ? L10n.text("默认悬浮窗方案升级", "A New PiP Experience")
+            : L10n.text("本次更新", "What's New")
+        titleLabel.font = .systemFont(ofSize: showsUpgradePreview ? 22 : 24, weight: .bold)
+        titleLabel.numberOfLines = 0
         titleLabel.textColor = .label
 
         let versionLabel = UILabel()
         versionLabel.text = AppChangelogCatalog.latest.version
-        versionLabel.font = .systemFont(ofSize: UIScreen.main.bounds.height < 700 ? 21 : 23, weight: .bold)
+        versionLabel.font = .systemFont(ofSize: showsUpgradePreview ? 14 : 16, weight: .semibold)
         versionLabel.textColor = .systemBlue
         versionLabel.numberOfLines = 1
 
-        let header = UIStackView(arrangedSubviews: [titleLabel, versionLabel])
+        let titleRow = UIStackView(arrangedSubviews: [titleLabel])
+        titleRow.alignment = .center
+        titleRow.spacing = 10
+        if showsUpgradePreview {
+            let replay = UIButton(type: .system)
+            replay.setImage(UIImage(systemName: "arrow.clockwise"), for: .normal)
+            replay.setPreferredSymbolConfiguration(UIImage.SymbolConfiguration(pointSize: 17, weight: .semibold), forImageIn: .normal)
+            replay.backgroundColor = .tertiarySystemFill
+            replay.layer.cornerRadius = 22
+            replay.accessibilityLabel = L10n.text("重播升级演示", "Replay upgrade preview")
+            replay.addTarget(self, action: #selector(replayUpgrade), for: .touchUpInside)
+            replay.widthAnchor.constraint(equalToConstant: 44).isActive = true
+            replay.heightAnchor.constraint(equalToConstant: 44).isActive = true
+            titleRow.addArrangedSubview(replay)
+        }
+        let header = UIStackView(arrangedSubviews: [titleRow, versionLabel])
         header.axis = .vertical
         header.spacing = 5
         card.addSubview(header)
 
         let items = UIStackView()
         items.axis = .vertical
-        items.spacing = 13
-        for item in AppChangelogCatalog.latest.items {
-            let label = UILabel()
-            label.text = "• \(item)"
-            label.font = .systemFont(ofSize: 15, weight: .semibold)
-            label.textColor = .secondaryLabel
-            label.numberOfLines = 0
-            items.addArrangedSubview(label)
+        items.spacing = showsUpgradePreview ? 10 : 13
+        if showsUpgradePreview {
+            let preview = PiPUpgradePreviewView(parent: self)
+            upgradePreview = preview
+            items.addArrangedSubview(preview)
+            preview.heightAnchor.constraint(equalToConstant: 310).isActive = true
+            let highlights = [
+                ("pip", L10n.text("画中画并存", "Picture in Picture, together"), L10n.text("其他画中画开启时，我们的继续运行", "Keep running alongside another PiP window")),
+                ("eye.slash", L10n.text("一键隐藏启动", "Start hidden in one tap"), L10n.text("无需先打开，再调整至0.1pt", "Start directly at 0.1 pt")),
+                ("waveform.path", L10n.text("弹幕与游戏更顺畅", "Smoother danmaku and games"), L10n.text("改善部分锁60场景的卡顿", "Improved behavior in some 60 Hz-capped apps"))
+            ]
+            for (symbol, title, detail) in highlights {
+                let icon = UIImageView(image: UIImage(systemName: symbol))
+                icon.tintColor = .systemBlue
+                icon.contentMode = .scaleAspectFit
+                icon.widthAnchor.constraint(equalToConstant: 26).isActive = true
+                icon.heightAnchor.constraint(equalToConstant: 26).isActive = true
+                let heading = UILabel()
+                heading.text = title
+                heading.font = .systemFont(ofSize: 15, weight: .semibold)
+                heading.numberOfLines = 0
+                let subtitle = UILabel()
+                subtitle.text = detail
+                subtitle.font = .systemFont(ofSize: 12)
+                subtitle.textColor = .secondaryLabel
+                subtitle.numberOfLines = 0
+                let text = UIStackView(arrangedSubviews: [heading, subtitle])
+                text.axis = .vertical
+                text.spacing = 3
+                let row = UIStackView(arrangedSubviews: [icon, text])
+                row.alignment = .center
+                row.spacing = 12
+                items.addArrangedSubview(row)
+            }
+        } else {
+            for (index, item) in AppChangelogCatalog.latest.items.enumerated() {
+                let label = UILabel()
+                label.text = index < 3 ? "* \(item)" : item
+                label.font = .systemFont(ofSize: 15, weight: .semibold)
+                label.textColor = .secondaryLabel
+                label.numberOfLines = 0
+                items.addArrangedSubview(label)
+            }
         }
 
         let scrollView = UIScrollView()
-        scrollView.alwaysBounceVertical = true
+        scrollView.alwaysBounceVertical = !showsUpgradePreview
         scrollView.showsVerticalScrollIndicator = true
         scrollView.addSubview(items)
         card.addSubview(scrollView)
 
         let fullLogButton = UIButton(configuration: .bordered())
         var fullLogConfiguration = fullLogButton.configuration
-        fullLogConfiguration?.title = L10n.text("查看完整更新日志", "View Full Changelog")
+        fullLogConfiguration?.title = showsUpgradePreview
+            ? L10n.text("完整更新日志", "Full Changelog")
+            : L10n.text("查看完整更新日志", "View Full Changelog")
         fullLogConfiguration?.baseForegroundColor = .systemBlue
         fullLogConfiguration?.cornerStyle = .capsule
         fullLogButton.configuration = fullLogConfiguration
@@ -792,7 +1035,7 @@ final class LatestChangelogViewController: UIViewController {
 
         let acknowledgeButton = UIButton(configuration: .filled())
         var acknowledgeConfiguration = acknowledgeButton.configuration
-        acknowledgeConfiguration?.title = L10n.text("我知道了", "Got It")
+        acknowledgeConfiguration?.title = L10n.text("开始体验", "Get Started")
         acknowledgeConfiguration?.baseBackgroundColor = .systemBlue
         acknowledgeConfiguration?.baseForegroundColor = .white
         acknowledgeConfiguration?.cornerStyle = .capsule
@@ -800,29 +1043,46 @@ final class LatestChangelogViewController: UIViewController {
         acknowledgeButton.addTarget(self, action: #selector(dismissTapped), for: .touchUpInside)
 
         let buttons = UIStackView(arrangedSubviews: [fullLogButton, acknowledgeButton])
-        buttons.axis = .vertical
+        buttons.axis = showsUpgradePreview ? .horizontal : .vertical
+        buttons.distribution = showsUpgradePreview ? .fillEqually : .fill
         buttons.spacing = 10
         card.addSubview(buttons)
 
         [card, glassView, header, scrollView, items, buttons].forEach { $0.translatesAutoresizingMaskIntoConstraints = false }
         let safe = view.safeAreaLayoutGuide
-        let cardHeight = UIScreen.main.bounds.height < 700 ? 0.72 : 0.64
+        if showsUpgradePreview {
+            upgradeItems = items
+            upgradeScrollView = scrollView
+            // Fit the contents unless the safe-area cap requires a scrolling viewport.
+            let contentHeight = scrollView.heightAnchor.constraint(equalToConstant: 310)
+            contentHeight.priority = .defaultHigh
+            contentHeight.isActive = true
+            upgradeScrollHeight = contentHeight
+        } else {
+            let preferredHeight = card.heightAnchor.constraint(equalToConstant: 540)
+            preferredHeight.priority = .defaultHigh
+            preferredHeight.isActive = true
+        }
+        let preferredWidth = card.widthAnchor.constraint(equalTo: safe.widthAnchor, constant: -44)
+        preferredWidth.priority = .defaultHigh
         NSLayoutConstraint.activate([
-            card.leadingAnchor.constraint(equalTo: safe.leadingAnchor, constant: 22),
-            card.trailingAnchor.constraint(equalTo: safe.trailingAnchor, constant: -22),
-            card.centerYAnchor.constraint(equalTo: safe.centerYAnchor),
-            card.heightAnchor.constraint(equalTo: safe.heightAnchor, multiplier: cardHeight),
+            card.centerXAnchor.constraint(equalTo: safe.centerXAnchor),
+            preferredWidth,
+            card.widthAnchor.constraint(lessThanOrEqualToConstant: 520),
+            card.widthAnchor.constraint(lessThanOrEqualTo: safe.widthAnchor, constant: -32),
+            card.centerYAnchor.constraint(equalTo: safe.centerYAnchor, constant: showsUpgradePreview ? -8 : 0),
+            card.heightAnchor.constraint(lessThanOrEqualTo: safe.heightAnchor, constant: -24),
             glassView.leadingAnchor.constraint(equalTo: card.leadingAnchor),
             glassView.trailingAnchor.constraint(equalTo: card.trailingAnchor),
             glassView.topAnchor.constraint(equalTo: card.topAnchor),
             glassView.bottomAnchor.constraint(equalTo: card.bottomAnchor),
             header.leadingAnchor.constraint(equalTo: card.leadingAnchor, constant: 24),
             header.trailingAnchor.constraint(equalTo: card.trailingAnchor, constant: -24),
-            header.topAnchor.constraint(equalTo: card.topAnchor, constant: 22),
+            header.topAnchor.constraint(equalTo: card.topAnchor, constant: showsUpgradePreview ? 18 : 22),
             scrollView.leadingAnchor.constraint(equalTo: card.leadingAnchor, constant: 24),
             scrollView.trailingAnchor.constraint(equalTo: card.trailingAnchor, constant: -24),
-            scrollView.topAnchor.constraint(equalTo: header.bottomAnchor, constant: 16),
-            scrollView.bottomAnchor.constraint(equalTo: buttons.topAnchor, constant: -16),
+            scrollView.topAnchor.constraint(equalTo: header.bottomAnchor, constant: showsUpgradePreview ? 10 : 16),
+            scrollView.bottomAnchor.constraint(equalTo: buttons.topAnchor, constant: showsUpgradePreview ? -12 : -16),
             items.leadingAnchor.constraint(equalTo: scrollView.contentLayoutGuide.leadingAnchor),
             items.trailingAnchor.constraint(equalTo: scrollView.contentLayoutGuide.trailingAnchor),
             items.topAnchor.constraint(equalTo: scrollView.contentLayoutGuide.topAnchor),
@@ -830,7 +1090,7 @@ final class LatestChangelogViewController: UIViewController {
             items.widthAnchor.constraint(equalTo: scrollView.frameLayoutGuide.widthAnchor),
             buttons.leadingAnchor.constraint(equalTo: card.leadingAnchor, constant: 24),
             buttons.trailingAnchor.constraint(equalTo: card.trailingAnchor, constant: -24),
-            buttons.bottomAnchor.constraint(equalTo: card.bottomAnchor, constant: -20),
+            buttons.bottomAnchor.constraint(equalTo: card.bottomAnchor, constant: showsUpgradePreview ? -16 : -20),
             fullLogButton.heightAnchor.constraint(equalToConstant: 44),
             acknowledgeButton.heightAnchor.constraint(equalToConstant: 44)
         ])
@@ -842,6 +1102,10 @@ final class LatestChangelogViewController: UIViewController {
 
     @objc private func fullLogTapped() {
         onOpenFullChangelog()
+    }
+
+    @objc private func replayUpgrade() {
+        upgradePreview?.replayPreview()
     }
 }
 
@@ -858,7 +1122,8 @@ final class ChangelogViewController: UIViewController {
         titleLabel.numberOfLines = 1
 
         let stackView = UIStackView(arrangedSubviews: [
-            makeSection(section: AppChangelogCatalog.latest),
+            makeSection(section: AppChangelogCatalog.latest, showsAsterisks: true),
+            makeSection(section: AppChangelogCatalog.version110Fix),
             makeSection(section: AppChangelogCatalog.version110),
             makeSection(
                 version: L10n.text("1.0.9 （26.7.8）", "1.0.9 (2026.7.8)"),
@@ -966,21 +1231,28 @@ final class ChangelogViewController: UIViewController {
         scrollView.addSubview(stackView)
 
         titleLabel.snp.makeConstraints { make in
-            make.leading.trailing.equalTo(contentView.safeAreaLayoutGuide).inset(24)
+            make.leading.trailing.equalTo(contentView).inset(24)
             make.top.equalTo(contentView.safeAreaLayoutGuide).offset(24)
         }
         scrollView.snp.makeConstraints { make in
-            make.leading.trailing.bottom.equalTo(contentView.safeAreaLayoutGuide)
+            make.leading.trailing.equalTo(contentView)
+            make.bottom.equalTo(contentView.safeAreaLayoutGuide)
             make.top.equalTo(titleLabel.snp.bottom).offset(18)
         }
+        // The sheet already provides horizontal clearance from Duo's trailing controls.
+        scrollView.contentInsetAdjustmentBehavior = .never
         stackView.snp.makeConstraints { make in
-            make.leading.trailing.equalTo(scrollView.frameLayoutGuide).inset(24)
+            make.leading.trailing.equalTo(scrollView.contentLayoutGuide).inset(24)
             make.top.bottom.equalTo(scrollView.contentLayoutGuide).inset(6)
+            make.width.equalTo(scrollView.frameLayoutGuide).offset(-48)
         }
     }
 
-    private func makeSection(section: AppChangelogSection) -> UIView {
-        makeSection(version: section.version, items: section.items)
+    private func makeSection(section: AppChangelogSection, showsAsterisks: Bool = false) -> UIView {
+        let items = showsAsterisks ? section.items.enumerated().map { index, item in
+            index < 3 ? "* \(item)" : item
+        } : section.items
+        return makeSection(version: section.version, items: items)
     }
 
     private func makeSection(version: String, items: [String]) -> UIView {
@@ -996,8 +1268,8 @@ final class ChangelogViewController: UIViewController {
 
         for item in items {
             let label = UILabel()
-            label.text = item
             label.font = .systemFont(ofSize: 16, weight: .semibold)
+            label.attributedText = PiPRouteDescriptions.attributedCompatibilityText(item, font: label.font)
             label.textColor = .secondaryLabel
             label.numberOfLines = 0
             itemStack.addArrangedSubview(label)
@@ -1306,48 +1578,53 @@ private final class FAQViewController: UIViewController {
 
         let stackView = UIStackView(arrangedSubviews: [
             makeQuestion(
-                question: L10n.text("1.这个APP的作用是什么？", "1. What does this app do?"),
-                answer: L10n.text("通过将悬浮窗挂在侧面，解锁系统的1-120hz自适应刷新率，而非1-80hz，可以使流畅度得到提升，跟悬浮时钟是一个效果，同时增加了保活（实测挂一周都不会掉后台）和隐藏悬浮窗功能", "It docks a PiP floating window to the screen edge to unlock the system's 1-120 Hz adaptive refresh range instead of 1-80 Hz, improving smoothness. It also adds background keep-alive and hidden PiP support.")
+                question: L10n.text("1. 这个 App 的作用是什么？", "1. What does this app do?"),
+                answer: L10n.text("通过将悬浮窗挂在侧面，解锁系统的1-120hz自适应刷新率，而非1-80hz，可以使流畅度得到提升，跟悬浮时钟是一个效果，同时增加了保活（实测挂一周都不会掉后台）和隐藏悬浮窗功能以及悬浮窗保护。", "Docking the floating window to the screen edge unlocks the system's 1-120 Hz adaptive refresh range instead of 1-80 Hz for smoother scrolling, with the same effect as Floating Clock. It also adds background keep-alive (tested for a week without stopping), fully hidden PiP and floating-window protection.")
             ),
             makeQuestion(
-                question: L10n.text("2.生效后是一直120hz吗，会不会很耗电，怎么判断是否生效呢", "2. Does it stay at 120 Hz all the time?"),
-                answer: L10n.text("滑动的时候最高120hz，静止的时候还是1hz。打开后，iOS的系统设置页面上下滑动自行观察。", "No. It can reach 120 Hz while scrolling, and still drops very low while idle. Open it and scroll in iOS Settings to observe the difference.")
+                question: L10n.text("2. 生效后是一直 120Hz 吗，会不会很耗电，怎么判断是否生效？", "2. Does it stay at 120 Hz, use more power, and how can I verify it?"),
+                answer: L10n.text("滑动的时候最高120hz，静止的时候还是1hz。打开后，iOS的系统设置页面上下滑动自行观察。", "It reaches up to 120 Hz while scrolling and remains at 1 Hz when idle. Enable it, then scroll in iOS Settings to observe the difference.")
             ),
             makeQuestion(
-                question: L10n.text("3.60hz的手机和锁60hz的APP能生效吗", "3. Does it work on 60 Hz devices or apps locked to 60 Hz?"),
-                answer: L10n.text("不行，只对锁定了1-80hz的APP生效，例如微博、b站、系统设置和其他系统应用等。腾讯全家桶和阿里全家桶均已自主适配120hz", "No. It mainly helps apps limited to 1-80 Hz, such as some system apps and apps like Weibo or Bilibili. Apps already adapted to 120 Hz do not need it.")
+                question: L10n.text("3. 60Hz 的手机和锁 60Hz 的 App 能生效吗？", "3. Does it work on 60 Hz devices or apps locked to 60 Hz?"),
+                answer: L10n.text("不行，只对锁定了1-80hz的APP生效，例如微博、b站、系统设置和其他系统应用等。腾讯全家桶和阿里全家桶均已自主适配120hz", "No. It only helps apps limited to 1-80 Hz, such as Weibo, Bilibili, Settings and other system apps. Tencent and Alibaba apps have already adopted 120 Hz themselves.")
             ),
             makeQuestion(
-                question: L10n.text("4.帧率演示页面是干嘛的", "4. What is the Frame Rate Demo page for?"),
-                answer: L10n.text("可通过该页面的开关控制来对比80hz和120hz的区别，本app内所有页面帧率以及悬浮窗帧率受到该开关控制", "It lets you compare 80 Hz and 120 Hz. The switch affects the app pages and the floating window refresh behavior.")
+                question: L10n.text("4. 帧率演示页面是干嘛的？", "4. What is the Frame Rate Demo page for?"),
+                answer: L10n.text("可通过该页面的开关和动画对比 80Hz 与 120Hz。开关仅改变 App 前台页面的刷新请求，不改变后台悬浮窗的刷新或播放策略；悬浮窗运行时系统仍可能保持 120Hz。实际刷新率由设备与系统决定。", "Use the switch and animations to compare 80 Hz and 120 Hz. The switch changes only foreground app refresh requests, not background PiP refresh or playback policy. The system may still maintain 120 Hz while PiP is running. The device and system determine the actual refresh rate.")
             ),
             makeQuestion(
-                question: L10n.text("5.后台能一直保活吗", "5. Can it stay alive in the background?"),
-                answer: L10n.text("可以，实测挂几天后台都不会掉，除非因为内存不足或者被其他带有画中画功能的APP挤掉了悬浮窗，需要重新打开，例如短视频APP（可以去自行关掉画中画功能）", "In testing, it can stay alive for days. It may still stop if memory is low or another PiP app pushes it away, such as some short-video apps.")
+                question: L10n.text("5. 后台能一直保活吗？", "5. Can it stay alive in the background?"),
+                answer: L10n.text("可以，实测挂几天后台都不会掉，除非因为内存不足或者被其他带有画中画功能的APP挤掉了悬浮窗，需要重新打开，例如短视频APP（可以去自行关掉画中画功能）\n默认 VideoCall 与仅 PiP 保活组合已加入画中画并存；仍不保证所有 App、设备或长时间运行都不被中断。App 被系统终止后不能自动重启悬浮窗。\n其他兼容流程被挤掉后仍需重新开启。", "Yes, tests have kept it running in the background for days, unless low memory or another PiP-enabled app displaces it and requires a restart, such as short-video apps (their PiP feature can be disabled).\nVideoCall with PiP-only keep-alive now supports PiP coexistence. It is still not guaranteed for every app, device or duration, and PiP cannot restart itself after the app is terminated by the system.\nIf displaced with other compatibility flows, restart PiP."),
+                obsoletePassages: [L10n.text("除非因为内存不足或者被其他带有画中画功能的APP挤掉了悬浮窗，需要重新打开，例如短视频APP（可以去自行关掉画中画功能）", "unless low memory or another PiP-enabled app displaces it and requires a restart, such as short-video apps (their PiP feature can be disabled).")]
             ),
             makeQuestion(
-                question: L10n.text("6.停止/启用滚动悬浮窗有什么用", "6. What does PiP text scrolling do?"),
-                answer: L10n.text("字面意思，停止悬浮窗的文本滚动，不影响120hz的解锁", "It only stops or starts the scrolling text inside the floating window. It does not affect 120 Hz unlocking.")
+                question: L10n.text("6. 停止/启用滚动悬浮窗有什么用？", "6. What does PiP text scrolling do?"),
+                answer: L10n.text("字面意思，停止悬浮窗的文本滚动，不影响120hz的解锁", "It simply stops the scrolling text inside the floating window, without affecting 120 Hz unlocking.")
             ),
             makeQuestion(
-                question: L10n.text("7.怎么完全隐藏悬浮窗", "7. How do I fully hide the floating window?"),
-                answer: L10n.text("点击启用悬浮窗，拖至侧边吸附后将悬浮窗高度调节至0.1pt即可", "Enable the floating window, dock it to the edge, then set the PiP height to 0.1 pt.")
+                question: L10n.text("7. 怎么完全隐藏悬浮窗？", "7. How do I fully hide the floating window?"),
+                answer: L10n.text("使用默认 VideoCall 与仅 PiP 保活时，未开启可点击“一键开启并隐藏”，直接以 0.1pt 启动；已开启则点击“一键 0.1pt”调整高度。\n其他保活策略建议先开启、拖到侧边再缩小。PlayerLayer 最低 1pt，不能完全隐藏。\n快捷指令需先在更多设置中开启并确认：iOS 26 及以上可使用原生动作，iOS 15–25 可手动导入；控制中心添加快捷指令需 iOS 18 及以上。", "With VideoCall and PiP-only keep-alive, tap Start & Hide PiP while inactive to start at 0.1 pt, or tap One-tap 0.1 pt when active to adjust the height.\nWith other keep-alive policies, open and dock before shrinking. PlayerLayer has a 1 pt minimum and cannot be fully hidden.\nEnable and confirm Shortcuts in More first: native actions are available on iOS 26+, manual import on iOS 15-25, and Control Center shortcut placement on iOS 18+.")
             ),
             makeQuestion(
-                question: L10n.text("8.新旧保活模式有什么区别哪个更好", "8. Which keep-alive mode is better?"),
-                answer: L10n.text("经过实测后更推荐新模式仅PiP保活方案作为默认方案，更为省电，跟老方案音频强保活对比保活率一致实测没有出现杀后台，并且避免了可能出现的部分用户反馈的音频冲突问题，当然也保留了选择空间，可自行前往调试模式切换", "The low-power PiP-only mode is recommended. In testing it keeps similar background stability while using less power and avoiding possible audio conflicts. You can still switch modes in Debug Mode.")
+                question: L10n.text("8. 新旧保活模式有什么区别，哪个更好？", "8. How do the keep-alive modes differ, and which is better?"),
+                answer: L10n.text("经过实测后更推荐新模式仅PiP保活方案作为默认方案，更为省电，跟老方案音频强保活对比保活率一致实测没有出现杀后台，并且避免了可能出现的部分用户反馈的音频冲突问题，当然也保留了选择空间，可自行前往调试模式切换", "Based on testing, the newer PiP-only mode is recommended as the default. It uses less power, matched the old Audio Keep-alive mode's background stability without termination in testing, and avoids possible audio conflicts reported by some users. Both choices remain available in Debug Mode.")
             ),
             makeQuestion(
-                question: L10n.text("9.首页的底层切换按钮是干嘛的", "9. What does the Engine Switch button do?"),
-                answer: L10n.text("因接到部分用户反馈，默认方案VideoCall虽然可以实现解锁120并完全隐藏，但是底层会因强拉120而导致部分锁60hz的游戏以及60hz的弹幕因帧率不同步而突发掉帧，因此提供底层切换按钮，切换新方案PlayerLayer后可以解决这个问题，但是因底层限制无法完全隐藏，即最低1pt，视觉上会有一条细线，可供自由选择", "Some users reported that although the default VideoCall route can unlock 120 Hz and fully hide the floating window, its lower-level forced 120 Hz behavior may cause sudden stutters in some games locked to 60 Hz or in 60 Hz danmaku because the frame rates are not synchronized. The Engine Switch provides an alternative. Switching to the new PlayerLayer route can solve this issue, but due to lower-level limits it cannot fully hide; the minimum is 1 pt, so a thin line may remain visible. Choose whichever route works best for you.")
+                question: L10n.text("9. 首页的底层切换按钮是干嘛的？", "9. What does the Engine Switch button do?"),
+                answer: legacyEngineAnswer + L10n.text("1.1.1版已修复，不再推荐PlayerLayer方案。", "Fixed in version 1.1.1. PlayerLayer is no longer recommended."),
+                obsoletePassages: [legacyEngineAnswer],
+                obsoleteQuestion: true
             ),
             makeQuestion(
-                question: L10n.text("10.为什么我发现有时候无法自动熄屏了", "10. Why does auto-lock sometimes stop working?"),
-                answer: L10n.text("因为隐藏悬浮窗的时候没有把悬浮窗拖到侧面，屏幕上会一直有活动阻止熄屏，请拖动到侧面后再将高度调节至0.1pt", "This can happen if the floating window is hidden before it is docked to the side. Activity may remain on screen and prevent auto-lock. Drag it to the edge first, then adjust the height to 0.1 pt.")
+                question: L10n.text("10. 为什么我发现有时候无法自动熄屏了？", "10. Why does auto-lock sometimes stop working?"),
+                answer: L10n.text("因为隐藏悬浮窗的时候没有把悬浮窗拖到侧面，屏幕上会一直有活动阻止熄屏，请拖动到侧面后再将高度调节至0.1pt\n本版默认 VideoCall 与仅 PiP 保活已优化直接隐藏和自动熄屏行为。若仍出现问题，请恢复可见高度、拖到侧边后再隐藏。\n其他保活策略和 PlayerLayer 仍建议先吸附再缩小。", "Hiding the floating window before docking it to the side leaves activity on screen that prevents auto-lock. Dock it first, then set its height to 0.1 pt.\nThis version improves direct hiding and auto-lock with VideoCall and PiP-only keep-alive. If it persists, restore visible height, dock PiP, then hide it again.\nWith other policies or PlayerLayer, dock before shrinking."),
+                obsoletePassages: [L10n.text("因为隐藏悬浮窗的时候没有把悬浮窗拖到侧面，屏幕上会一直有活动阻止熄屏，请拖动到侧面后再将高度调节至0.1pt", "Hiding the floating window before docking it to the side leaves activity on screen that prevents auto-lock. Dock it first, then set its height to 0.1 pt.")]
             ),
             makeQuestion(
-                question: L10n.text("11.我想反馈App的问题或者有可以优化的地方怎么办", "11. How can I report a problem or suggest an improvement?"),
-                answer: L10n.text("欢迎在GitHub项目地址中提问，或在酷安评论区留言/私信", "You are welcome to open an issue on the GitHub project page, or leave a comment or send a private message on Coolapk.")
+                question: L10n.text("11. 我想反馈 App 的问题或者有可以优化的地方怎么办？", "11. How can I report a problem or suggest an improvement?"),
+                answer: L10n.text("欢迎在 GitHub 项目地址中提问，或在酷安评论区留言/私信。\n建议附上 App 版本、系统版本、设备型号、所用底层与保活模式、复现步骤及调试日志。", "You are welcome to open an issue on the GitHub project page, or comment or send a private message on Coolapk.\nInclude the app version, iOS version, device, engine and keep-alive mode, reproduction steps and diagnostic logs."),
+                issueLinkText: L10n.text("GitHub 项目地址", "GitHub project page")
             )
         ])
         stackView.axis = .vertical
@@ -1360,33 +1637,74 @@ private final class FAQViewController: UIViewController {
         scrollView.addSubview(stackView)
 
         titleLabel.snp.makeConstraints { make in
-            make.leading.trailing.equalTo(contentView.safeAreaLayoutGuide).inset(24)
+            make.leading.trailing.equalTo(contentView).inset(24)
             make.top.equalTo(contentView.safeAreaLayoutGuide).offset(24)
         }
         scrollView.snp.makeConstraints { make in
-            make.leading.trailing.bottom.equalTo(contentView.safeAreaLayoutGuide)
+            make.leading.trailing.equalTo(contentView)
+            make.bottom.equalTo(contentView.safeAreaLayoutGuide)
             make.top.equalTo(titleLabel.snp.bottom).offset(18)
         }
+        scrollView.contentInsetAdjustmentBehavior = .never
         stackView.snp.makeConstraints { make in
             make.leading.trailing.equalTo(scrollView.frameLayoutGuide).inset(24)
             make.top.bottom.equalTo(scrollView.contentLayoutGuide).inset(6)
         }
     }
 
-    private func makeQuestion(question: String, answer: String) -> UIView {
+    private var legacyEngineAnswer: String {
+        L10n.text("因接到部分用户反馈，默认方案VideoCall虽然可以实现解锁120并完全隐藏，但是底层会因强拉120而导致部分锁60hz的游戏以及60hz的弹幕因帧率不同步而突发掉帧，因此提供底层切换按钮，切换新方案PlayerLayer后可以解决这个问题，但是因底层限制无法完全隐藏，即最低1pt，视觉上会有一条细线，可供自由选择", "Some users reported that although the default VideoCall route can unlock 120 Hz and fully hide the floating window, its lower-level forced 120 Hz behavior may cause sudden stutters in some games locked to 60 Hz or in 60 Hz danmaku because the frame rates are not synchronized. The Engine Switch provides an alternative. Switching to the new PlayerLayer route can solve this issue, but due to lower-level limits it cannot fully hide; the minimum is 1 pt, so a thin line may remain visible. Choose whichever route works best for you. ")
+    }
+
+    private func makeQuestion(question: String, answer: String, obsoletePassages: [String] = [], obsoleteQuestion: Bool = false, issueLinkText: String? = nil) -> UIView {
         let questionLabel = UILabel()
         questionLabel.text = question
         questionLabel.font = .systemFont(ofSize: 18, weight: .black)
         questionLabel.textColor = .label
         questionLabel.numberOfLines = 0
+        if obsoleteQuestion {
+            questionLabel.attributedText = NSAttributedString(string: question, attributes: [
+                .font: UIFont.systemFont(ofSize: 18, weight: .black),
+                .foregroundColor: UIColor.label,
+                .strikethroughStyle: NSUnderlineStyle.single.rawValue
+            ])
+        }
 
-        let answerLabel = UILabel()
-        answerLabel.text = answer
-        answerLabel.font = .systemFont(ofSize: 16, weight: .semibold)
-        answerLabel.textColor = .secondaryLabel
-        answerLabel.numberOfLines = 0
+        let attributedAnswer = NSMutableAttributedString(attributedString:
+            PiPRouteDescriptions.attributedCompatibilityText(answer, font: .systemFont(ofSize: 16, weight: .semibold)))
+        for passage in obsoletePassages {
+            let range = (answer as NSString).range(of: passage)
+            if range.location != NSNotFound {
+                attributedAnswer.addAttribute(.strikethroughStyle, value: NSUnderlineStyle.single.rawValue, range: range)
+            }
+        }
 
-        let stack = UIStackView(arrangedSubviews: [questionLabel, answerLabel])
+        let answerView: UIView
+        if let issueLinkText,
+           let url = URL(string: "https://github.com/Yoroin/GlobalRefresh-PiP/issues") {
+            let range = (answer as NSString).range(of: issueLinkText)
+            if range.location != NSNotFound {
+                attributedAnswer.addAttribute(.link, value: url, range: range)
+            }
+            let textView = UITextView()
+            textView.backgroundColor = .clear
+            textView.isEditable = false
+            textView.isScrollEnabled = false
+            textView.textContainerInset = .zero
+            textView.textContainer.lineFragmentPadding = 0
+            textView.attributedText = attributedAnswer
+            textView.linkTextAttributes = [.foregroundColor: UIColor.systemBlue]
+            answerView = textView
+        } else {
+            let answerLabel = UILabel()
+            answerLabel.font = .systemFont(ofSize: 16, weight: .semibold)
+            answerLabel.attributedText = attributedAnswer
+            answerLabel.textColor = .secondaryLabel
+            answerLabel.numberOfLines = 0
+            answerView = answerLabel
+        }
+
+        let stack = UIStackView(arrangedSubviews: [questionLabel, answerView])
         stack.axis = .vertical
         stack.spacing = 8
         return stack

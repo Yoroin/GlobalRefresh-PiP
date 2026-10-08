@@ -20,6 +20,8 @@ private struct AdaptiveLayoutMetrics {
     var isNarrow: Bool { shortSide <= 340 }
     var isCompactHeight: Bool { longSide <= 620 }
     var isCompact: Bool { isNarrow || isCompactHeight }
+    var isWideHome: Bool { size.width >= 600 }
+    var isShortHome: Bool { size.width < 600 && size.height <= 720 }
 
     var headerTitleSize: CGFloat { isCompact ? 30 : 34 }
     var headerHorizontalPadding: CGFloat { isNarrow ? 16 : 20 }
@@ -30,7 +32,7 @@ private struct AdaptiveLayoutMetrics {
     var homeActionSpacing: CGFloat { isCompact ? 8 : 14 }
     var homeActionHorizontalPadding: CGFloat { isNarrow ? 12 : 20 }
     var homeContainerHorizontalPadding: CGFloat { isNarrow ? 4 : 8 }
-    var homePrimaryBottomPadding: CGFloat { isCompact ? 16 : 40 }
+    var homePrimaryBottomPadding: CGFloat { isShortHome ? 12 : (isCompact ? 16 : 40) }
     var homePrimaryHorizontalPadding: CGFloat { isNarrow ? 18 : 28 }
     var homeKeepAliveInfoTop: CGFloat { isCompact ? 98 : 116 }
     var homeSettingsTop: CGFloat { isCompact ? 66 : 82 }
@@ -84,6 +86,8 @@ struct PageHeaderTitle: View {
 struct PiPHomeView: View {
     @Binding var isPiPActive: Bool
     @Binding var isPiPStatusInfoVisible: Bool
+    @Environment(\.verticalSizeClass) private var verticalSizeClass
+    @State private var viewportSize: CGSize = .zero
     @State private var isSettingsVisible = false
     @State private var isKeepAliveInfoVisible = false
     @State private var isNotificationFrequencyInfoVisible = false
@@ -148,6 +152,28 @@ struct PiPHomeView: View {
     let onSetContentExtremeModeEnabled: (Bool) -> Void
 
     var body: some View {
+        ZStack {
+            Color(UIColor.systemGroupedBackground).ignoresSafeArea()
+            GeometryReader { proxy in
+                Group {
+                    if verticalSizeClass == .compact {
+                        ScrollView(.vertical, showsIndicators: true) {
+                            homePageContent
+                                .frame(minHeight: proxy.size.height)
+                                .padding(.bottom, 72)
+                        }
+                        .background(Color.clear)
+                    } else {
+                        homePageContent
+                    }
+                }
+                .onAppear { viewportSize = proxy.size }
+                .onChange(of: proxy.size) { viewportSize = $0 }
+            }
+        }
+    }
+
+    private var homePageContent: some View {
         ZStack(alignment: .topTrailing) {
             Color(UIColor.systemGroupedBackground)
                 .edgesIgnoringSafeArea(.all)
@@ -160,12 +186,6 @@ struct PiPHomeView: View {
                     dismissEngineRouteInfoIfNeeded()
                     dismissSettingsIfNeeded()
                 }
-
-            if L10n.isBetaBuild {
-                homeTestingWatermark
-                    .allowsHitTesting(false)
-                    .accessibilityHidden(true)
-            }
 
 	            VStack(alignment: .leading, spacing: layout.homeOuterSpacing) {
 	                homeHeader
@@ -191,7 +211,7 @@ struct PiPHomeView: View {
                     StartAndHidePiPButton(title: startAndHidePiPButtonTitle) {
                         runAfterDismissingSettings(onStartAndHidePiP)
                     }
-                    .offset(y: -5)
+                    .offset(y: layout.isShortHome ? 0 : -5)
 
                     PrimaryPiPButton(title: isPiPActive ? L10n.text("关闭悬浮窗", "Stop PiP") : L10n.text("开启悬浮窗", "Enable PiP")) {
                         runAfterDismissingSettings(onTogglePiP)
@@ -199,7 +219,7 @@ struct PiPHomeView: View {
                 }
                     .frame(maxWidth: 286)
                     .frame(maxWidth: .infinity, alignment: .center)
-                    .offset(y: -5)
+                    .offset(y: layout.isShortHome ? 16 : -5)
                     .padding(.horizontal, layout.homePrimaryHorizontalPadding)
                     .padding(.bottom, layout.homePrimaryBottomPadding)
             }
@@ -226,7 +246,7 @@ struct PiPHomeView: View {
 
             if isPiPStatusInfoVisible {
                 pipStatusInfoPopover
-                    .frame(maxWidth: .infinity, alignment: .center)
+                    .frame(maxWidth: .infinity, alignment: layout.isWideHome ? .leading : .center)
                     .padding(.top, layout.homePiPStatusInfoTop)
                     .padding(.horizontal, layout.headerHorizontalPadding)
                     .transition(.opacity)
@@ -300,10 +320,7 @@ struct PiPHomeView: View {
                 DiagnosticsRuntimeState.recordUserAction("确认启用快捷指令功能")
             }
         } message: {
-            Text(L10n.text(
-                "“打开并一键0.1pt”虽然方便，但可能在悬浮窗尚未吸附到屏幕侧边时直接隐藏，从而持续阻止自动熄屏。建议先打开悬浮窗并拖到侧边吸附，再执行“一键0.1pt”。确认后才会开放快捷指令安装入口并允许相关操作。",
-                "Open and One-tap 0.1 pt can hide PiP before it docks to the screen edge, which may keep auto-lock from working. Open PiP, dock it to the side, then use One-tap 0.1 pt. Shortcut setup and actions become available only after you confirm."
-            ))
+            Text(PiPRouteDescriptions.shortcutCautionText)
         }
     }
 
@@ -423,53 +440,6 @@ struct PiPHomeView: View {
         .padding(.vertical, layout.isCompact ? 6 : 7)
         .frame(maxWidth: layout.isNarrow ? 246 : 268, minHeight: 30, alignment: .center)
         .background(homeStatusLabelBackground)
-    }
-
-    private var homeTestingWatermark: some View {
-        GeometryReader { proxy in
-            let rows = watermarkRows(for: proxy.size)
-            let columns = watermarkColumns(for: proxy.size)
-            ZStack {
-                ForEach(0..<rows, id: \.self) { row in
-                    ForEach(0..<columns, id: \.self) { column in
-                        Text(L10n.text("测试用", "TEST"))
-                            .font(.system(size: watermarkFontSize(for: proxy.size), weight: .black, design: .rounded))
-                            .foregroundColor(Color(UIColor.systemRed).opacity(0.14))
-                            .lineLimit(1)
-                            .rotationEffect(.degrees(-24))
-                            .position(
-                                x: watermarkX(column: column, row: row, columns: columns, size: proxy.size),
-                                y: watermarkY(row: row, rows: rows, size: proxy.size)
-                            )
-                    }
-                }
-            }
-            .frame(width: proxy.size.width, height: proxy.size.height)
-        }
-        .ignoresSafeArea()
-    }
-
-    private func watermarkFontSize(for size: CGSize) -> CGFloat {
-        min(max(min(size.width, size.height) * 0.105, 34), 46)
-    }
-
-    private func watermarkRows(for size: CGSize) -> Int {
-        max(4, Int((size.height / 150).rounded(.up)) + 1)
-    }
-
-    private func watermarkColumns(for size: CGSize) -> Int {
-        max(3, Int((size.width / 210).rounded(.up)) + 1)
-    }
-
-    private func watermarkX(column: Int, row: Int, columns: Int, size: CGSize) -> CGFloat {
-        let spacing = size.width / CGFloat(max(columns - 1, 1))
-        let stagger = row.isMultiple(of: 2) ? 0 : spacing * 0.48
-        return CGFloat(column) * spacing - spacing * 0.25 + stagger
-    }
-
-    private func watermarkY(row: Int, rows: Int, size: CGSize) -> CGFloat {
-        let spacing = size.height / CGFloat(max(rows - 1, 1))
-        return CGFloat(row) * spacing - spacing * 0.15
     }
 
     private var homeStatusLabelBackground: AnyView {
@@ -770,7 +740,7 @@ struct PiPHomeView: View {
             }
             .foregroundColor(Color(UIColor.systemBlue))
 
-            Text(pipEngineRoute.detailText)
+            pipEngineRoute.detailView
                 .font(.system(size: 12, weight: .semibold))
                 .foregroundColor(Color(UIColor.secondaryLabel))
                 .fixedSize(horizontal: false, vertical: true)
@@ -839,6 +809,7 @@ struct PiPHomeView: View {
 
             PiPRuntimeText(
                 startedAt: pipRuntimeStartedAt,
+                label: pipRuntimeLabel,
                 fallbackDuration: pipRunningDuration
             )
             .font(.system(size: 14, weight: .semibold, design: .monospaced))
@@ -864,10 +835,11 @@ struct PiPHomeView: View {
 
     private struct PiPRuntimeText: View {
         let startedAt: Date?
+        let label: String
         let fallbackDuration: String
 
         var body: some View {
-            Text(L10n.text("已运行时间：", "Runtime: ") + fallbackDuration)
+            Text(label + fallbackDuration)
                 .lineLimit(1)
                 .minimumScaleFactor(0.78)
                 .allowsTightening(true)
@@ -938,10 +910,7 @@ struct PiPHomeView: View {
                                     "已确认风险；可安装并使用快捷指令",
                                     "Risk confirmed. Shortcut setup and actions are available."
                                 )
-                                : L10n.text(
-                                    "默认关闭；一键隐藏可能阻止自动熄屏，需确认风险后启用",
-                                    "Off by default. One-tap hiding may prevent auto-lock and requires confirmation."
-                                )
+                                : L10n.text("默认关闭；兼容模式仍可能影响熄屏，确认后启用", "Off by default. Compatibility modes may affect auto-lock; confirm to enable.")
                         }
                     )
 
@@ -1409,7 +1378,9 @@ struct PiPHomeView: View {
 
     private var settingsActionDelay: TimeInterval { 0.2 }
 
-    private var layout: AdaptiveLayoutMetrics { .current }
+    private var layout: AdaptiveLayoutMetrics {
+        AdaptiveLayoutMetrics(size: viewportSize == .zero ? UIScreen.main.bounds.size : viewportSize)
+    }
 
     private var languageSwitchAnimation: Animation {
         .interpolatingSpring(mass: 0.45, stiffness: 420, damping: 36, initialVelocity: 0.12)
@@ -1420,6 +1391,9 @@ struct PiPHomeView: View {
     }
 
     private var startAndHidePiPButtonTitle: String {
+        if !isPiPActive {
+            return L10n.text("一键开启并隐藏", "Start & Hide PiP")
+        }
         if pipEngineRoute.usesPlayerLayer {
             return L10n.text("一键1pt", "One-tap 1 pt")
         }
@@ -1579,7 +1553,16 @@ private struct VersionDescriptionFrameKey: PreferenceKey {
     }
 }
 
+private struct VersionDescriptionReferenceHeightKey: PreferenceKey {
+    static var defaultValue: CGFloat = 0
+
+    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
+        value = max(value, nextValue())
+    }
+}
+
 struct VersionPageView: View {
+    @Environment(\.verticalSizeClass) private var verticalSizeClass
     let isDebugModeEnabled: Bool
     @Binding var isDebugPanelVisible: Bool
     let keepAlivePolicy: KeepAlivePolicy
@@ -1609,6 +1592,7 @@ struct VersionPageView: View {
     @State private var displayedDebugDiagnosticsEnabled: Bool
     @State private var debugModeStatusLabelFrame: CGRect = .zero
     @State private var versionDescriptionFrame: CGRect = .zero
+    @State private var versionDescriptionReferenceHeight: CGFloat = 0
     @State private var suppressNextCacheTap = false
     @State private var languageRefreshToken = 0
     @AppStorage(L10n.languageOverrideKey) private var languageOverrideRawValue = ""
@@ -1661,6 +1645,24 @@ struct VersionPageView: View {
     }
 
     var body: some View {
+        ZStack {
+            Color(UIColor.systemGroupedBackground).ignoresSafeArea()
+            GeometryReader { proxy in
+                if verticalSizeClass == .compact {
+                    ScrollView(.vertical, showsIndicators: true) {
+                        versionPageContent
+                            .frame(minHeight: proxy.size.height)
+                            .padding(.bottom, 72)
+                    }
+                    .background(Color.clear)
+                } else {
+                    versionPageContent
+                }
+            }
+        }
+    }
+
+    private var versionPageContent: some View {
         ZStack {
             Color(UIColor.systemGroupedBackground)
                 .edgesIgnoringSafeArea(.all)
@@ -1732,6 +1734,8 @@ struct VersionPageView: View {
                             .font(.system(size: 15, weight: .bold))
                         Text(L10n.changelog)
                             .font(.system(size: 15, weight: .bold))
+                            .lineLimit(1)
+                            .fixedSize(horizontal: true, vertical: false)
                     }
                     .foregroundColor(Color(UIColor.systemBlue))
                     .padding(.horizontal, 14)
@@ -1865,6 +1869,25 @@ struct VersionPageView: View {
 
                 VersionDescriptionView(isCompact: layout.isCompact, languageIdentity: languageIdentity)
                     .id("version-description-\(languageIdentity)")
+                    .frame(maxWidth: .infinity)
+                    .background(alignment: .top) {
+                        VersionDescriptionView(
+                            isCompact: layout.isCompact,
+                            languageIdentity: "diagnostics-layout-reference",
+                            usesChineseText: true
+                        )
+                        .frame(maxWidth: .infinity)
+                        .background(
+                            GeometryReader { proxy in
+                                Color.clear.preference(
+                                    key: VersionDescriptionReferenceHeightKey.self,
+                                    value: proxy.size.height
+                                )
+                            }
+                        )
+                        .hidden()
+                        .accessibilityHidden(true)
+                    }
                     .background(
                         GeometryReader { proxy in
                             Color.clear.preference(
@@ -1881,11 +1904,14 @@ struct VersionPageView: View {
                 }
 
                 if !layout.isCompact {
-                    copyDiagnosticsLogButton
-                        .frame(height: layout.versionCopyLogRowHeight)
-                    if shouldShowDebugModeStatus {
-                        debugStatusLabels
+                    VStack(spacing: layout.versionMainSpacing) {
+                        copyDiagnosticsLogButton
+                            .frame(height: layout.versionCopyLogRowHeight)
+                        if shouldShowDebugModeStatus {
+                            debugStatusLabels
+                        }
                     }
+                    .offset(y: -diagnosticsDescriptionExpansion)
                 }
             }
             .padding(.horizontal, layout.versionHorizontalPadding)
@@ -1942,6 +1968,10 @@ struct VersionPageView: View {
         .onPreferenceChange(VersionDescriptionFrameKey.self) { frame in
             guard frame != .zero else { return }
             versionDescriptionFrame = frame
+        }
+        .onPreferenceChange(VersionDescriptionReferenceHeightKey.self) { height in
+            guard height > 0 else { return }
+            versionDescriptionReferenceHeight = height
         }
     }
 
@@ -2080,6 +2110,7 @@ struct VersionPageView: View {
                     DebugModeButton(isExpanded: isDebugPanelVisible)
                 }
                 .buttonStyle(.plain)
+                .offset(y: diagnosticsFAQRowCenterY - fixedFAQRowCenterY)
             }
             .frame(height: 46)
             .position(x: proxy.size.width / 2, y: fixedFAQRowCenterY)
@@ -2169,7 +2200,7 @@ struct VersionPageView: View {
         GeometryReader { proxy in
             copyDiagnosticsLogButton
                 .frame(height: layout.versionCopyLogRowHeight)
-                .position(x: proxy.size.width / 2, y: fixedFAQRowCenterY - 58)
+                .position(x: proxy.size.width / 2, y: diagnosticsFAQRowCenterY - 58)
         }
         .zIndex(4.5)
     }
@@ -2184,7 +2215,7 @@ struct VersionPageView: View {
                 }
             }
             .frame(height: compactDiagnosticsControlsHeight)
-            .position(x: proxy.size.width / 2, y: fixedFAQRowCenterY - compactDiagnosticsControlsYOffset)
+            .position(x: proxy.size.width / 2, y: diagnosticsFAQRowCenterY - compactDiagnosticsControlsYOffset)
         }
         .zIndex(4.55)
     }
@@ -2360,7 +2391,7 @@ struct VersionPageView: View {
     }
 
     private var debugModeStatusLabelTopY: CGFloat {
-        let controlsCenterY = fixedFAQRowCenterY - compactDiagnosticsControlsYOffset
+        let controlsCenterY = diagnosticsFAQRowCenterY - compactDiagnosticsControlsYOffset
         return controlsCenterY - compactDiagnosticsControlsHeight / 2 + layout.versionCopyLogRowHeight + 6
     }
 
@@ -2378,6 +2409,20 @@ struct VersionPageView: View {
             return layout.versionFAQRowCenterY
         }
         return max(layout.versionFAQRowCenterY, versionDescriptionFrame.maxY + 12 + 23)
+    }
+
+    // Keep diagnostics at the Chinese layout position even when translations wrap further.
+    private var diagnosticsDescriptionExpansion: CGFloat {
+        guard versionDescriptionReferenceHeight > 0 else { return 0 }
+        return max(0, versionDescriptionFrame.height - versionDescriptionReferenceHeight)
+    }
+
+    private var diagnosticsFAQRowCenterY: CGFloat {
+        guard versionDescriptionFrame != .zero else { return layout.versionFAQRowCenterY }
+        return max(
+            layout.versionFAQRowCenterY,
+            versionDescriptionFrame.maxY - diagnosticsDescriptionExpansion + 12 + 23
+        )
     }
 
     private var languageSwitchAnimation: Animation {
@@ -2818,6 +2863,7 @@ private struct DebugModePanel: View {
                 .foregroundColor(Color(UIColor.secondaryLabel))
                 .fixedSize(horizontal: false, vertical: true)
 
+
             }
 
             Divider()
@@ -2917,27 +2963,39 @@ private struct DebugModePanel: View {
 private struct VersionDescriptionView: View {
     var isCompact = false
     let languageIdentity: String
+    var usesChineseText = false
+
+    private func text(_ chinese: String, _ english: String) -> String {
+        usesChineseText ? chinese : L10n.text(chinese, english)
+    }
 
     var body: some View {
         VStack(spacing: isCompact ? 4 : 6) {
-            Text(L10n.text("增加悬浮窗后台保活和修改侧边栏大小功能，", "Adds PiP background keep-alive and side-window sizing,"))
-            Text(L10n.text("挂在侧边栏可保持系统全局120hz，", "keeps system-wide 120 Hz when docked to the edge,"))
-            Text(L10n.text("适配ios26液态玻璃特性", "and supports iOS 26 Liquid Glass."))
+            Text(text("增加悬浮窗后台保活、完全隐藏及与其他画中画并存保护", "Adds background keep-alive, fully hidden PiP and PiP coexistence protection"))
+            Text(text("启用悬浮窗后即可支持系统全局120Hz", "Enable PiP for system-wide refresh rates up to 120 Hz"))
+            Text(text("适配 iOS 15–iOS 27", "Supports iOS 15–iOS 27"))
             HStack(spacing: 0) {
-                Text(L10n.text("原作者：", "Original: "))
+                Text(text("原 Demo 项目：", "Original demo: "))
                 Link("CaiWanFeng", destination: URL(string: "https://github.com/CaiWanFeng/PiP")!)
                     .foregroundColor(Color(UIColor.systemBlue))
-                Text(L10n.text("，完善：", ", maintained by "))
+                Text(text("，完善：", ", maintained by "))
                 Link("Yoroin", destination: URL(string: "http://www.coolapk.com/u/3233328")!)
                     .foregroundColor(Color(UIColor.systemBlue))
             }
+            .lineLimit(1)
+            .minimumScaleFactor(0.75)
         }
-        .font(.system(size: isCompact ? 14 : 16, weight: .medium))
+        .font(.system(size: descriptionFontSize, weight: .medium))
         .foregroundColor(Color(UIColor.secondaryLabel))
         .multilineTextAlignment(.center)
         .lineSpacing(isCompact ? 2 : 4)
         .fixedSize(horizontal: false, vertical: true)
         .id(languageIdentity)
+    }
+
+    private var descriptionFontSize: CGFloat {
+        let isEnglish = !usesChineseText && L10n.currentLanguage == .english
+        return isEnglish ? (isCompact ? 12 : 14) : (isCompact ? 14 : 16)
     }
 }
 
@@ -3074,9 +3132,9 @@ private struct PiPShortcutInstallGuideView: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: 14) {
                     Text(L10n.text(
-                        "推荐使用 iCloud 快捷指令链接导入；导入时仍需系统确认。请先打开悬浮窗并拖到侧边吸附，再执行一键0.1pt，避免阻止自动熄屏。iOS 15 搜不到 App 动作，或 iOS 17 偶发 1004 时，可使用下方 URL。iOS18+请在控制中心-快捷指令-全局高刷添加。",
-                        "Use iCloud Shortcuts links for setup. Open PiP and dock it to the side before using One-tap 0.1 pt so auto-lock keeps working. If iOS 15 cannot find app actions, or iOS 17 shows 1004, use the URL fallback. On iOS 18+, add Global Refresh from Control Center > Shortcuts."
-                    ))
+                        "只保留“打开并隐藏悬浮窗”导入入口，导入时仍需系统确认。当前原生动作需iOS26+，低版本可通过iCloud导入或使用下方URL；iOS18+可将已导入的快捷指令添加到控制中心。",
+                        "Only Open and Hide is offered for import, with system confirmation. Native actions currently require iOS 26+. On older systems, import using iCloud or use the URL below. On iOS 18+, add an imported shortcut to Control Center."
+                    ) + "\n" + PiPRouteDescriptions.shortcutCautionText)
                     .font(.system(size: 14, weight: .semibold))
                     .foregroundColor(Color(UIColor.secondaryLabel))
                     .fixedSize(horizontal: false, vertical: true)
@@ -3259,7 +3317,7 @@ private extension PiPShortcutAction {
         case .hideFloatingWindow:
             return L10n.text("将已运行的悬浮窗缩小隐藏", "Shrinks the active PiP.")
         case .startAndHideFloatingWindow:
-            return L10n.text("打开后自动缩小，适合控制中心一键使用", "Opens PiP and shrinks it for one-tap Control Center use.")
+            return L10n.text("默认VideoCall＋仅PiP：未开启时直接以0.1pt启动，已开启时调整到0.1pt；其他模式保留兼容流程", "With default VideoCall and PiP-only keep-alive, starts at 0.1 pt when inactive or adjusts to 0.1 pt when active. Other modes retain their compatibility flow.")
         }
     }
 
@@ -3407,6 +3465,55 @@ private struct SettingsToggleRow: View {
 
 }
 
+enum PiPRouteDescriptions {
+    static var updatedDefaultAvailable: Bool {
+        PiPHiddenReferenceMode.supportsSystemMajorVersion(ProcessInfo.processInfo.operatingSystemVersion.majorVersion)
+            && KeepAlivePolicy.current == .pipOnly
+    }
+    static var defaultPrefix: String {
+        L10n.text("VideoCall默认方案，支持0.1pt隐藏，新增悬浮窗共存保护，不会被其他悬浮窗挤掉，", "VideoCall default. Supports 0.1 pt hiding and adds PiP coexistence protection to prevent displacement by other PiP windows. ")
+    }
+    static var legacyLimitation: String {
+        L10n.text("但受限底层限制，部分锁60的游戏/弹幕可能会因帧率不同步导致卡顿，", "Due to underlying limitations, some 60 Hz locked games/danmaku may stutter from refresh mismatch, ")
+    }
+    static var defaultUpdate: String {
+        L10n.text("不影响其他正常场景，建议日常使用。", "but normal scenes are unaffected. Recommended for daily use.")
+    }
+    static var videoCallText: String {
+        defaultPrefix + legacyLimitation + defaultUpdate
+    }
+    static var playerLayerText: String {
+        L10n.text("PlayerLayer保留为兼容备选方案，最低1pt，无法完全隐藏，侧边可能有细线。iOS15-27建议优先使用默认VideoCall与仅PiP保活；仅在默认方案不适用或表现异常时尝试此备选，效果依赖系统与设备。", "PlayerLayer remains a compatibility alternative with a 1 pt minimum and a possible thin line at the edge. Prefer VideoCall with PiP-only keep-alive on iOS 15-27. Use this alternative if the default is unsuitable or misbehaves; results depend on the system and device.")
+    }
+    static var shortcutCautionText: String {
+        L10n.text("iOS15-27默认VideoCall与仅PiP保活支持直接以0.1pt启动隐藏悬浮窗，与首页一键开启并隐藏保持一致；用户测试已有不影响自动熄屏的反馈，实际效果仍依赖系统与设备。不支持所需系统接口时会取消启动。其他保活策略与PlayerLayer仍建议先开启并吸附侧边，再缩小。确认后开放快捷指令安装与操作。", "VideoCall with PiP-only keep-alive on iOS 15-27 supports direct hidden 0.1 pt startup, matching Start & Hide PiP on Home. User tests report unaffected auto-lock; results still depend on the system and device. Startup is canceled if required system interfaces are unsupported. With other policies or PlayerLayer, open and dock PiP before shrinking it. Confirmation enables shortcut setup and actions.")
+    }
+    static func attributedCompatibilityText(_ text: String, font: UIFont) -> NSAttributedString {
+        let result = NSMutableAttributedString(string: text, attributes: [
+            .font: font, .foregroundColor: UIColor.secondaryLabel
+        ])
+        let pageSwitchClaim = L10n.text("此开关目前开启和关闭都将影响悬浮窗的120hz功能", "This switch currently affects the PiP 120 Hz behavior both when on and off.")
+        var obsoleteClaims = [pageSwitchClaim]
+        if updatedDefaultAvailable {
+            obsoleteClaims += [
+                legacyLimitation,
+                L10n.text("默认可隐藏悬浮窗底层会强拉120导致锁60的app卡顿，锁80的app不受影响", "The default fully hideable route forces 120 Hz at a lower level, which can stutter in apps locked to 60 Hz; apps locked to 80 Hz are not affected."),
+                L10n.text("旧版隐藏前未吸附侧边可能阻止自动熄屏。", "Previously, hiding PiP before docking could prevent auto-lock."),
+                L10n.text("旧版其他画中画可能挤掉悬浮窗，需要重新打开。", "Previously, another PiP could displace it, requiring a restart."),
+                L10n.text("已知问题：直接用快捷指令一键开启悬浮窗隐藏会导致悬浮窗没有吸附到侧面，阻止熄屏，一般还是建议先启用悬浮窗，拖到侧面吸附后再点击一键0.1pt按钮", "Known issue: using a Shortcut to open and hide PiP in one step may leave the floating window undocked, which can prevent auto-lock. In general, open PiP first, drag it to the side until it docks, then tap the One-tap 0.1 pt button."),
+                L10n.text("新方案仅用于解决因部分游戏和弹幕自身锁60而与120帧率不同步导致的卡顿，表现为b站弹幕一快一慢以及荒野乱斗大厅偶尔掉帧", "The new PlayerLayer route is only for stutter caused by some games or danmaku being locked to 60 Hz and becoming unsynchronized with 120 Hz, such as Bilibili danmaku speeding up and slowing down or occasional Brawl Stars lobby drops.")
+            ]
+        }
+        for claim in obsoleteClaims {
+            let range = (text as NSString).range(of: claim)
+            if range.location != NSNotFound {
+                result.addAttribute(.strikethroughStyle, value: NSUnderlineStyle.single.rawValue, range: range)
+            }
+        }
+        return result
+    }
+}
+
 private extension PiPEngineRoute {
     static var selectableCases: [PiPEngineRoute] {
         [.videoCall, .playerLayerGenerated]
@@ -3489,14 +3596,22 @@ private extension PiPEngineRoute {
     var detailText: String {
         switch self {
         case .videoCall:
-            return L10n.text("VideoCall默认方案，支持0.1pt隐藏，但受限底层限制，部分锁60的游戏/弹幕可能会因帧率不同步导致卡顿，不影响其他正常场景，建议日常使用", "VideoCall default. Supports 0.1 pt hiding. Due to underlying limitations, some 60 Hz locked games/danmaku may stutter from refresh mismatch, but normal scenes are unaffected. Recommended for daily use.")
+            return PiPRouteDescriptions.videoCallText
         case .playerLayerGenerated:
-            return L10n.text("PlayerLayer新尝试方案，参考悬浮时钟逻辑，解决部分锁60的游戏和弹幕卡顿，但是受限底层，最小1pt无法完全隐藏，视觉上会有一条细线，按需选择。", "PlayerLayer experimental route. Inspired by Floating Clock and intended to reduce stutter in some 60 Hz games/danmaku. Minimum is 1 pt, so it cannot fully hide and may leave a thin line.")
+            return PiPRouteDescriptions.playerLayerText
         case .referenceIPA:
             return L10n.text("PlayerLayer参考方案，使用悬浮时钟预置比例素材铺成长时间轴，减少0.1秒循环seek干扰，测试是否更接近参考IPA表现。", "PlayerLayer reference route. Uses Floating Clock preset-ratio material stretched onto a long timeline to reduce 0.1s loop seek noise and compare against the reference IPA.")
         case .referenceIPAPure:
             return L10n.text("方案4纯净参考：只使用悬浮时钟预置比例素材和PlayerLayer启动链路，不使用动态生成视频、悬浮窗文字覆盖和内容刷新，用来做最干净的参考IPA对照测试。", "Plan 4 pure reference. Uses only Floating Clock preset-ratio material and the PlayerLayer startup path, with no generated video, text overlay, or content refresh. Intended as the cleanest reference IPA comparison.")
         }
+    }
+
+    var detailView: Text {
+        guard self == .videoCall else { return Text(detailText) }
+        return Text(PiPRouteDescriptions.defaultPrefix)
+            + Text(PiPRouteDescriptions.legacyLimitation)
+                .strikethrough(PiPRouteDescriptions.updatedDefaultAvailable)
+            + Text(PiPRouteDescriptions.defaultUpdate)
     }
 }
 
@@ -3525,7 +3640,7 @@ private struct EngineRoutePickerRow: View {
                 }
             }
 
-            Text(selectedRoute.detailText)
+            selectedRoute.detailView
                 .font(.system(size: 12, weight: .semibold))
                 .foregroundColor(Color(UIColor.secondaryLabel))
                 .fixedSize(horizontal: false, vertical: true)

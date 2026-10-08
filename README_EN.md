@@ -8,11 +8,15 @@
   <a href="README.md">Simplified Chinese</a> | English | <a href="DEVELOPMENT_PRD.md">开发文档 PRD</a> | <a href="DEVELOPMENT_PRD_EN.md">Development Document PRD</a>
 </h3>
 
-> An experimental iOS Picture-in-Picture overlay for ProMotion behavior, custom PiP sizing, and background keep-alive testing.
+> Continued development based on [CaiWanFeng/PiP](https://github.com/CaiWanFeng/PiP), maintained by [Yoroin](http://www.coolapk.com/u/3233328).
 
-GlobalRefresh PiP explores a practical iOS behavior: on some ProMotion iPhones, certain apps or system scenes may fall back to around 80 Hz even though the hardware can refresh at 120 Hz. A tiny docked Picture-in-Picture window can sometimes keep iOS in a higher-refresh scheduling path, improving scrolling and animation smoothness in those scenes.
+Adds background keep-alive, a fully hidden floating window, and protection for coexistence with other Picture in Picture windows. An active PiP window can help supported ProMotion devices and some apps normally limited to around 80Hz reach adaptive refresh rates of up to 120Hz. Supports iOS 15–27.
 
-The project is also useful as a reference for developers who want to build a custom-height PiP overlay using `AVPictureInPictureVideoCallViewController`, without necessarily enabling any forced 120 Hz behavior.
+Version 1.1.1 updates the default VideoCall implementation: it keeps PiP content updating without the previous fixed 120Hz request in the floating-window driver. This addresses stuttering in some 60fps games and Bilibili comments, and improves automatic screen locking with a directly hidden window.
+
+The default VideoCall + PiP-only combination supports starting directly at 0.1pt and adds floating-window coexistence protection: it can keep running alongside another app's PiP instead of being displaced or interrupted, avoiding repeated manual restarts. This protection targets competition from other PiP windows, not termination caused by memory pressure or system policies; compatibility still depends on iOS and the other app. PlayerLayer remains a compatibility alternative with a minimum height of 1pt and is no longer the first recommendation for those stuttering issues.
+
+Actual refresh rate, coexistence and background lifetime depend on the device, iOS, the foreground app and available resources. This is not a fixed 120Hz mode or permanent background permission, and cannot turn a 60Hz display or fixed 60fps content into 120fps.
 
 ## Overview
 
@@ -38,7 +42,7 @@ Please note:
 - Building a custom-height iOS PiP overlay
 - Studying `AVPictureInPictureVideoCallViewController` as a PiP content route
 - Comparing VideoCall and PlayerLayer based PiP behavior
-- Testing how `CADisplayLink` frame-rate hints affect ProMotion devices
+- Studying content updates and independent foreground refresh requests on ProMotion devices
 - Keeping a tiny PiP window docked and quickly shrinking it to a near-invisible height
 - Investigating PiP-based background keep-alive behavior and its limits
 
@@ -52,39 +56,44 @@ Please note:
 
 ## PiP Route Comparison
 
-| Route | Advantages | Limitations | Recommended Use |
+| Route | Hiding | Recommended Use | Limitations |
 | --- | --- | --- | --- |
-| Default: VideoCall | Supports a minimum height of 0.1 pt and can be visually hidden; better compatibility; more stable for daily use | Requests high-refresh behavior aggressively, so some 60 Hz locked games or danmaku scenes may stutter because of refresh-rate mismatch | Most apps, 80 Hz fallback scenes, and users who need the floating window to fully hide |
-| New: PlayerLayer | Can improve stutter caused by some 60 Hz locked apps becoming unsynchronized with 120 Hz, such as Bilibili danmaku speed fluctuation or occasional Brawl Stars lobby drops | Limited by the underlying route to a minimum of 1 pt, so it cannot fully hide and may leave a thin visible line; this is a testing entry | Only try this route when you encounter 60 Hz locked scene stutter |
+| Default: VideoCall | Minimum 0.1pt; can be fully hidden | Daily use with PiP-only, including content updates, coexistence protection and screen-lock improvements | ~~Some 60fps games and comments could stutter with the old fixed 120Hz driver~~; improved in this release, with results still dependent on iOS and the foreground app |
+| Compatibility alternative: PlayerLayer | Minimum 1pt; may leave a thin line | Retained as an alternative when the default route does not work as expected | Cannot fully hide; no longer the first recommendation for the old stuttering issue |
 
-In short: the default route hides better and is recommended for most users. The new route is mainly for specific 60 Hz locked stutter cases, but it cannot fully hide at 0.1 pt.
+Default-mode improvements apply to VideoCall + PiP-only on iOS 15–27. Audio Keep-alive, Lock-screen Audio Enhancement and PlayerLayer retain compatibility flows.
 
 ## Features
 
-- PiP background keep-alive
-- Custom floating-window height, down to 0.1 pt
-- Adjustable side-docked floating-window size
-- Start or stop floating-window text scrolling
-- Remember floating-window height
-- Frame-rate demo page for comparing 80 Hz and 120 Hz behavior
-- Tutorial and FAQ pages
-- iOS 26 Liquid Glass-style UI adaptation
-- Blur-style fallback UI for older iOS versions
-- iOS 15 / iOS 16 compatibility improvements
-- Debug mode for copying recent diagnostic logs when reporting issues
+- Helps supported ProMotion devices and some 80Hz-limited scenes reach up to 120Hz
+- Background PiP keep-alive and fully hidden 0.1pt floating windows
+- Coexistence protection against displacement or interruption by other PiP windows
+- One-tap hidden startup, or 0.1pt resizing when already running
+- Adjustable height, side-docked size and height memory
+- Text scrolling controls that retain content updates in the default combination
+- Frame-rate demo and 80Hz/120Hz comparison, with a foreground-only refresh switch
+- Tutorials, default-route upgrade demonstration and FAQ
+- iPhone Duo layout adjustments, Liquid Glass on iOS 26+ and blur fallback on older systems
+- Automatic and manual cache cleanup; stable and beta update checks
+- Diagnostic logs, bounded low-frequency runtime records and system diagnostics
 
 ## Usage
 
-1. Open the app and tap "Enable PiP" on the home page.
-2. Drag the floating window to the side of the screen until it docks.
-3. To hide the floating window, adjust its height to 0.1 pt after it starts.
-4. If you run into issues, open Debug Mode from the About/FAQ tools and copy the diagnostic log.
+1. Use the default VideoCall + PiP-only combination for daily use.
+2. Tap “Open and Hide” while PiP is inactive to start directly at 0.1pt.
+3. For a visible window, tap “Enable PiP,” dock it if needed, then use the 0.1pt action or custom height control.
+4. Enable shortcuts in More Settings after acknowledging the risk. Native “Open and Hide Floating Window” is available on iOS 26+; manual import supports iOS 15–25. Control Center shortcut placement requires iOS 18+.
+5. Report issues through [GitHub Issues](https://github.com/Yoroin/GlobalRefresh-PiP/issues) or Coolapk, including app/iOS version, device, route, keep-alive mode, reproduction steps and logs.
+
+Other compatibility modes still recommend docking before shrinking. PlayerLayer has a minimum height of 1pt.
 
 ![Demo](assets/demo.gif)
 
 ## Developer Notes
 
-If you only want to use the default `VideoCall` route to implement a custom-height Picture in Picture floating window, and do not need this project's forced 120 Hz behavior, keep the `AVPictureInPictureVideoCallViewController` + `AVPictureInPictureController.ContentSource` route.
+The default VideoCall route can be integrated as a backend for an existing floating-window app without copying this app's entire interface.
+
+Version 1.1.1 uses content updates instead of the previous fixed 120Hz request in the default VideoCall + PiP-only driver. ~~The earlier use of `preferredFrameRateRange` pinned to 120 and `preferredFramesPerSecond = 120`~~ is no longer used in this combination. These fields are not universally removed: foreground page refresh requests remain separate.
 
 The basic idea is to create a transparent `AVPictureInPictureVideoCallViewController`, use `preferredContentSize` to control the floating-window size, and attach your custom view inside the content view:
 
@@ -104,26 +113,15 @@ let pipController = AVPictureInPictureController(contentSource: contentSource)
 
 When changing the height later, update both `preferredContentSize` and your custom view constraints. If you need visual hiding, you can reduce the height to a very small value such as `0.1 pt`; otherwise, use a more conservative height.
 
-If you do not need forced 120 Hz, avoid copying this project's high-refresh driver fields:
 
-- Do not enable `CADisableMinimumFrameDurationOnPhone` in `Info.plist`
-- Do not pin `CADisplayLink.preferredFrameRateRange` to `minimum = maximum = preferred = 120`
-- Do not pin `preferredFramesPerSecond` to `120`
-- If you still need a DisplayLink, let the system adapt, for example:
+The coexistence implementation includes private system interfaces rather than a publicly guaranteed multi-PiP API. Assess compatibility and App Store review risks separately. Content updates are not a public API that guarantees unlocking 120Hz on every system.
 
-```swift
-if #available(iOS 15.0, *) {
-    displayLink.preferredFrameRateRange = CAFrameRateRange(
-        minimum: 30,
-        maximum: Float(UIScreen.main.maximumFramesPerSecond),
-        preferred: 0
-    )
-} else {
-    displayLink.preferredFramesPerSecond = 0
-}
-```
+Implementation paths:
 
-In short: for custom height only, keep the `VideoCall` PiP container and `preferredContentSize`, and remove the forced 120 Hz fields so the system can decide the refresh rate.
+- `pip_swift/pip_swift/ViewController.swift`: PiP creation, entry points, sizing and keep-alive strategies
+- `pip_swift/pip_swift/PiPCoexistenceExperiment.swift`: default content updates and coexistence protection
+- `pip_swift/pip_swift/PiPShortcutIntents.swift`: native shortcut actions
+- `pip_swift/pip_swift/FrameRateTestTabBarController.swift`: foreground frame-rate demonstration
 
 ## Self-Signing
 
@@ -138,6 +136,21 @@ The exported unsigned IPA can be signed and installed with tools such as:
 Use your own Apple ID, certificate, or device environment to sign and install the app.
 
 ## Changelog
+
+### 1.1.1 (2026.10.9)
+
+- \* Improved the default VideoCall implementation to address stuttering in some 60fps games and Bilibili comments.
+- \* Added floating-window coexistence protection, allowing it to run alongside other PiP windows without being displaced or interrupted in compatible scenarios.
+- \* Fixed automatic screen-lock issues caused by hiding the window without first docking it at the screen edge.
+- Added support for iPhone Duo.
+- Improved the 0.1pt action: start directly with a hidden window when PiP is inactive, or adjust the existing window when active. Home, shortcut and URL entry points use the same action; compatibility modes retain their existing startup flow.
+- Simplified shortcut discovery to offer only “Open and Hide Floating Window.”
+- Improved the last-stop-time display logic.
+- Reduced audio preloading and background page refresh overhead in PiP-only mode. Under memory pressure, unused audio and diagnostic caches are cleared without destroying the floating window.
+- Added lightweight runtime records and system diagnostics. Limited low-frequency records remain available with debug mode off; diagnostics do not force a single explanation for an interruption.
+- The 120Hz demo switch now affects only foreground pages and animations. When off, it requests up to 80Hz as in earlier stable releases, without changing background PiP refresh or playback behavior. The system still determines the actual refresh rate.
+- Added a default-PiP upgrade demonstration, improved its first frame and replay, and updated the FAQ.
+- These default-mode improvements apply to VideoCall + PiP-only on iOS 15–27. Coexistence, screen locking and high-refresh behavior remain device-, system- and foreground-app-dependent. Other modes retain compatibility flows.
 
 ### 1.1.0fix (2026.8.29)
 
@@ -250,14 +263,14 @@ Logs are stored locally only. They are copied to the clipboard only after the us
 
 ## Credits
 
-This project is based on [CaiWanFeng/PiP](https://github.com/CaiWanFeng/PiP). Thanks to CaiWanFeng for the original PiP sample.
+This project started from the original PiP demo by [CaiWanFeng/PiP](https://github.com/CaiWanFeng/PiP) and is continuously developed and maintained by Yoroin, adding high-refresh assistance, background keep-alive, full hiding, PiP coexistence protection, and UI and compatibility improvements. Thanks to CaiWanFeng for the original sample.
 
-- Original project: [CaiWanFeng/PiP](https://github.com/CaiWanFeng/PiP)
+- Original demo: [CaiWanFeng/PiP](https://github.com/CaiWanFeng/PiP)
 - Original author: CaiWanFeng
 - Current project: [Yoroin/GlobalRefresh-PiP](https://github.com/Yoroin/GlobalRefresh-PiP)
-- Current modified version maintained by: Yoroin
+- Subsequent feature development and maintenance: Yoroin
 
-If you modify, redistribute, or publish an app based on this project, please keep the credits for CaiWanFeng, Yoroin, and the related project links. Do not claim this project or a modified version as a completely original work.
+If you develop, integrate, redistribute, or publish an app based on this project, retain attribution to CaiWanFeng for the original demo and Yoroin for subsequent development, along with the related project links. Clearly identify the source of the reused code; do not claim a project containing this code was entirely authored by you.
 
 ## Disclaimer
 

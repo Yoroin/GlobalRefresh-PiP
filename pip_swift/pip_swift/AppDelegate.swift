@@ -19,6 +19,7 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
         CacheCleanupManager.cleanOnLaunch()
         GeneratedPiPVideoCache.prepareForLaunch()
         KeepAliveModeText.migrateDefaultToLowPowerPiPIfNeeded()
+        LightweightRuntimeDiagnostics.start()
         KeepAliveNotificationTester.sanitizeOnLaunch()
         PiPShortcutRuntimeRegistration.warmUpProviderIfAvailable()
         if AppDebugLogger.isDebugModeEnabled {

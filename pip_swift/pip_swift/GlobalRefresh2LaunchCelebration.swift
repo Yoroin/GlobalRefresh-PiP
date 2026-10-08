@@ -7,7 +7,8 @@ enum GlobalRefresh2LaunchCelebration {
 
     private static let seenKey = "globalRefresh.launchCelebration.seen.1.1.0.tutorial-v7"
     private static var latestChangelogSeenKey: String {
-        "globalRefresh.latestChangelog.seen.\(L10n.versionDisplay)"
+        let build = Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "0"
+        return "globalRefresh.latestChangelog.seen.\(L10n.versionDisplay).\(build)"
     }
     private(set) static var isPresenting = false
 
@@ -275,6 +276,7 @@ private struct LaunchPiPTutorialPage: View {
 
 struct LaunchPiPTutorialStage: View {
     let elapsed: TimeInterval
+    var showsCoexistence: Bool = false
 
     private func clamp(_ value: Double) -> Double {
         min(1, max(0, value))
@@ -294,6 +296,22 @@ struct LaunchPiPTutorialStage: View {
     }
 
     private var instruction: String {
+        if showsCoexistence {
+            if elapsed < 1.8 {
+                return L10n.text("点击“打开悬浮窗”", "Tap “Open PiP”")
+            } else if elapsed < 4.1 {
+                return L10n.text("拖动悬浮窗到屏幕侧边吸附", "Drag PiP to the edge")
+            } else if elapsed < 5.3 {
+                return L10n.text("开启另一个画中画", "Open another PiP window")
+            } else if elapsed < 6.2 {
+                return L10n.text("两个悬浮窗同时运行", "Both PiP windows stay active")
+            } else if elapsed < 7.4 {
+                return L10n.text("点击“一键 0.1pt”", "Tap “One-tap 0.1pt”")
+            } else if elapsed < 8.6 {
+                return L10n.text("我们的悬浮窗上下收缩至隐藏", "Our PiP collapses vertically out of sight")
+            }
+            return L10n.text("已隐藏 · 两个悬浮窗仍同时运行", "Hidden · Both PiP windows are still active")
+        }
         if elapsed < 1.8 {
             return L10n.text("点击“打开悬浮窗”", "Tap “Open PiP”")
         } else if elapsed < 4.2 {
@@ -310,9 +328,10 @@ struct LaunchPiPTutorialStage: View {
         let tapOpen = segment(0.45, 0.98)
         let appear = segment(0.9, 1.75)
         let drag = segment(2.1, 3.9)
-        let tapHide = segment(4.3, 5.05)
-        let collapse = segment(5.05, 6.4)
-        let finalFade = segment(6.2, 6.5)
+        let tapHide = showsCoexistence ? segment(6.4, 7.15) : segment(4.3, 5.05)
+        let collapse = showsCoexistence ? segment(7.15, 8.5) : segment(5.05, 6.4)
+        let finalFade = showsCoexistence ? segment(8.3, 8.6) : segment(6.2, 6.5)
+        let coexistence = showsCoexistence ? segment(4.2, 5.2) : 0
 
         GeometryReader { proxy in
             let width = proxy.size.width
@@ -321,7 +340,7 @@ struct LaunchPiPTutorialStage: View {
             let pipStartX = width * 0.5
             let pipEndX = width + pipWidth * 0.5 - 10
             let pipX = mix(pipStartX, pipEndX, drag)
-            let pipY = mix(154, 194, collapse)
+            let pipY = showsCoexistence ? CGFloat(102) : mix(154, 194, collapse)
 
             let isOpening = elapsed < 1.75
             let isDragging = elapsed >= 1.75 && elapsed < 4.15
@@ -332,7 +351,9 @@ struct LaunchPiPTutorialStage: View {
                 if isDragging {
                     return clamp(segment(1.82, 2.2) - segment(3.8, 4.15))
                 }
-                return clamp(segment(4.1, 4.43) - segment(5.2, 5.5))
+                return showsCoexistence
+                    ? clamp(segment(6.1, 6.45) - segment(7.35, 7.65))
+                    : clamp(segment(4.1, 4.43) - segment(5.2, 5.5))
             }()
             let fingerX: CGFloat = {
                 if isOpening { return width * 0.5 }
@@ -340,8 +361,8 @@ struct LaunchPiPTutorialStage: View {
                 return width * 0.5
             }()
             let fingerY: CGFloat = isOpening
-                ? proxy.size.height - 72
-                : (isDragging ? 154 : proxy.size.height - 130)
+                ? proxy.size.height - (showsCoexistence ? 40 : 72)
+                : (isDragging ? pipY : proxy.size.height - (showsCoexistence ? 84 : 130))
             let fingerScale: CGFloat = {
                 if isOpening { return 1 - CGFloat(sin(tapOpen * .pi)) * 0.2 }
                 if !isDragging { return 1 - CGFloat(sin(tapHide * .pi)) * 0.2 }
@@ -360,14 +381,14 @@ struct LaunchPiPTutorialStage: View {
                 VStack(spacing: 0) {
                     HStack {
                         Text(L10n.text("首页", "Home"))
-                            .font(.system(size: 25, weight: .black, design: .rounded))
+                            .font(.system(size: showsCoexistence ? 22 : 25, weight: .black, design: .rounded))
                             .foregroundColor(Color(UIColor.label))
                         Spacer()
                         Text(L10n.text("⚙ 更多设置", "⚙ Settings"))
                             .font(.system(size: 11, weight: .bold, design: .rounded))
                             .foregroundColor(Color(UIColor.label))
                             .padding(.horizontal, 11)
-                            .frame(height: 34)
+                            .frame(height: showsCoexistence ? 28 : 34)
                             .background(Capsule().fill(Color(UIColor.tertiarySystemGroupedBackground)))
                             .overlay(Capsule().stroke(Color(UIColor.separator).opacity(0.2), lineWidth: 1))
                     }
@@ -384,9 +405,9 @@ struct LaunchPiPTutorialStage: View {
                         Spacer()
                     }
                     .font(.system(size: 10, weight: .bold, design: .rounded))
-                    .padding(.top, 7)
+                    .padding(.top, showsCoexistence ? 5 : 7)
 
-                    VStack(alignment: .leading, spacing: 7) {
+                    VStack(alignment: .leading, spacing: showsCoexistence ? 5 : 7) {
                         HStack {
                             Circle()
                                 .fill(appear > 0.5 ? Color(UIColor.systemGreen) : Color(UIColor.systemGray3))
@@ -401,16 +422,16 @@ struct LaunchPiPTutorialStage: View {
                         .foregroundColor(Color(UIColor.secondaryLabel))
 
                         Text(tutorialElapsedText(active: appear > 0.5))
-                            .font(.system(size: 23, weight: .black, design: .rounded))
+                            .font(.system(size: showsCoexistence ? 20 : 23, weight: .black, design: .rounded))
                             .foregroundColor(Color(UIColor.label))
                             .monospacedDigit()
                     }
                     .padding(.horizontal, 14)
-                    .padding(.vertical, 12)
-                    .frame(height: 84)
+                    .padding(.vertical, showsCoexistence ? 6 : 12)
+                    .frame(height: showsCoexistence ? 60 : 84)
                     .background(RoundedRectangle(cornerRadius: 16, style: .continuous).fill(Color(UIColor.systemGroupedBackground)))
                     .overlay(RoundedRectangle(cornerRadius: 16, style: .continuous).stroke(Color(UIColor.separator).opacity(0.2), lineWidth: 1))
-                    .padding(.top, 12)
+                    .padding(.top, showsCoexistence ? 8 : 12)
 
                     HStack {
                         Text(L10n.text("自定义悬浮窗高度", "Custom PiP height"))
@@ -420,17 +441,17 @@ struct LaunchPiPTutorialStage: View {
                     }
                     .font(.system(size: 12, weight: .bold, design: .rounded))
                     .padding(.horizontal, 15)
-                    .frame(height: 46)
+                    .frame(height: showsCoexistence ? 30 : 46)
                     .background(RoundedRectangle(cornerRadius: 15, style: .continuous).fill(Color(UIColor.tertiarySystemGroupedBackground)))
-                    .padding(.top, 10)
+                    .padding(.top, showsCoexistence ? 6 : 10)
 
-                    Spacer(minLength: 18)
+                    Spacer(minLength: showsCoexistence ? 8 : 18)
 
                     tutorialButton(L10n.text("一键 0.1pt", "One-tap 0.1pt"), emphasized: true)
-                        .padding(.top, 10)
+                        .padding(.top, showsCoexistence ? 8 : 10)
 
                     tutorialButton(L10n.text("打开悬浮窗", "Open PiP"), emphasized: false)
-                        .padding(.top, 10)
+                        .padding(.top, showsCoexistence ? 8 : 10)
 
                     Text(instruction)
                         .font(.system(size: 11, weight: .bold, design: .rounded))
@@ -438,10 +459,10 @@ struct LaunchPiPTutorialStage: View {
                         .multilineTextAlignment(.center)
                         .lineLimit(2)
                         .frame(height: 30)
-                        .padding(.bottom, 8)
+                        .padding(.bottom, showsCoexistence ? 6 : 8)
                 }
                 .padding(.horizontal, 17)
-                .padding(.top, 18)
+                .padding(.top, showsCoexistence ? 12 : 18)
 
                 RoundedRectangle(cornerRadius: mix(17, 1, collapse), style: .continuous)
                     .fill(Color.black)
@@ -458,6 +479,32 @@ struct LaunchPiPTutorialStage: View {
                     .scaleEffect(0.18 + CGFloat(appear) * 0.82)
                     .opacity(appear * (1 - finalFade))
                     .position(x: pipX, y: pipY)
+
+                if showsCoexistence {
+                    VStack(spacing: 7) {
+                        HStack(spacing: 6) {
+                            Image(systemName: "pip.fill")
+                            Text(L10n.text("其他画中画", "Another PiP"))
+                        }
+                        .font(.system(size: 10, weight: .semibold))
+                        Image(systemName: "play.fill")
+                            .font(.system(size: 18, weight: .semibold))
+                        Text(L10n.text("弹幕继续流畅滚动", "Danmaku keeps scrolling"))
+                            .font(.system(size: 10, weight: .medium))
+                            .fixedSize()
+                            .offset(x: 80 - CGFloat(max(0, elapsed - 5.2).truncatingRemainder(dividingBy: 5)) * 55)
+                            .frame(width: 136, height: 14)
+                            .clipped()
+                    }
+                    .foregroundColor(.white)
+                    .frame(width: 164, height: 78)
+                    .background(RoundedRectangle(cornerRadius: 18, style: .continuous).fill(Color(UIColor.systemTeal)))
+                    .overlay(RoundedRectangle(cornerRadius: 18, style: .continuous).stroke(Color.white.opacity(0.35), lineWidth: 1))
+                    .shadow(color: .black.opacity(0.18), radius: 12, y: 6)
+                    .scaleEffect(0.76 + CGFloat(coexistence) * 0.24)
+                    .opacity(coexistence)
+                    .position(x: width * 0.38, y: 158)
+                }
 
                 ZStack {
                     Circle()
@@ -484,7 +531,7 @@ struct LaunchPiPTutorialStage: View {
             .font(.system(size: 13, weight: .black, design: .rounded))
             .foregroundColor(Color(UIColor.label))
             .frame(maxWidth: .infinity)
-            .frame(height: 48)
+            .frame(height: showsCoexistence ? 36 : 48)
             .background(
                 RoundedRectangle(cornerRadius: 16, style: .continuous)
                     .fill(Color(UIColor.systemBlue).opacity(emphasized ? 0.13 : 0.08))
@@ -620,6 +667,7 @@ private struct LaunchProgressBar: View {
 
 struct LaunchDisplayLinkDriver: UIViewRepresentable {
     @Binding var timestamp: TimeInterval
+    @AppStorage(DemoFrameRatePreference.force120HzKey) private var isHighRefreshEnabled = true
 
     func makeCoordinator() -> Coordinator {
         Coordinator(timestamp: $timestamp)
@@ -652,17 +700,7 @@ struct LaunchDisplayLinkDriver: UIViewRepresentable {
     }
 
     private func configure(_ displayLink: CADisplayLink) {
-        let targetFramesPerSecond = min(120, UIScreen.main.maximumFramesPerSecond)
-        if #available(iOS 15.0, *) {
-            let target = Float(targetFramesPerSecond)
-            displayLink.preferredFrameRateRange = CAFrameRateRange(
-                minimum: target,
-                maximum: target,
-                preferred: target
-            )
-        } else {
-            displayLink.preferredFramesPerSecond = targetFramesPerSecond
-        }
+        DemoFrameRatePreference.configureForegroundRequest(displayLink, targetFrameRate: isHighRefreshEnabled ? 120 : 80)
     }
 
     final class Coordinator: NSObject {

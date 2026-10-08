@@ -6,6 +6,54 @@
 import UIKit
 import SwiftUI
 
+enum DemoFrameRatePreference {
+    static let force120HzKey = "frameRateDemo.pageForce120Hz"
+    static let didChangeNotification = Notification.Name("DemoFrameRatePreferenceDidChange")
+    static var isHighRefreshEnabled: Bool {
+        UserDefaults.standard.object(forKey: force120HzKey) as? Bool ?? true
+    }
+    static var targetFrameRate: Int { isHighRefreshEnabled ? 120 : 80 }
+    static func configureForegroundRequest(
+        _ displayLink: CADisplayLink,
+        targetFrameRate: Int = 120,
+        minimumFrameRateWhenDisabled: Int? = nil
+    ) {
+        if #available(iOS 15.0, *) {
+            if isHighRefreshEnabled {
+                let target = Float(min(targetFrameRate, UIScreen.main.maximumFramesPerSecond))
+                displayLink.preferredFrameRateRange = CAFrameRateRange(minimum: target, maximum: target, preferred: target)
+            } else {
+                // Match the released OFF policy without changing the PiP preference.
+                let target = min(targetFrameRate, min(80, UIScreen.main.maximumFramesPerSecond))
+                displayLink.preferredFrameRateRange = CAFrameRateRange(
+                    minimum: Float(min(minimumFrameRateWhenDisabled ?? target, target)),
+                    maximum: Float(target),
+                    preferred: Float(target)
+                )
+            }
+        } else {
+            displayLink.preferredFramesPerSecond = isHighRefreshEnabled
+                ? min(targetFrameRate, UIScreen.main.maximumFramesPerSecond)
+                : min(targetFrameRate, min(80, UIScreen.main.maximumFramesPerSecond))
+        }
+    }
+    static func setEnabled(_ enabled: Bool) {
+        UserDefaults.standard.set(enabled, forKey: force120HzKey)
+        NotificationCenter.default.post(name: didChangeNotification, object: nil)
+    }
+    static func migrateLegacySettingIfNeeded() {
+        let defaults = UserDefaults.standard
+        let migrationKey = "frameRateDemo.pageOnlyControlMigrated.v1"
+        guard !defaults.bool(forKey: migrationKey) else { return }
+        if defaults.object(forKey: force120HzKey) == nil {
+            defaults.set(FrameRatePreference.isHighRefreshEnabled, forKey: force120HzKey)
+        }
+        // A previous demo OFF setting must not leave the compatibility PiP route disabled.
+        defaults.set(true, forKey: FrameRatePreference.force120HzKey)
+        defaults.set(true, forKey: migrationKey)
+    }
+}
+
 enum FrameRatePreference {
     static let force120HzKey = "frameRateDemo.force120Hz"
     static let experimentProfileKey = "frameRateDemo.experimentProfile"
@@ -424,7 +472,7 @@ private struct FrameRateTestPageView: View {
 }
 
 struct RootFrameRateTestView: View {
-    @AppStorage(FrameRatePreference.force120HzKey) private var isHighRefreshEnabled = true
+    @AppStorage(DemoFrameRatePreference.force120HzKey) private var isHighRefreshEnabled = true
     @State private var frameTick = 0
     @State private var isScrollActive = false
 
@@ -436,7 +484,7 @@ struct RootFrameRateTestView: View {
             VStack(alignment: .leading, spacing: 0) {
                 PageHeaderTitle(title: L10n.frameRateDemo)
 
-                Text(L10n.text("可通过该页面的开关控制来对比80hz和120hz的区别，本app内所有页面帧率以及悬浮窗帧率受到该开关控制", "Use this page to compare 80 Hz and 120 Hz. The switch affects the app pages and the floating window refresh behavior."))
+                Text(L10n.text("上下滑动体验80Hz与120Hz的区别，开关仅改变App前台页面的刷新请求，不影响后台悬浮窗。", "Scroll to compare 80 Hz and 120 Hz. The switch changes foreground app refresh requests only, not background PiP."))
                     .font(.system(size: 14, weight: .semibold))
                     .foregroundColor(Color(UIColor.secondaryLabel))
                     .fixedSize(horizontal: false, vertical: true)
@@ -447,11 +495,11 @@ struct RootFrameRateTestView: View {
                 VStack(spacing: 14) {
                     HStack(spacing: 12) {
                         VStack(alignment: .leading, spacing: 4) {
-                            Text(L10n.text("强制本页面120hz", "Force 120 Hz"))
+                            Text(L10n.text("App内120Hz", "In-app 120 Hz"))
                                 .font(.system(size: 17, weight: .bold))
                                 .foregroundColor(Color(UIColor.label))
 
-                            Text(isHighRefreshEnabled ? L10n.text("当前请求 120Hz 演示刷新", "Currently requesting 120 Hz demo refresh") : L10n.text("全局120功能已失效，请开始上下滑动体验系统80hz", "120 Hz boost is disabled. Scroll to test system 80 Hz."))
+                            Text(L10n.text("关闭后按旧正式版请求最高80Hz，仅影响App前台页面；悬浮窗不受影响", "Off requests up to 80 Hz as in earlier releases, affecting foreground app pages only; PiP is unchanged."))
                                 .font(.system(size: 13, weight: .semibold))
                                 .foregroundColor(Color(UIColor.secondaryLabel))
                         }
@@ -462,7 +510,7 @@ struct RootFrameRateTestView: View {
                             .labelsHidden()
                     }
                     .padding(.horizontal, 18)
-                    .frame(height: 72)
+                    .frame(minHeight: 72)
                     .background(
                         RoundedRectangle(cornerRadius: 22, style: .continuous)
                             .fill(Color(UIColor.secondarySystemGroupedBackground).opacity(0.84))
@@ -473,9 +521,9 @@ struct RootFrameRateTestView: View {
                     )
 
                     HStack(spacing: 10) {
-                        frameBadge(title: "ON", value: "120")
-                        frameBadge(title: "OFF", value: "80")
-                        frameBadge(title: "MAX", value: isHighRefreshEnabled ? "120" : "80")
+                        frameBadge(title: "ON", value: "120Hz")
+                        frameBadge(title: "OFF", value: "80Hz")
+                        frameBadge(title: "MAX", value: "\(min(isHighRefreshEnabled ? 120 : 80, UIScreen.main.maximumFramesPerSecond))Hz")
                     }
                 }
                 .padding(.horizontal, 16)
@@ -500,10 +548,9 @@ struct RootFrameRateTestView: View {
         Binding(
             get: { isHighRefreshEnabled },
             set: { newValue in
-                DiagnosticsRuntimeState.recordUserAction(newValue ? "强制本页面120Hz开启" : "强制本页面120Hz关闭")
-                UserDefaults.standard.set(newValue, forKey: FrameRatePreference.force120HzKey)
+                DiagnosticsRuntimeState.recordUserAction(newValue ? "App前台120Hz请求开启" : "App前台120Hz请求关闭")
+                DemoFrameRatePreference.setEnabled(newValue)
                 isHighRefreshEnabled = newValue
-                NotificationCenter.default.post(name: FrameRatePreference.didChangeNotification, object: nil)
             }
         )
     }
@@ -514,7 +561,7 @@ struct RootFrameRateTestView: View {
                 .font(.system(size: 11, weight: .black))
                 .foregroundColor(Color(UIColor.secondaryLabel))
 
-            Text("\(value)Hz")
+            Text(value)
                 .font(.system(size: 16, weight: .black, design: .rounded))
                 .foregroundColor(Color(UIColor.label))
         }
@@ -591,7 +638,7 @@ private struct RootFrameRateListView: View {
 
                 Spacer()
 
-                Text("\(targetFrameRate)Hz")
+                Text(targetFrameRate > 0 ? "\(targetFrameRate)Hz" : L10n.text("自适应", "Auto"))
                     .font(.system(size: 13, weight: .black, design: .rounded))
                     .foregroundColor(Color(UIColor.systemBlue))
                     .padding(.horizontal, 10)
@@ -622,6 +669,9 @@ private struct RootFrameRateListView: View {
 }
 
 private struct FrameCadenceComparisonCard: View {
+    @AppStorage(L10n.languageOverrideKey) private var languageOverrideRawValue = ""
+    @AppStorage(DemoFrameRatePreference.force120HzKey) private var isHighRefreshEnabled = true
+
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
             Text(L10n.text("80Hz / 120Hz 同速动画对比", "80 Hz / 120 Hz Same-Speed Comparison"))
@@ -636,7 +686,7 @@ private struct FrameCadenceComparisonCard: View {
             .foregroundColor(Color(UIColor.secondaryLabel))
             .fixedSize(horizontal: false, vertical: true)
 
-            TimelineView(.animation(minimumInterval: 1.0 / 120.0, paused: false)) { context in
+            TimelineView(.animation(minimumInterval: isHighRefreshEnabled ? 1.0 / 120.0 : 1.0 / 80.0, paused: false)) { context in
                 VStack(spacing: 12) {
                     cadenceLane(label: "80Hz", sampleRate: 80, date: context.date)
                     cadenceLane(label: "120Hz", sampleRate: 120, date: context.date)
@@ -768,11 +818,22 @@ private struct FrameRateScrollOffsetPreferenceKey: PreferenceKey {
 }
 
 private struct FrameRateDriverView: UIViewRepresentable {
+    private final class VisibilityView: UIView {
+        var visibilityDidChange: (() -> Void)?
+        override func didMoveToWindow() {
+            super.didMoveToWindow()
+            visibilityDidChange?()
+        }
+    }
     @Binding var frameTick: Int
     let targetFrameRate: Int
 
     func makeUIView(context: Context) -> UIView {
-        let view = UIView()
+        let view = VisibilityView()
+        context.coordinator.driverView = view
+        view.visibilityDidChange = { [weak coordinator = context.coordinator] in
+            coordinator?.updatePausedState()
+        }
         view.backgroundColor = .clear
         view.isUserInteractionEnabled = false
 
@@ -783,12 +844,14 @@ private struct FrameRateDriverView: UIViewRepresentable {
         configure(displayLink)
         displayLink.add(to: .main, forMode: .common)
         context.coordinator.displayLink = displayLink
+        context.coordinator.configureDisplayLink = configure
         context.coordinator.installObservers()
         context.coordinator.updatePausedState()
         return view
     }
 
     func updateUIView(_ uiView: UIView, context: Context) {
+        context.coordinator.configureDisplayLink = configure
         if let displayLink = context.coordinator.displayLink {
             configure(displayLink)
             context.coordinator.updatePausedState()
@@ -799,6 +862,7 @@ private struct FrameRateDriverView: UIViewRepresentable {
         NotificationCenter.default.removeObserver(coordinator)
         coordinator.displayLink?.invalidate()
         coordinator.displayLink = nil
+        coordinator.configureDisplayLink = nil
     }
 
     func makeCoordinator() -> Coordinator {
@@ -806,26 +870,17 @@ private struct FrameRateDriverView: UIViewRepresentable {
     }
 
     private func configure(_ displayLink: CADisplayLink) {
-        let maximumFramesPerSecond = UIScreen.main.maximumFramesPerSecond
-        let requestedFrameRate = FrameRatePreference.isHighRefreshEnabled
-            ? targetFrameRate
-            : min(targetFrameRate, FrameRatePreference.targetFrameRate)
-        let targetFramesPerSecond = min(requestedFrameRate, maximumFramesPerSecond)
-        if #available(iOS 15.0, *) {
-            let target = Float(targetFramesPerSecond)
-            // 1.0.8 fix2: 演示页要稳定跑到页面目标帧率；关闭强制120时目标会先被限制到80。
-            displayLink.preferredFrameRateRange = CAFrameRateRange(
-                minimum: 30,
-                maximum: target,
-                preferred: target
-            )
-        } else {
-            displayLink.preferredFramesPerSecond = targetFramesPerSecond
-        }
+        DemoFrameRatePreference.configureForegroundRequest(
+            displayLink,
+            targetFrameRate: targetFrameRate,
+            minimumFrameRateWhenDisabled: 30
+        )
     }
 
     final class Coordinator {
         var displayLink: CADisplayLink?
+        weak var driverView: UIView?
+        var configureDisplayLink: ((CADisplayLink) -> Void)?
         private var frameTick: Binding<Int>
         private var didInstallObservers = false
 
@@ -840,14 +895,16 @@ private struct FrameRateDriverView: UIViewRepresentable {
             center.addObserver(self, selector: #selector(updatePausedState), name: UIApplication.didBecomeActiveNotification, object: nil)
             center.addObserver(self, selector: #selector(updatePausedState), name: UIApplication.willResignActiveNotification, object: nil)
             center.addObserver(self, selector: #selector(updatePausedState), name: UIApplication.didEnterBackgroundNotification, object: nil)
+            center.addObserver(self, selector: #selector(updatePausedState), name: DemoFrameRatePreference.didChangeNotification, object: nil)
         }
 
         @objc func updatePausedState() {
-            displayLink?.isPaused = UIApplication.shared.applicationState != .active
+            if let displayLink { configureDisplayLink?(displayLink) }
+            displayLink?.isPaused = UIApplication.shared.applicationState != .active || driverView?.window == nil
         }
 
         @objc func step() {
-            guard UIApplication.shared.applicationState == .active else {
+            guard UIApplication.shared.applicationState == .active, driverView?.window != nil else {
                 displayLink?.isPaused = true
                 return
             }

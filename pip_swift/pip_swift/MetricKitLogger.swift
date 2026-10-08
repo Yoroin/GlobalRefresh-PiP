@@ -13,10 +13,16 @@ final class MetricKitLogger: NSObject, MXMetricManagerSubscriber {
     private let storageKey = "pip.metricKit.payloads"
     private let storageFingerprintsKey = "pip.metricKit.payloadFingerprints"
     private let historyStatusKey = "pip.metricKit.beta5HistoryStatus"
+    private let modernStatusKey = "pip.metricKit.iOS27Status"
+    private let modernEventsKey = "pip.metricKit.iOS27Events"
+    private let modernEventFingerprintsKey = "pip.metricKit.iOS27EventFingerprints"
     private let maximumPayloads = 5
     private let maximumPayloadBytes = 256 * 1024
+    private let maximumModernEvents = 10
+    private let storageLock = NSLock()
     private var isStarted = false
     private var hasImportedPastPayloads = false
+    private var modernBridge: AnyObject?
 
     private override init() {
         super.init()
@@ -28,13 +34,31 @@ final class MetricKitLogger: NSObject, MXMetricManagerSubscriber {
         isStarted = true
         MXMetricManager.shared.add(self)
         importPastPayloads()
-        AppDebugLogger.log("BETA5 MetricKit订阅已启动")
+        if #available(iOS 27.0, *) {
+            let bridge = IOS27MetricKitBridge(
+                onMetricReport: { [weak self] report in
+                    self?.handleModernMetricReport(report)
+                },
+                onDiagnosticReport: { [weak self] report in
+                    self?.handleModernDiagnosticReport(report)
+                }
+            )
+            bridge.start()
+            modernBridge = bridge
+            AppDebugLogger.log("MetricKit订阅已启动：旧版兼容通道 + iOS27新通道")
+        } else {
+            AppDebugLogger.log("MetricKit订阅已启动：旧版兼容通道")
+        }
     }
 
     func stop() {
         guard isStarted else { return }
         isStarted = false
         MXMetricManager.shared.remove(self)
+        if #available(iOS 27.0, *) {
+            (modernBridge as? IOS27MetricKitBridge)?.stop()
+        }
+        modernBridge = nil
     }
 
     func didReceive(_ payloads: [MXMetricPayload]) {
@@ -45,13 +69,13 @@ final class MetricKitLogger: NSObject, MXMetricManagerSubscriber {
             "系统新回调：指标=\(payloads.count)，\(summary)",
             forKey: historyStatusKey
         )
-        AppDebugLogger.logCritical("BETA5 MetricKit收到指标：\(payloads.count)条；\(summary)")
+        AppDebugLogger.logCritical("MetricKit收到指标：\(payloads.count)条；\(summary)")
     }
 
     func didReceive(_ payloads: [MXDiagnosticPayload]) {
         guard AppDebugLogger.isDebugModeEnabled else { return }
         appendPayloads(payloads.map { $0.jsonRepresentation() }, source: "系统新回调诊断")
-        AppDebugLogger.logCritical("BETA5 MetricKit收到诊断载荷：\(payloads.count)条")
+        AppDebugLogger.logCritical("MetricKit收到诊断载荷：\(payloads.count)条")
     }
 
     func copyToPasteboard() {
@@ -59,10 +83,15 @@ final class MetricKitLogger: NSObject, MXMetricManagerSubscriber {
     }
 
     func resetLogs() {
+        storageLock.lock()
+        defer { storageLock.unlock() }
         let defaults = UserDefaults.standard
         defaults.removeObject(forKey: storageKey)
         defaults.removeObject(forKey: storageFingerprintsKey)
         defaults.removeObject(forKey: historyStatusKey)
+        defaults.removeObject(forKey: modernStatusKey)
+        defaults.removeObject(forKey: modernEventsKey)
+        defaults.removeObject(forKey: modernEventFingerprintsKey)
         hasImportedPastPayloads = false
     }
 
@@ -72,7 +101,11 @@ final class MetricKitLogger: NSObject, MXMetricManagerSubscriber {
         let build = info?["CFBundleVersion"] as? String ?? "unknown"
         let bundleID = Bundle.main.bundleIdentifier ?? "unknown"
         let device = UIDevice.current
+        storageLock.lock()
         let payloads = UserDefaults.standard.stringArray(forKey: storageKey) ?? []
+        let modernStatus = UserDefaults.standard.string(forKey: modernStatusKey)
+        let modernEvents = UserDefaults.standard.stringArray(forKey: modernEventsKey) ?? []
+        storageLock.unlock()
 
         return """
         全局高刷系统指标日志（MetricKit）
@@ -86,8 +119,16 @@ final class MetricKitLogger: NSObject, MXMetricManagerSubscriber {
         指标来源：Apple MetricKit，本机系统后台汇总生成，不联网。
         数据说明：MetricKit 通常需要约24小时才会回调每日系统指标；刚安装或使用时间太短时可能为空。
 
-        BETA5历史退出指标读取：
+        旧版兼容通道历史退出指标读取：
         \(UserDefaults.standard.string(forKey: historyStatusKey) ?? "尚未读取；请确认调试模式已开启并重新进入App。")
+
+        iOS27新后台终止指标：
+        \(modernStatus ?? "当前系统未提供iOS27新指标，或尚未收到每日报告。")
+
+        iOS27新通道最近事件：
+        \(modernEvents.joined(separator: "\n\n").isEmpty
+            ? "暂无"
+            : modernEvents.joined(separator: "\n\n"))
 
         最近系统指标：
         \(payloads.isEmpty ? "暂无系统指标，请使用一段时间后第二天再复制。" : payloads.joined(separator: "\n\n----- MetricKit Payload -----\n\n"))
@@ -112,11 +153,13 @@ final class MetricKitLogger: NSObject, MXMetricManagerSubscriber {
         let exitSummary = historicalExitSummary(from: metricPayloads)
         let status = "历史指标=\(metricPayloads.count)条，历史诊断=\(diagnosticPayloads.count)条；\(exitSummary)"
         UserDefaults.standard.set(status, forKey: historyStatusKey)
-        AppDebugLogger.logCritical("BETA5 MetricKit历史读取完成：\(status)")
+        AppDebugLogger.logCritical("MetricKit历史读取完成：\(status)")
     }
 
     private func appendPayloads(_ payloadData: [Data], source: String) {
         guard !payloadData.isEmpty else { return }
+        storageLock.lock()
+        defer { storageLock.unlock() }
         let defaults = UserDefaults.standard
         var payloads = defaults.stringArray(forKey: storageKey) ?? []
         var fingerprints = defaults.stringArray(forKey: storageFingerprintsKey) ?? []
@@ -147,6 +190,118 @@ final class MetricKitLogger: NSObject, MXMetricManagerSubscriber {
         }
         defaults.set(payloads, forKey: storageKey)
         defaults.set(fingerprints, forKey: storageFingerprintsKey)
+    }
+
+    @available(iOS 27.0, *)
+    private func handleModernMetricReport(_ report: MetricReport) {
+        guard AppDebugLogger.isDebugModeEnabled else { return }
+        let data = try? JSONEncoder().encode(report)
+        let summary = modernMetricSummary(report)
+        let range = formatDateRange(report.timeRange)
+        let environment = report.environment.map {
+            "系统=\($0.osVersion),设备=\($0.deviceType),版本=\($0.latestApplicationVersion)(\($0.applicationBuildVersion)),低电量模式=\($0.lowPowerModeEnabled)"
+        } ?? "环境信息不可用"
+        let event = "[iOS27 MetricManager指标] 时间=\(range)；\(environment)；\(summary)"
+        appendModernEvent(event, fingerprintData: data)
+        storageLock.lock()
+        UserDefaults.standard.set(
+            "最近指标时间=\(range)；\(summary)",
+            forKey: modernStatusKey
+        )
+        storageLock.unlock()
+        if let data {
+            appendPayloads([data], source: "iOS27 MetricManager指标")
+        }
+        AppDebugLogger.logCritical("iOS27 MetricManager收到指标：\(summary)")
+    }
+
+    @available(iOS 27.0, *)
+    private func handleModernDiagnosticReport(_ report: DiagnosticReport) {
+        guard AppDebugLogger.isDebugModeEnabled else { return }
+        let data = try? JSONEncoder().encode(report)
+        let kind: String
+        switch report.result {
+        case .crash: kind = "崩溃"
+        case .hang: kind = "卡顿"
+        case .cpuException: kind = "CPU异常"
+        case .diskWriteException: kind = "磁盘写入异常"
+        case .appLaunch: kind = "启动诊断"
+        case .memoryException: kind = "内存异常"
+        @unknown default: kind = "未知诊断"
+        }
+        let range = formatDateRange(report.timeRange)
+        let environment = "系统=\(report.environment.osVersion),设备=\(report.environment.deviceType),版本=\(report.environment.applicationVersion)(\(report.environment.applicationBuildVersion)),低电量模式=\(report.environment.lowPowerModeEnabled)"
+        let event = "[iOS27 MetricManager诊断] 类型=\(kind)；时间=\(range)；\(environment)"
+        appendModernEvent(event, fingerprintData: data)
+        if let data {
+            appendPayloads([data], source: "iOS27 MetricManager诊断：\(kind)")
+        }
+        AppDebugLogger.logCritical("iOS27 MetricManager收到诊断：类型=\(kind)，时间=\(range)")
+    }
+
+    @available(iOS 27.0, *)
+    private func modernMetricSummary(_ report: MetricReport) -> String {
+        var counts: [String: Int] = [:]
+
+        func add(_ name: String, _ value: Int) {
+            guard value > 0 else { return }
+            counts[name, default: 0] += value
+        }
+
+        let values = report.stateEntries.flatMap { $0.values } + report.intervalEntries.flatMap { $0.values }
+        for value in values {
+            switch value {
+            case .backgroundTermination(let metric):
+                add("后台正常终止", metric.normalTerminationCount)
+                add("后台内存限制", metric.memoryLimitTerminationCount)
+                add("后台CPU过高", metric.highCPUTerminationCount)
+                add("后台系统压力", metric.systemPressureTerminationCount)
+                add("后台非法内存访问", metric.badAccessTerminationCount)
+                add("后台异常终止", metric.abnormalTerminationCount)
+                add("后台非法指令", metric.illegalInstructionTerminationCount)
+                add("后台Watchdog", metric.watchdogTerminationCount)
+                add("后台文件锁", metric.fileLockTerminationCount)
+                add("后台任务超时", metric.taskTimeoutTerminationCount)
+            case .foregroundTermination(let metric):
+                add("前台正常终止", metric.normalTerminationCount)
+                add("前台内存限制", metric.memoryLimitTerminationCount)
+                add("前台非法内存访问", metric.badAccessTerminationCount)
+                add("前台异常终止", metric.abnormalTerminationCount)
+                add("前台非法指令", metric.illegalInstructionTerminationCount)
+                add("前台Watchdog", metric.watchdogTerminationCount)
+            default:
+                continue
+            }
+        }
+
+        guard !counts.isEmpty else {
+            return "未发现后台/前台终止计数"
+        }
+        return counts.keys.sorted().map { "\($0)=\(counts[$0] ?? 0)" }.joined(separator: "，")
+    }
+
+    private func appendModernEvent(_ event: String, fingerprintData: Data?) {
+        storageLock.lock()
+        defer { storageLock.unlock() }
+        let defaults = UserDefaults.standard
+        var events = defaults.stringArray(forKey: modernEventsKey) ?? []
+        var fingerprints = defaults.stringArray(forKey: modernEventFingerprintsKey) ?? []
+        let fingerprint = fingerprintData.map(payloadFingerprint) ?? payloadFingerprint(for: Data(event.utf8))
+        guard !fingerprints.contains(fingerprint) else { return }
+        events.append(event)
+        fingerprints.append(fingerprint)
+        if events.count > maximumModernEvents {
+            events.removeFirst(events.count - maximumModernEvents)
+        }
+        if fingerprints.count > maximumModernEvents {
+            fingerprints.removeFirst(fingerprints.count - maximumModernEvents)
+        }
+        defaults.set(events, forKey: modernEventsKey)
+        defaults.set(fingerprints, forKey: modernEventFingerprintsKey)
+    }
+
+    private func formatDateRange(_ range: DateInterval) -> String {
+        "\(beijingFormatter.string(from: range.start))~\(beijingFormatter.string(from: range.end))"
     }
 
     private func historicalExitSummary(from payloads: [MXMetricPayload]) -> String {
@@ -280,5 +435,46 @@ final class MetricKitLogger: NSObject, MXMetricManagerSubscriber {
             guard let value = element.value as? Int8, value != 0 else { return }
             identifier.append(String(UnicodeScalar(UInt8(value))))
         }
+    }
+}
+
+@available(iOS 27.0, *)
+private final class IOS27MetricKitBridge {
+    private let manager = MetricManager()
+    private let onMetricReport: (MetricReport) -> Void
+    private let onDiagnosticReport: (DiagnosticReport) -> Void
+    private var metricTask: Task<Void, Never>?
+    private var diagnosticTask: Task<Void, Never>?
+
+    init(
+        onMetricReport: @escaping (MetricReport) -> Void,
+        onDiagnosticReport: @escaping (DiagnosticReport) -> Void
+    ) {
+        self.onMetricReport = onMetricReport
+        self.onDiagnosticReport = onDiagnosticReport
+    }
+
+    func start() {
+        guard metricTask == nil, diagnosticTask == nil else { return }
+        let manager = self.manager
+        metricTask = Task { [weak self] in
+            for await report in manager.metricReports {
+                guard !Task.isCancelled else { break }
+                self?.onMetricReport(report)
+            }
+        }
+        diagnosticTask = Task { [weak self] in
+            for await report in manager.diagnosticReports {
+                guard !Task.isCancelled else { break }
+                self?.onDiagnosticReport(report)
+            }
+        }
+    }
+
+    func stop() {
+        metricTask?.cancel()
+        diagnosticTask?.cancel()
+        metricTask = nil
+        diagnosticTask = nil
     }
 }

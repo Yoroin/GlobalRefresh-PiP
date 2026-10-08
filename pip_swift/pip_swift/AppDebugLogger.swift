@@ -181,6 +181,15 @@ enum AppDebugLogger {
         ProcessTerminationDiagnostics.reset()
     }
 
+    static func trimForMemoryPressure() {
+        logQueue.async {
+            let retained = memoryBuffer.suffix(100)
+            memoryBuffer = Array(retained)
+            memoryBufferBytes = memoryBuffer.reduce(into: 0) { $0 += $1.utf8.count }
+            UserDefaults.standard.set(memoryBuffer, forKey: storageKey)
+        }
+    }
+
     private static func limitEntry(_ text: String) -> String {
         guard text.utf8.count > maximumEntryBytes else { return text }
         let marker = "\n[日志过长，已截断]"
@@ -215,6 +224,214 @@ enum AppDebugLogger {
             identifier.append(String(UnicodeScalar(UInt8(value))))
         }
     }
+}
+
+private struct LightweightRuntimeSample: Codable {
+    let timestamp: TimeInterval
+    let reason: String
+    let physicalFootprintMB: Double
+    let threadCount: Int
+    let appState: String
+    let pipActive: Bool?
+    let engineRoute: String?
+    let keepAlivePolicy: String
+    let height: Double?
+    let audioPlaying: Bool
+    let lowPowerModeEnabled: Bool
+    let thermalState: Int
+    let appVersion: String
+    let buildNumber: String
+}
+
+enum LightweightRuntimeDiagnostics {
+    private static let storageKey = "pip.lightweightRuntime.samples.beta2"
+    private static let lastPeriodicSampleKey = "pip.lightweightRuntime.lastPeriodicSample.beta2"
+    private static let minimumPeriodicInterval: TimeInterval = 10 * 60
+    private static let maximumSamples = 320
+    private static let queue = DispatchQueue(label: "com.yoroin.globalrefresh.lightweight-runtime", qos: .utility)
+    private static let observerLock = NSLock()
+    private static var observerTokens: [NSObjectProtocol] = []
+
+    static func start() {
+        installObserversIfNeeded()
+        record(reason: "App启动", force: true)
+    }
+
+    static func recordPiPCheckpoint(
+        reason: String,
+        isActive: Bool,
+        engineRoute: String,
+        keepAlivePolicy: String,
+        height: CGFloat,
+        audioPlaying: Bool,
+        force: Bool = false
+    ) {
+        record(
+            reason: reason,
+            force: force,
+            pipActive: isActive,
+            engineRoute: engineRoute,
+            keepAlivePolicy: keepAlivePolicy,
+            height: Double(height),
+            audioPlaying: audioPlaying
+        )
+    }
+
+    static func exportText() -> String {
+        let samples = loadSamplesSynchronously()
+        guard !samples.isEmpty else {
+            return "轻量常驻内存记录（调试模式关闭时仍记录）\n暂无记录"
+        }
+
+        let lines = samples.map { sample in
+            let date = Date(timeIntervalSince1970: sample.timestamp)
+            let pipText = sample.pipActive.map { $0 ? "active" : "inactive" } ?? "unknown"
+            let routeText = sample.engineRoute ?? "unknown"
+            let heightText = sample.height.map { String(format: "%.1fpt", $0) } ?? "unknown"
+            return String(
+                format: "%@ | %@ | footprint=%.1fMB | threads=%d | App=%@ | PiP=%@ | route=%@ | policy=%@ | height=%@ | audio=%@ | lowPower=%@ | thermal=%d | version=%@(%@)",
+                formatter.string(from: date),
+                sample.reason,
+                sample.physicalFootprintMB,
+                sample.threadCount,
+                sample.appState,
+                pipText,
+                routeText,
+                sample.keepAlivePolicy,
+                heightText,
+                sample.audioPlaying ? "on" : "off",
+                sample.lowPowerModeEnabled ? "on" : "off",
+                sample.thermalState,
+                sample.appVersion,
+                sample.buildNumber
+            )
+        }
+
+        return """
+        轻量常驻内存记录（调试模式关闭时仍记录）
+        采样规则：PiP运行期间每10分钟一次，并记录启动、前后台切换和内存警告；最多保留320条。
+        注意：记录物理占用趋势，不等同于系统确认的Jetsam原因。
+
+        \(lines.joined(separator: "\n"))
+        """
+    }
+
+    static func reset() {
+        queue.sync {
+            let defaults = UserDefaults.standard
+            defaults.removeObject(forKey: storageKey)
+            defaults.removeObject(forKey: lastPeriodicSampleKey)
+        }
+    }
+
+    private static func record(
+        reason: String,
+        force: Bool,
+        pipActive: Bool? = nil,
+        engineRoute: String? = nil,
+        keepAlivePolicy: String = KeepAlivePolicy.current.rawValue,
+        height: Double? = nil,
+        audioPlaying: Bool = false
+    ) {
+        let now = Date()
+        let appState = applicationStateText(UIApplication.shared.applicationState)
+        let lowPowerModeEnabled = ProcessInfo.processInfo.isLowPowerModeEnabled
+        let thermalState = ProcessInfo.processInfo.thermalState.rawValue
+        let version = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "unknown"
+        let build = Bundle.main.infoDictionary?["CFBundleVersion"] as? String ?? "unknown"
+
+        queue.async {
+            let defaults = UserDefaults.standard
+            let previous = defaults.double(forKey: lastPeriodicSampleKey)
+            guard force || previous <= 0 || now.timeIntervalSince1970 - previous >= minimumPeriodicInterval else {
+                return
+            }
+
+            let process = PerformanceDiagnosticsLogger.lightweightProcessSnapshot()
+            let sample = LightweightRuntimeSample(
+                timestamp: now.timeIntervalSince1970,
+                reason: String(reason.prefix(80)),
+                physicalFootprintMB: (process.physicalFootprintMB * 10).rounded() / 10,
+                threadCount: process.threadCount,
+                appState: appState,
+                pipActive: pipActive,
+                engineRoute: engineRoute,
+                keepAlivePolicy: keepAlivePolicy,
+                height: height,
+                audioPlaying: audioPlaying,
+                lowPowerModeEnabled: lowPowerModeEnabled,
+                thermalState: thermalState,
+                appVersion: version,
+                buildNumber: build
+            )
+            var samples = loadSamples(defaults: defaults)
+            samples.append(sample)
+            if samples.count > maximumSamples {
+                samples.removeFirst(samples.count - maximumSamples)
+            }
+            if let data = try? JSONEncoder().encode(samples) {
+                defaults.set(data, forKey: storageKey)
+                defaults.set(now.timeIntervalSince1970, forKey: lastPeriodicSampleKey)
+            }
+        }
+    }
+
+    private static func installObserversIfNeeded() {
+        observerLock.lock()
+        let alreadyInstalled = !observerTokens.isEmpty
+        observerLock.unlock()
+        guard !alreadyInstalled else { return }
+
+        let center = NotificationCenter.default
+        let tokens = [
+            center.addObserver(forName: UIApplication.didEnterBackgroundNotification, object: nil, queue: .main) { _ in
+                record(reason: "App进入后台", force: true)
+            },
+            center.addObserver(forName: UIApplication.willEnterForegroundNotification, object: nil, queue: .main) { _ in
+                record(reason: "App即将回前台", force: true)
+            },
+            center.addObserver(forName: UIApplication.didReceiveMemoryWarningNotification, object: nil, queue: .main) { _ in
+                record(reason: "收到内存警告", force: true)
+                AppDebugLogger.trimForMemoryPressure()
+                BackgroundTaskManager.shared.releasePreparedAudioIfInactive()
+                URLCache.shared.removeAllCachedResponses()
+            }
+        ]
+
+        observerLock.lock()
+        if observerTokens.isEmpty {
+            observerTokens = tokens
+        } else {
+            tokens.forEach(center.removeObserver)
+        }
+        observerLock.unlock()
+    }
+
+    private static func loadSamplesSynchronously() -> [LightweightRuntimeSample] {
+        queue.sync { loadSamples(defaults: .standard) }
+    }
+
+    private static func loadSamples(defaults: UserDefaults) -> [LightweightRuntimeSample] {
+        guard let data = defaults.data(forKey: storageKey) else { return [] }
+        return (try? JSONDecoder().decode([LightweightRuntimeSample].self, from: data)) ?? []
+    }
+
+    private static func applicationStateText(_ state: UIApplication.State) -> String {
+        switch state {
+        case .active: return "active"
+        case .inactive: return "inactive"
+        case .background: return "background"
+        @unknown default: return "unknown"
+        }
+    }
+
+    private static let formatter: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.timeZone = TimeZone(identifier: "Asia/Shanghai")
+        formatter.dateFormat = "yyyy-MM-dd HH:mm:ss"
+        return formatter
+    }()
 }
 
 enum DiagnosticsRuntimeState {
@@ -562,6 +779,11 @@ private final class FrameStutterTarget: NSObject {
     }
 }
 
+struct LightweightProcessSnapshot {
+    let physicalFootprintMB: Double
+    let threadCount: Int
+}
+
 enum PerformanceDiagnosticsLogger {
     private static let enabledKey = "pip.debug.performanceDiagnosticsEnabled"
     private static let queue = DispatchQueue(label: "pip.debug.performance-diagnostics")
@@ -624,6 +846,14 @@ enum PerformanceDiagnosticsLogger {
 
     static func currentSnapshotText() -> String {
         makeSnapshot()
+    }
+
+    static func lightweightProcessSnapshot() -> LightweightProcessSnapshot {
+        let threadSnapshot = threadUsageSnapshot()
+        return LightweightProcessSnapshot(
+            physicalFootprintMB: physicalFootprintMB(),
+            threadCount: threadSnapshot.threadCount
+        )
     }
 
     private static func makeSnapshot() -> String {
@@ -848,6 +1078,17 @@ enum DebugDiagnosticsMonitor {
         PerformanceDiagnosticsLogger.stop()
     }
 }
+struct ProcessTerminationEvidenceSnapshot: Codable, Equatable {
+    let capturedAt: Date
+    let lastCheckpointAt: Date?
+    let memoryWarningCount: Int
+    let lastMemoryWarningAt: Date?
+    let checkpointText: String
+    let inferenceText: String
+    let systemRestartDetected: Bool
+    let metricKitStatus: String?
+}
+
 enum ProcessTerminationDiagnostics {
     private static let prefix = "pip.debug.processExit."
     private static let runActiveKey = prefix + "runActive"
@@ -859,6 +1100,7 @@ enum ProcessTerminationDiagnostics {
     private static let memoryWarningCountKey = prefix + "memoryWarningCount"
     private static let lastMemoryWarningKey = prefix + "lastMemoryWarning"
     private static let previousRunSummaryKey = prefix + "previousRunSummary"
+    private static let previousRunEvidenceKey = prefix + "previousRunEvidence.v1"
     private static let observerLock = NSLock()
     private static var observerTokens: [NSObjectProtocol] = []
 
@@ -896,6 +1138,21 @@ enum ProcessTerminationDiagnostics {
             let checkpointText = dateText(previousCheckpointDate)
             let summary = "上次进程未记录正常终止 | 启动=\(previousLaunchText) | 最后现场=\(checkpointText) | 内存警告=\(previousMemoryWarnings)次 | 推断=\(inference) | 现场{\(previousCheckpoint)}"
             defaults.set(summary, forKey: previousRunSummaryKey)
+            let evidence = ProcessTerminationEvidenceSnapshot(
+                capturedAt: Date(),
+                lastCheckpointAt: previousCheckpointDate > 0 ? Date(timeIntervalSince1970: previousCheckpointDate) : nil,
+                memoryWarningCount: previousMemoryWarnings,
+                lastMemoryWarningAt: previousLastMemoryWarning > 0 ? Date(timeIntervalSince1970: previousLastMemoryWarning) : nil,
+                checkpointText: previousCheckpoint,
+                inferenceText: inference,
+                systemRestartDetected: bootChanged,
+                metricKitStatus: defaults.string(forKey: "pip.metricKit.beta5HistoryStatus")
+            )
+            if let data = try? JSONEncoder().encode(evidence) {
+                defaults.set(data, forKey: previousRunEvidenceKey)
+            }
+        } else {
+            defaults.removeObject(forKey: previousRunEvidenceKey)
         }
 
         defaults.set(true, forKey: runActiveKey)
@@ -954,6 +1211,11 @@ enum ProcessTerminationDiagnostics {
         """
     }
 
+    static func previousRunEvidenceSnapshot() -> ProcessTerminationEvidenceSnapshot? {
+        guard let data = UserDefaults.standard.data(forKey: previousRunEvidenceKey) else { return nil }
+        return try? JSONDecoder().decode(ProcessTerminationEvidenceSnapshot.self, from: data)
+    }
+
     static func reset() {
         observerLock.lock()
         let tokens = observerTokens
@@ -971,7 +1233,8 @@ enum ProcessTerminationDiagnostics {
             lastCheckpointDateKey,
             memoryWarningCountKey,
             lastMemoryWarningKey,
-            previousRunSummaryKey
+            previousRunSummaryKey,
+            previousRunEvidenceKey
         ].forEach(defaults.removeObject(forKey:))
     }
 
