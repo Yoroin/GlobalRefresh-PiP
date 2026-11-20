@@ -285,7 +285,66 @@ class ViewController: UIViewController, AVPictureInPictureControllerDelegate {
     private var playerLayer: AVPlayerLayer!
     private var pipController: AVPictureInPictureController!
     private let pipCoexistenceExperiment = PiPCoexistenceExperiment()
+    private var isStoppingMaintainedControls = false
+    private weak var lastMaintainedControlsController: AVPictureInPictureController?
     private var isHiddenReferenceSession = false
+    private let visibilityObserver = PiPVisibilityObserver()
+    private var observedStashedOrUnderLock: Bool?
+    private var visibilityProtectedDataUnavailable = !UIApplication.shared.isProtectedDataAvailable
+    private var lastVisibilityRefreshPause: Bool?
+
+    var shouldPauseBackgroundRefreshForVisibilityTrial: Bool {
+        PiPVisibilityRefreshPolicy.shouldPause(
+            enabled: PiPVisibilityRefreshPolicy.isEnabled,
+            eligible: !shouldUsePlayerLayerPiPCompatibility && currentKeepAlivePolicy == .pipOnly,
+            active: pipController?.isPictureInPictureActive == true,
+            hidden: isPiPVisuallyHidden,
+            suspended: isPiPSuspendedAtSide,
+            stashedOrUnderLock: observedStashedOrUnderLock,
+            protectedDataUnavailable: visibilityProtectedDataUnavailable
+        )
+    }
+
+    private var shouldPauseContentRefreshForVisibilityTrial: Bool {
+        PiPVisibilityRefreshPolicy.pauseContentUpdates && shouldPauseBackgroundRefreshForVisibilityTrial
+    }
+
+    private func updateVisibilityDrivenContentRefresh(reason: String) {
+        let paused = shouldPauseBackgroundRefreshForVisibilityTrial
+        if shouldPauseContentRefreshForVisibilityTrial {
+            stopNativeContentRefresh()
+            hiddenReferenceRenderView?.stop()
+            stopDisplayLinks()
+            stopClockTimer()
+        } else if usesIOS15NativeContentRefresh {
+            updateNativeContentRefresh()
+        } else if isHiddenReferenceSession {
+            configureHiddenReferenceRenderProbe(reason: reason)
+        }
+        guard lastVisibilityRefreshPause != paused else { return }
+        lastVisibilityRefreshPause = paused
+        AppDebugLogger.logCritical("Visibility refresh group B [\(reason)]: enabled=\(PiPVisibilityRefreshPolicy.isEnabled), visibilityPause=\(paused), contentPaused=\(shouldPauseContentRefreshForVisibilityTrial), pauseExtraBackgroundDriver=\(PiPVisibilityRefreshPolicy.pauseExtraBackgroundDriver && paused), hidden=\(isPiPVisuallyHidden), publicSuspended=\(isPiPSuspendedAtSide), stashedOrUnderLock=\(observedStashedOrUnderLock.map(String.init) ?? "unknown"), protectedDataUnavailable=\(visibilityProtectedDataUnavailable); playback/contentType/size/audio unchanged; battery accounting and global120 require device validation")
+        NotificationCenter.default.post(name: Self.piPEngineRuntimeModeDidChangeNotification, object: nil)
+    }
+
+    private func observePiPVisibilityAfterStart(_ controller: AVPictureInPictureController) {
+        guard PiPVisibilityRefreshPolicy.isEnabled, !shouldUsePlayerLayerPiPCompatibility,
+              currentKeepAlivePolicy == .pipOnly else { return }
+        observedStashedOrUnderLock = nil
+        let installed: Bool
+        if let proxy = PiPVisibilityObserver.proxy(for: controller) {
+            installed = visibilityObserver.install(proxy: proxy) { [weak self, weak controller] value in
+                guard let self, let controller, self.pipController === controller,
+                      controller.isPictureInPictureActive, !self.isStoppingPiP else { return }
+                self.observedStashedOrUnderLock = value
+                self.updateVisibilityDrivenContentRefresh(reason: "private stashedOrUnderLock=\(value)")
+            }
+        } else {
+            installed = false
+        }
+        AppDebugLogger.logCritical("Visibility refresh observer: installed=\(installed); private signal combines stash/lock, not a side/direction detector; public suspension and protected-data events are fallback signals only")
+        updateVisibilityDrivenContentRefresh(reason: "didStart")
+    }
     private var hiddenReferenceSessionID: UUID?
     private var hiddenReferenceRenderView: PiPHiddenReferenceRenderView?
     private lazy var pipDelegateProxy = PiPDelegateProxy(owner: self)
@@ -302,6 +361,15 @@ class ViewController: UIViewController, AVPictureInPictureControllerDelegate {
     private var videoCallContentController: UIViewController?
     private var hostingController: UIHostingController<PiPHomeView>?
     private var scrollDisplayLink: CADisplayLink?
+    private var nativeContentDisplayLink: CADisplayLink?
+    private var nativeContentLastLogTimestamp: CFTimeInterval?
+    private var nativeContentTickCount = 0
+    private final class NativeContentTarget: NSObject {
+        weak var owner: ViewController?
+        init(owner: ViewController) { self.owner = owner }
+        @objc func tick(_ link: CADisplayLink) { owner?.updateNativeContent(link) }
+    }
+    private lazy var nativeContentTarget = NativeContentTarget(owner: self)
     private var clockDisplayLink: CADisplayLink?
     private var fpsProbeDisplayLink: CADisplayLink?
     private var playerLayerActivityDisplayLink: CADisplayLink?
@@ -335,6 +403,11 @@ class ViewController: UIViewController, AVPictureInPictureControllerDelegate {
     private var pipStartTimeoutWorkItem: DispatchWorkItem?
     private var pipTransitionWatchdogWorkItem: DispatchWorkItem?
     private var pendingPlayerItemReloadWorkItem: DispatchWorkItem?
+    private var backingVideoJob: BlockOperation?
+    private var pendingVideoSpec: BackingVideoSpec?
+    private var onBackingVideoReady: (() -> Void)?
+    private var preparedBackingVideo: (spec: BackingVideoSpec, lease: GeneratedPiPVideoCache.Lease)?
+    private var playingVideoLease: GeneratedPiPVideoCache.Lease?
     private var pendingPlayerLayerAudioReleaseWorkItem: DispatchWorkItem?
     private var hasPrimedPlayerLayerPiPStart = false
     private var playerLayerPiPStartAudioMode: PlayerLayerPiPStartAudioMode = .defaultStartupMode
@@ -708,12 +781,15 @@ class ViewController: UIViewController, AVPictureInPictureControllerDelegate {
         DiagnosticsRuntimeState.updateCurrentPage("悬浮窗")
         AppDebugLogger.trimOnLaunch()
         AppDebugLogger.registerBackgroundFlush()
-        AppDebugLogger.log("Home viewDidLoad")
+        AppDebugLogger.logRuntime("Home viewDidLoad; new process/page initialization, not proof of termination cause")
         PowerUsageLogger.markLaunch()
         KeepAliveNotificationTester.sanitizeOnLaunch()
         let keepAliveInterruptionNotice = KeepAliveLogger.markAppLaunch()
 
         loadHomePreferences()
+        PiPRefreshRequestTrial.migrateDefaultBaselineIfNeeded(isReleaseBuild: !L10n.isBetaBuild)
+        let retiredCoexistenceKeys = PiPCoexistencePreferences.migrate()
+        AppDebugLogger.logCritical("Coexistence preference audit: removedRetiredKeys=\(retiredCoexistenceKeys), route=\(pipEngineRoute.rawValue), policy=\(currentKeepAlivePolicy.diagnosticsName); height/mode/user settings preserved; contentType is runtime-only, not a disk cache")
         loadPiPRuntimeState()
         setupSwiftUI()
         lastObservedSystemAppearance = currentSystemAppearance
@@ -736,6 +812,7 @@ class ViewController: UIViewController, AVPictureInPictureControllerDelegate {
         NotificationCenter.default.addObserver(self, selector: #selector(handleKeepAliveModeDidChange), name: Self.iOS26KeepAliveModeDidChangeNotification, object: nil)
         NotificationCenter.default.addObserver(self, selector: #selector(handleFrameRatePreferenceDidChange), name: FrameRatePreference.didChangeNotification, object: nil)
         NotificationCenter.default.addObserver(self, selector: #selector(handleLanguageDidChange), name: L10n.languageDidChangeNotification, object: nil)
+        NotificationCenter.default.addObserver(self, selector: #selector(handleRefreshRequestTrialChanged), name: PiPRefreshRequestTrial.didChangeNotification, object: nil)
     }
 
     override func viewDidAppear(_ animated: Bool) {
@@ -768,6 +845,8 @@ class ViewController: UIViewController, AVPictureInPictureControllerDelegate {
     }
 
     deinit {
+        backingVideoJob?.cancel()
+        stopNativeContentRefresh()
         hiddenReferenceRenderView?.stop()
         if let token = hiddenReferenceSessionID { PiPHiddenReferenceMode.end(owner: token) }
         if isHiddenReferenceSession { pipSourceView?.removeFromSuperview() }
@@ -1234,6 +1313,7 @@ class ViewController: UIViewController, AVPictureInPictureControllerDelegate {
         if stopActivePiPForEngineRouteSwitchIfNeeded(route) {
             return
         }
+        cancelBackingVideoJob()
 
         isLegacyPlayerLayerFallbackActive = false
         cancelDelayedPiPHideCountdown(reason: "切换悬浮窗底层")
@@ -1307,7 +1387,7 @@ class ViewController: UIViewController, AVPictureInPictureControllerDelegate {
     private func presentPlayerLayerRouteConfirmation(onConfirm: @escaping () -> Void) {
         let message = PiPRouteDescriptions.playerLayerText
         let alert = UIAlertController(
-            title: L10n.text("确认切换新方案", "Confirm New Route"),
+            title: L10n.text("确认切换至备选方案", "Switch to the Alternative Route?"),
             message: message,
             preferredStyle: .alert
         )
@@ -1329,7 +1409,7 @@ class ViewController: UIViewController, AVPictureInPictureControllerDelegate {
         }
         isExtremeSilentModeEnabled = isEnabled
         let message = isEnabled
-            ? L10n.text("已开启极限静默模式，并切换为新方案。请重新打开悬浮窗测试。", "Extreme silent mode is on and the new route is active. Reopen PiP to test.")
+            ? L10n.text("已开启极限静默模式，并切换为备选方案。请重新打开悬浮窗测试。", "Extreme silent mode is on and the alternative route is active. Reopen PiP to test.")
             : L10n.text("已关闭极限静默模式", "Extreme silent mode is off.")
         showMessage(message)
     }
@@ -1402,6 +1482,7 @@ class ViewController: UIViewController, AVPictureInPictureControllerDelegate {
     }
 
     func stopForFullDataReset() {
+        cancelBackingVideoJob()
         wantsPiPActive = false
         isPiPActiveForUI = false
         guard pipController?.isPictureInPictureActive == true || isPiPTransitioning else {
@@ -1549,6 +1630,7 @@ class ViewController: UIViewController, AVPictureInPictureControllerDelegate {
 
     private func logPiPCompetitionProbe(_ event: String, controller: AVPictureInPictureController? = nil) {
         let observedController = controller ?? pipController
+        maintainPiPControlsHidden(reason: event, controller: observedController)
         let appState: String
         switch UIApplication.shared.applicationState {
         case .active: appState = "active"
@@ -1556,7 +1638,7 @@ class ViewController: UIViewController, AVPictureInPictureControllerDelegate {
         case .background: appState = "background"
         @unknown default: appState = "unknown"
         }
-        AppDebugLogger.log(
+        AppDebugLogger.logRuntime(
             "PiP competition probe [\(event)]: active=\(observedController?.isPictureInPictureActive ?? false), " +
             "suspended=\(observedController?.isPictureInPictureSuspended ?? false), " +
             "possible=\(observedController?.isPictureInPicturePossible ?? false), " +
@@ -1579,6 +1661,7 @@ class ViewController: UIViewController, AVPictureInPictureControllerDelegate {
             "text=\(viewDiagnosticsText(textView))",
             "clock=\(viewDiagnosticsText(clockLabel))",
             "hiddenProbe=\(isHiddenReferenceSession ? PiPHiddenReferenceOptions.summary + ";" + (hiddenReferenceRenderView?.diagnosticSummary ?? "none") : "disabled")",
+            "visibilityTrial=\(PiPVisibilityRefreshPolicy.isEnabled),group=B,pauseContent=\(shouldPauseContentRefreshForVisibilityTrial),privateStashOrLock=\(observedStashedOrUnderLock.map(String.init) ?? "unknown"),protectedDataUnavailable=\(visibilityProtectedDataUnavailable),nativeContentLink=\(nativeContentDisplayLink != nil)",
             "playerLayer=\(layerDiagnosticsText(playerLayer))"
         ]
         return "surface{\(parts.joined(separator: ";"))}"
@@ -1785,6 +1868,11 @@ class ViewController: UIViewController, AVPictureInPictureControllerDelegate {
     }
 
     private func teardownPiPInfrastructure() {
+        cancelBackingVideoJob()
+        preparedBackingVideo = nil
+        playingVideoLease = nil
+        visibilityObserver.reset()
+        observedStashedOrUnderLock = nil
         endHiddenReferenceDriverSuppression()
         pipCoexistenceExperiment.restore()
         stopClockTimer()
@@ -1809,6 +1897,7 @@ class ViewController: UIViewController, AVPictureInPictureControllerDelegate {
         NotificationCenter.default.removeObserver(self, name: AVAudioSession.routeChangeNotification, object: nil)
         playerLayer?.removeFromSuperlayer()
         playerLayer = nil
+        pipController?.delegate = nil
         pipController?.removeObserver(self, forKeyPath: "isPictureInPictureSuspended")
         pipController = nil
         videoCallContentController = nil
@@ -1834,6 +1923,7 @@ class ViewController: UIViewController, AVPictureInPictureControllerDelegate {
     }
 
     private func endHiddenReferenceDriverSuppression() {
+        stopNativeContentRefresh()
         hiddenReferenceRenderView?.stop()
         if let token = hiddenReferenceSessionID { PiPHiddenReferenceMode.end(owner: token) }
     }
@@ -1868,7 +1958,7 @@ class ViewController: UIViewController, AVPictureInPictureControllerDelegate {
             hiddenReferenceRenderView?.setTextScrollingEnabled(isScrollingEnabled)
             hiddenReferenceRenderView?.setClockMode(shouldRenderClockMode, isHidden: isPiPVisuallyHidden, height: clampedPiPHeight)
             host.clipsToBounds = !PiPHiddenReferenceOptions.preservesMinimumSurface
-            hiddenReferenceRenderView?.configure(isActive: pipController?.isPictureInPictureActive == true)
+            hiddenReferenceRenderView?.configure(isActive: pipController?.isPictureInPictureActive == true && !shouldPauseContentRefreshForVisibilityTrial)
         } else {
             hiddenReferenceRenderView?.stop()
             hiddenReferenceRenderView?.removeFromSuperview()
@@ -1981,7 +2071,12 @@ class ViewController: UIViewController, AVPictureInPictureControllerDelegate {
                 }
                 AppDebugLogger.logCritical("Hidden reference build refresh opt-in: CADisableMinimumFrameDurationOnPhone=\(Bundle.main.object(forInfoDictionaryKey: "CADisableMinimumFrameDurationOnPhone") ?? "absent"); \(PiPHiddenReferenceOptions.summary); source=original centered constraints, preferredContentSize=\(currentPiPSize), source alpha=\(pipSourceView.alpha)")
             } else {
-                pipController = AVPictureInPictureController(contentSource: contentSource)
+                if usesIOS15NativeContentRefresh {
+                    pipController = PiPHiddenReferenceControls.makeNativeController(
+                        source: contentSource, systemMajorVersion: ProcessInfo.processInfo.operatingSystemVersion.majorVersion)
+                } else {
+                    pipController = AVPictureInPictureController(contentSource: contentSource)
+                }
             }
             AppDebugLogger.log("PiP content source: videoCall")
         } else {
@@ -1996,6 +2091,7 @@ class ViewController: UIViewController, AVPictureInPictureControllerDelegate {
         updatePiPAutomaticStartPolicy()
         // 监听侧边吸附状态变化，吸附时停掉所有活动，恢复时重启
         pipController.addObserver(self, forKeyPath: "isPictureInPictureSuspended", options: [.new], context: nil)
+        logIOS15PiPStartupCheckpoint("native construction", controller: pipController)
     }
 
     private var shouldExperimentWithLegacyPiPControlsStyle2: Bool {
@@ -2014,8 +2110,32 @@ class ViewController: UIViewController, AVPictureInPictureControllerDelegate {
 
     private func applyPiPControlsStyle() {
         let style = preferredPiPControlsStyle
-        pipController.setValue(style, forKey: "controlsStyle")
+        guard PiPCoexistenceExperiment.setControlsStyleIfSupported(style, on: pipController) else {
+            AppDebugLogger.log("PiP controls style unavailable; keeping native controls")
+            return
+        }
         AppDebugLogger.log("PiP controlsStyle applied: \(style), legacyExperiment=\(shouldExperimentWithLegacyPiPControlsStyle2)")
+    }
+
+    private func maintainPiPControlsHidden(reason: String, controller: AVPictureInPictureController? = nil, resubmitAfterTransition: Bool = false) {
+        guard Thread.isMainThread, !isStoppingMaintainedControls,
+              usesIOS15NativeContentRefresh,
+              let controller = controller ?? pipController,
+              controller === pipController, controller.isPictureInPictureActive,
+              #available(iOS 16.0, *) else { return }
+        let style = preferredPiPControlsStyle
+        let before = PiPCoexistenceExperiment.controlsStyle(of: controller)
+        // A matching local property does not prove controls stayed hidden after a remote state change.
+        let needsRepair = resubmitAfterTransition || lastMaintainedControlsController !== controller || (before.map { $0 != style } ?? false)
+        if needsRepair, !PiPCoexistenceExperiment.setControlsStyleIfSupported(style, on: controller) { return }
+        let maintained = pipCoexistenceExperiment.maintainControlsHidden(
+            controller: controller, systemMajorVersion: ProcessInfo.processInfo.operatingSystemVersion.majorVersion,
+            resubmitAfterTransition: resubmitAfterTransition)
+        if needsRepair || lastMaintainedControlsController !== controller {
+            let after = PiPCoexistenceExperiment.controlsStyle(of: controller)
+            AppDebugLogger.logCritical("PiP controls hiding maintained AFTER native start [\(reason)]: previous=\(before.map(String.init) ?? "unknown"), requested=\(style), after=\(after.map(String.init) ?? "unknown"), resubmittedAfterTransition=\(resubmitAfterTransition), proxyHiddenStyleConfirmedLocally=\(maintained); local state only, visible controls require device validation")
+        }
+        lastMaintainedControlsController = controller
     }
 
     private func resetPiPControlsStyleExperimentForNewStartIfNeeded(reason: String) {
@@ -2113,6 +2233,7 @@ class ViewController: UIViewController, AVPictureInPictureControllerDelegate {
             promotePlayerLayerMinimumHeightForNormalStartIfNeeded(reason: "首页普通开启")
             resetPiPControlsStyleExperimentForNewStartIfNeeded(reason: "首页普通开启")
         }
+        if deferBackingVideoStartIfNeeded(resume: { [weak self] in self?.togglePiP() }) { return }
         if (pipController == nil || needsHiddenReferenceInfrastructureRefresh), !preparePiPInfrastructureIfNeeded() {
             isPiPActiveForUI = false
             showMessage(L10n.text("当前环境不支持悬浮窗", "Floating window is not supported here."))
@@ -2306,6 +2427,9 @@ class ViewController: UIViewController, AVPictureInPictureControllerDelegate {
         if !shouldHideAfterStart {
             cancelDelayedPiPHideCountdown(reason: "普通开启悬浮窗")
         }
+        if deferBackingVideoStartIfNeeded(resume: { [weak self] in
+            self?.startPiPFromShortcut(shouldHideAfterStart: shouldHideAfterStart)
+        }) { return }
         if (pipController == nil || needsHiddenReferenceInfrastructureRefresh), !preparePiPInfrastructureIfNeeded() {
             isPiPActiveForUI = false
             shouldHidePiPAfterShortcutStart = false
@@ -2426,7 +2550,7 @@ class ViewController: UIViewController, AVPictureInPictureControllerDelegate {
         cancelDelayedPiPHideCountdown(reason: "立即隐藏悬浮窗")
         commitPiPHeight(currentMinimumPiPHeight)
         showMessage(shouldUsePlayerLayerPiPCompatibility
-            ? L10n.text("已调整到新方案最小尺寸", "Set to the minimum size for the new route.")
+            ? L10n.text("已调整到备选方案最小尺寸", "Set to the minimum size for the alternative route.")
             : L10n.text("已隐藏悬浮窗", "Floating window hidden."))
     }
 
@@ -2442,7 +2566,7 @@ class ViewController: UIViewController, AVPictureInPictureControllerDelegate {
         }
         commitPiPHeight(currentMinimumPiPHeight)
         showMessage(shouldUsePlayerLayerPiPCompatibility
-            ? L10n.text("已打开并调整到新方案最小尺寸", "Floating window opened at the new route minimum size.")
+            ? L10n.text("已打开并调整到备选方案最小尺寸", "Floating window opened at the alternative route's minimum size.")
             : L10n.text("已打开并隐藏悬浮窗", "Floating window opened and hidden."))
     }
 
@@ -3024,6 +3148,28 @@ class ViewController: UIViewController, AVPictureInPictureControllerDelegate {
         KeepAlivePolicy.current
     }
 
+    var usesIOS15NativeContentRefresh: Bool {
+        PiPNativeContentRefreshPolicy.supports(
+            systemMajorVersion: ProcessInfo.processInfo.operatingSystemVersion.majorVersion,
+            isPlayerLayer: shouldUsePlayerLayerPiPCompatibility,
+            isPiPOnly: currentKeepAlivePolicy == .pipOnly
+        )
+    }
+
+    var isRefreshRequestTrialEligible: Bool {
+        usesIOS15NativeContentRefresh && wantsPiPActive && !isStoppingPiP
+            && pipController?.isPictureInPictureActive == true
+    }
+
+    @objc private func handleRefreshRequestTrialChanged() {
+        guard usesIOS15NativeContentRefresh else {
+            AppDebugLogger.logRuntime("Refresh trial stored, not applied to this route/policy: \(PiPRefreshRequestTrial.summary)")
+            return
+        }
+        updateNativeContentRefresh()
+        AppDebugLogger.logRuntime("Refresh trial content APPLIED: active=\(isRefreshRequestTrialEligible), preferredFPS=\(nativeContentDisplayLink?.preferredFramesPerSecond ?? 0), range=\(String(describing: nativeContentDisplayLink?.preferredFrameRateRange)); \(PiPRefreshRequestTrial.summary); PiP controller not restarted")
+    }
+
     private var shouldUsePiPOnlyKeepAlive: Bool {
         !currentKeepAlivePolicy.usesAudioContinuously && !isLockScreenAudioBoostActive
     }
@@ -3082,6 +3228,7 @@ class ViewController: UIViewController, AVPictureInPictureControllerDelegate {
 
     private func recoverStalePiPTransition(reason: String) {
         guard isPiPTransitioning else { return }
+        logIOS15PiPStartupCheckpoint("watchdog: \(reason)", controller: pipController)
         pipCoexistenceExperiment.checkpoint("transition watchdog")
 
         let active = pipController?.isPictureInPictureActive ?? false
@@ -3275,8 +3422,13 @@ class ViewController: UIViewController, AVPictureInPictureControllerDelegate {
     }
 
     private func validateOwnPiPState(reason: String) {
-        guard isOwnPiPConfirmedActive, pipController?.isPictureInPictureActive != true else { return }
-        handleOwnPiPInvalidated(reason: "\(reason)：本App悬浮窗已失效，可能被其他PiP挤掉")
+        guard isOwnPiPConfirmedActive, !isStoppingPiP, !isPiPTransitioning,
+              pipController?.isPictureInPictureActive != true else { return }
+        guard pipController?.isPictureInPictureSuspended != true else {
+            AppDebugLogger.logRuntime("\(reason)：本App悬浮窗由系统挂起，保留会话等待恢复")
+            return
+        }
+        handleOwnPiPInvalidated(reason: "\(reason)：系统未报告本App悬浮窗活跃或挂起，未确认停止原因")
         updateDiagnosticsPiPState()
         updateHomeView()
     }
@@ -3311,127 +3463,100 @@ class ViewController: UIViewController, AVPictureInPictureControllerDelegate {
         return requiresPlayerLayerForPiP
     }
 
+    private struct BackingVideoSpec: Equatable {
+        let size: CGSize
+        let text: String
+        let longVideo: Bool
+        var filename: String {
+            let kind = longVideo ? "pip-playerlayer-long-h264" : "pip-static-h264-clear"
+            let language = text.isEmpty ? "blank" : (text == "Floating window running" ? "en" : "zh")
+            return "\(kind)-atomic-v1-\(Int(size.width))x\(Int(size.height))-\(language).mov"
+        }
+    }
+
+    private var backingVideoSpec: BackingVideoSpec {
+        let scale = max(UIScreen.main.scale, 1)
+        let size = CGSize(width: evenVideoDimension(max(currentPiPSize.width * scale, 2)),
+                          height: evenVideoDimension(max(currentPiPSize.height * scale, 2)))
+        let long = shouldUsePlayerLayerPiPCompatibility && pipEngineRoute != .videoCall
+        return BackingVideoSpec(size: size,
+                                text: !long && shouldRenderClockMode ? "" : L10n.text("悬浮窗运行中", "Floating window running"),
+                                longVideo: long)
+    }
+
+    private func cancelBackingVideoJob() {
+        backingVideoJob?.cancel()
+        backingVideoJob = nil
+        pendingVideoSpec = nil
+        onBackingVideoReady = nil
+    }
+
+    private func deferBackingVideoStartIfNeeded(resume: @escaping () -> Void) -> Bool {
+        guard shouldPrepareBackingPlayerForPlayback, pipController == nil,
+              preparedBackingVideo?.spec != backingVideoSpec else { return false }
+        prepareBackingVideo(backingVideoSpec) { [weak self] in
+            guard let self, self.pipController == nil, !self.isPiPTransitioning,
+                  UIApplication.shared.applicationState != .background else { return }
+            resume()
+        }
+        return true
+    }
+
+    private func prepareBackingVideo(_ spec: BackingVideoSpec, onReady: @escaping () -> Void) {
+        if preparedBackingVideo?.spec == spec {
+            cancelBackingVideoJob()
+            onReady()
+            return
+        }
+        if pendingVideoSpec == spec {
+            onBackingVideoReady = onReady
+            return
+        }
+        cancelBackingVideoJob()
+        let job = BlockOperation()
+        pendingVideoSpec = spec
+        backingVideoJob = job
+        onBackingVideoReady = onReady
+        job.addExecutionBlock { [weak self, weak job] in
+            guard let job, !job.isCancelled else { return }
+            let result = Result { () -> GeneratedPiPVideoCache.Lease in
+                let url = GeneratedPiPVideoCache.videoURL(named: spec.filename)
+                try PlaceholderVideoFactory.prepare(at: url, size: spec.size, text: spec.text,
+                                                    longVideo: spec.longVideo, cancelled: { job.isCancelled })
+                let lease = GeneratedPiPVideoCache.Lease(url)
+                GeneratedPiPVideoCache.trim(excluding: [url])
+                return lease
+            }
+            DispatchQueue.main.async { [weak self, weak job] in
+                guard let self, let job, self.backingVideoJob === job, !job.isCancelled else { return }
+                let completion = self.onBackingVideoReady
+                self.backingVideoJob = nil
+                self.pendingVideoSpec = nil
+                self.onBackingVideoReady = nil
+                guard self.shouldPrepareBackingPlayerForPlayback else { return }
+                if self.backingVideoSpec != spec {
+                    if let completion { self.prepareBackingVideo(self.backingVideoSpec, onReady: completion) }
+                    return
+                }
+                switch result {
+                case .success(let lease):
+                    self.preparedBackingVideo = (spec, lease)
+                    completion?()
+                case .failure(let error):
+                    AppDebugLogger.logRuntime("PlayerLayer video unavailable: \((error as NSError).domain) \((error as NSError).code)")
+                    if self.pipController == nil, self.viewIfLoaded?.window != nil, self.presentedViewController == nil {
+                        self.showMessage(L10n.text("未能生成悬浮窗视频，请重试。", "Could not prepare the PiP video. Please try again."))
+                    }
+                }
+            }
+        }
+        GeneratedPiPVideoCache.queue.async { job.start() }
+    }
+
     private func makePlayerItem() -> AVPlayerItem? {
-        if shouldUsePlayerLayerPiPCompatibility {
-            switch pipEngineRoute {
-            case .playerLayerGenerated:
-                return makeGeneratedPlayerLayerLongVideoItem()
-            case .referenceIPA, .referenceIPAPure:
-                AppDebugLogger.log("Reference experiment route normalized to beta5 generated PlayerLayer item")
-                return makeGeneratedPlayerLayerLongVideoItem()
-            case .videoCall:
-                break
-            }
-        }
-
-        let videoScale = max(UIScreen.main.scale, 1)
-        let backingVideoSize = CGSize(
-            width: evenVideoDimension(max(currentPiPSize.width * videoScale, 2)),
-            height: evenVideoDimension(max(currentPiPSize.height * videoScale, 2))
-        )
-        let videoText = shouldRenderClockMode ? "" : L10n.text("悬浮窗运行中", "Floating window running")
-        let url = GeneratedPiPVideoCache.videoURL(
-            named: "pip-static-h264-clear-v3-\(Int(backingVideoSize.width))x\(Int(backingVideoSize.height))-\(videoText.isEmpty ? "blank" : "text").mov"
-        )
-        if !FileManager.default.fileExists(atPath: url.path) {
-            do {
-                try PlaceholderVideoFactory.makeBackingVideo(
-                    at: url,
-                    size: backingVideoSize,
-                    text: videoText
-                )
-            } catch {
-                print(error)
-                AppDebugLogger.log("Placeholder video failed: \(error.localizedDescription)")
-                return nil
-            }
-        }
-        GeneratedPiPVideoCache.trim(excluding: [url])
-        let asset = AVAsset(url: url)
-        let item = AVPlayerItem(asset: asset)
-        return item
-    }
-
-    private func makeGeneratedPlayerLayerLongVideoItem() -> AVPlayerItem? {
-        let videoScale = max(UIScreen.main.scale, 1)
-        let backingVideoSize = CGSize(
-            width: evenVideoDimension(max(currentPiPSize.width * videoScale, 2)),
-            height: evenVideoDimension(max(currentPiPSize.height * videoScale, 2))
-        )
-        let videoText = L10n.text("悬浮窗运行中", "Floating window running")
-        let url = GeneratedPiPVideoCache.videoURL(
-            named: "pip-playerlayer-long-h264-v1-\(Int(backingVideoSize.width))x\(Int(backingVideoSize.height))-\(videoText.isEmpty ? "blank" : "text").mov"
-        )
-
-        if !FileManager.default.fileExists(atPath: url.path) {
-            do {
-                try PlaceholderVideoFactory.makeLongBackingVideo(
-                    at: url,
-                    size: backingVideoSize,
-                    text: videoText
-                )
-            } catch {
-                AppDebugLogger.log("PlayerLayer long video failed: \(error.localizedDescription)")
-                return nil
-            }
-        }
-        GeneratedPiPVideoCache.trim(excluding: [url])
-
-        return AVPlayerItem(asset: AVAsset(url: url))
-    }
-
-    private func makePlayerLayerReferencePlayerItem() -> AVPlayerItem? {
-        if let item = makeReferenceIPAPresetPlayerItem() {
-            return item
-        }
-        if let item = makePlayerLayerStatusVideoItem() {
-            return item
-        }
-        if let fallbackURL = playerLayerReferenceVideoURL() {
-            AppDebugLogger.log("PlayerLayer reference preset missing; using static bundled fallback")
-            return AVPlayerItem(asset: AVAsset(url: fallbackURL))
-        }
-        return nil
-    }
-
-    private func makePlayerLayerStatusVideoItem() -> AVPlayerItem? {
-        let videoScale = max(UIScreen.main.scale, 1)
-        let backingVideoSize = CGSize(
-            width: evenVideoDimension(max(currentPiPSize.width * videoScale, 2)),
-            height: evenVideoDimensionFloor(max(currentPiPSize.height * videoScale, 2))
-        )
-        let statusText = L10n.text("悬浮窗运行中", "Floating window running")
-        let url = GeneratedPiPVideoCache.videoURL(
-            named: "pip-playerlayer-status-v2-\(Int(backingVideoSize.width))x\(Int(backingVideoSize.height)).mov"
-        )
-
-        if !FileManager.default.fileExists(atPath: url.path) {
-            do {
-                try PlaceholderVideoFactory.makeBackingVideo(
-                    at: url,
-                    size: backingVideoSize,
-                    text: statusText
-                )
-            } catch {
-                AppDebugLogger.log("PlayerLayer status video failed: \(error.localizedDescription)")
-                return nil
-            }
-        }
-        GeneratedPiPVideoCache.trim(excluding: [url])
-
-        let sourceAsset = AVAsset(url: url)
-        guard let timelineAsset = makeReferenceIPATimelineAsset(from: sourceAsset) else {
-            AppDebugLogger.log("PlayerLayer status video uses direct asset, size=\(formatSize(currentPiPSize))")
-            return AVPlayerItem(asset: sourceAsset)
-        }
-
-        let item = AVPlayerItem(asset: timelineAsset)
-        let videoComposition = AVMutableVideoComposition(propertiesOf: timelineAsset)
-        videoComposition.frameDuration = CMTime(value: 1, timescale: 30)
-        item.videoComposition = videoComposition
-        item.preferredForwardBufferDuration = 0
-        AppDebugLogger.log("PlayerLayer status video material, target=\(formatSize(currentPiPSize))pt, pixels=\(formatSize(backingVideoSize))px, scale=\(formatNumber(videoScale)), duration=\(String(format: "%.1f", referenceIPATimelineDuration.seconds))s")
-        return item
+        guard let ready = preparedBackingVideo, ready.spec == backingVideoSpec else { return nil }
+        playingVideoLease = ready.lease
+        return AVPlayerItem(url: ready.lease.url)
     }
 
     private func makeReferenceIPAPresetPlayerItem() -> AVPlayerItem? {
@@ -3598,6 +3723,14 @@ class ViewController: UIViewController, AVPictureInPictureControllerDelegate {
     }
 
     private func startDisplayLinks() {
+        guard !shouldPauseContentRefreshForVisibilityTrial else {
+            stopDisplayLinks()
+            return
+        }
+        if usesIOS15NativeContentRefresh {
+            updateNativeContentRefresh()
+            return
+        }
         guard !shouldUsePlayerLayerPiPCompatibility || shouldAttachCustomViewInPlayerLayerPiP else { return }
         guard !isContentExtremeModeEnabled else {
             stopDisplayLinks()
@@ -3621,6 +3754,66 @@ class ViewController: UIViewController, AVPictureInPictureControllerDelegate {
         lastScrollTimestamp = nil
         if hadDisplayLink {
             AppDebugLogger.log("PiP scrolling displayLink stopped")
+        }
+    }
+
+    private func updateNativeContentRefresh() {
+        guard usesIOS15NativeContentRefresh,
+              !shouldPauseContentRefreshForVisibilityTrial,
+              wantsPiPActive, !isStoppingPiP,
+              pipController?.isPictureInPictureActive == true,
+              customView != nil else {
+            stopNativeContentRefresh()
+            return
+        }
+        // The original host stays in place; text/clock visibility never owns this link.
+        stopDisplayLinks()
+        stopClockTimer()
+        if let link = nativeContentDisplayLink {
+            PiPRefreshRequestTrial.configureContent(link, maximumFPS: UIScreen.main.maximumFramesPerSecond)
+            return
+        }
+        let link = CADisplayLink(target: nativeContentTarget, selector: #selector(NativeContentTarget.tick(_:)))
+        PiPRefreshRequestTrial.configureContent(link, maximumFPS: UIScreen.main.maximumFramesPerSecond)
+        link.add(to: .main, forMode: .common)
+        nativeContentDisplayLink = link
+        nativeContentLastLogTimestamp = nil
+        nativeContentTickCount = 0
+        AppDebugLogger.logCritical("Native content refresh started: preferredFPS=\(link.preferredFramesPerSecond), range=\(link.preferredFrameRateRange), originalHost=true; \(PiPRefreshRequestTrial.summary); coexistence negotiated separately; actual rendering, global refresh and coexistence require device verification")
+    }
+
+    private func stopNativeContentRefresh() {
+        let hadLink = nativeContentDisplayLink != nil
+        nativeContentDisplayLink?.invalidate()
+        nativeContentDisplayLink = nil
+        nativeContentLastLogTimestamp = nil
+        nativeContentTickCount = 0
+        if hadLink { AppDebugLogger.log("iOS15 native content refresh stopped") }
+    }
+
+    private func updateNativeContent(_ link: CADisplayLink) {
+        guard usesIOS15NativeContentRefresh, !shouldPauseContentRefreshForVisibilityTrial, wantsPiPActive, !isStoppingPiP,
+              pipController?.isPictureInPictureActive == true, let customView else {
+            stopNativeContentRefresh()
+            return
+        }
+        customView.setNeedsDisplay()
+        customView.layer.setNeedsDisplay()
+        if !isPiPVisuallyHidden, !isPiPSuspendedAtSide {
+            if shouldRenderClockMode {
+                updateClockOverlay(timestamp: link.timestamp, forceNetworkSample: false)
+                clockOverlayView?.setNeedsDisplay()
+            } else if isScrollingEnabled, !isContentExtremeModeEnabled {
+                updateScrollingText(link)
+            } else {
+                textView?.setNeedsDisplay()
+            }
+        }
+        nativeContentTickCount += 1
+        if nativeContentLastLogTimestamp == nil || link.timestamp - (nativeContentLastLogTimestamp ?? 0) >= 10 {
+            AppDebugLogger.log("iOS15 native content refresh: ticks=\(nativeContentTickCount), preferredFPS=\(link.preferredFramesPerSecond), host=\(customView.bounds.size), attached=\(customView.window != nil), hidden=\(isPiPVisuallyHidden), suspended=\(isPiPSuspendedAtSide), scrolling=\(isScrollingEnabled); callbacks do not prove rendered frames or global120")
+            nativeContentLastLogTimestamp = link.timestamp
+            nativeContentTickCount = 0
         }
     }
 
@@ -3671,6 +3864,14 @@ class ViewController: UIViewController, AVPictureInPictureControllerDelegate {
     }
 
     private func startClockTimerIfNeeded() {
+        guard !shouldPauseContentRefreshForVisibilityTrial else {
+            stopClockTimer()
+            return
+        }
+        if usesIOS15NativeContentRefresh {
+            updateNativeContentRefresh()
+            return
+        }
         guard !shouldUsePlayerLayerPiPCompatibility || shouldAttachCustomViewInPlayerLayerPiP else { return }
         let shouldRun = isContentExtremeModeEnabled ? shouldRunLowCostPiPContentUpdates : shouldRunPiPContentUpdates
         guard isClockModeEnabled, shouldRun else {
@@ -3842,15 +4043,17 @@ class ViewController: UIViewController, AVPictureInPictureControllerDelegate {
 
     override func observeValue(forKeyPath keyPath: String?, of object: Any?, change: [NSKeyValueChangeKey : Any]?, context: UnsafeMutableRawPointer?) {
         if keyPath == "isPictureInPictureSuspended" {
-            DispatchQueue.main.async { [weak self] in
-                guard let self else { return }
-                let isSuspended = self.pipController?.isPictureInPictureSuspended ?? false
+            guard let observed = object as? AVPictureInPictureController else { return }
+            DispatchQueue.main.async { [weak self, weak observed] in
+                guard let self, let observed, observed === self.pipController else { return }
+                let isSuspended = observed.isPictureInPictureSuspended
                 self.logPiPCompetitionProbe("suspended changed to \(isSuspended)")
                 AppDebugLogger.log("PiP suspend state changed: \(isSuspended), height=\(self.formattedHeight(self.clampedPiPHeight)), clock=\(self.shouldRenderClockMode), scroll=\(self.isScrollingEnabled)")
                 if self.shouldUsePlayerLayerPiPCompatibility {
                     self.updateDiagnosticsPiPState()
                     return
                 }
+                defer { self.updateVisibilityDrivenContentRefresh(reason: "public suspension changed") }
                 if isSuspended {
                     self.stopDisplayLinks()
                     self.stopClockTimer()
@@ -4218,6 +4421,7 @@ class ViewController: UIViewController, AVPictureInPictureControllerDelegate {
     }
 
     private func stopPiPSmoothly() {
+        cancelBackingVideoJob()
         guard pipController != nil else {
             isPiPActiveForUI = false
             return
@@ -4476,6 +4680,27 @@ class ViewController: UIViewController, AVPictureInPictureControllerDelegate {
         return "\(type(of: control)){hidden=\(control.isHidden),alpha=\(String(format: "%.2f", control.alpha)),enabled=\(control.isEnabled),frame=\(formatRect(frame)),label=\(label),id=\(identifier),targets=\(control.allTargets.count)}"
     }
 
+    private var shouldLogIOS15PiPStartup: Bool {
+        ProcessInfo.processInfo.operatingSystemVersion.majorVersion == 15
+            && !shouldUsePlayerLayerPiPCompatibility
+    }
+
+    private func logIOS15PiPStartupCheckpoint(_ event: String,
+                                             controller: AVPictureInPictureController?,
+                                             attempt: Int? = nil) {
+        guard shouldLogIOS15PiPStartup else { return }
+        let source = pipSourceView
+        let sourceReady = source.map { !$0.bounds.isEmpty && $0.window != nil } ?? false
+        let elapsed = pipTransitionStartedAt.map { Date().timeIntervalSince($0) } ?? 0
+        let message = "iOS15 PiP startup [\(event)]: route=native-v1.1.0, contentOnly=\(isHiddenReferenceSession), customHostAttached=\(customView?.superview != nil), controlsStyle=\(preferredPiPControlsStyle), attempt=\(attempt.map(String.init) ?? "-")/\(maximumPiPStartAttempts), elapsed=\(String(format: "%.2f", elapsed))s, possible=\(controller?.isPictureInPicturePossible ?? false), active=\(controller?.isPictureInPictureActive ?? false), playerReady=\(isPlayerReadyForPiP), sourceReady=\(sourceReady), sourceBounds=\(source?.bounds ?? .zero), sourceInWindow=\(source?.window != nil), sourceHidden=\(source?.isHidden ?? true), sourceAlpha=\(source?.alpha ?? 0), wants=\(wantsPiPActive), transition=\(isPiPTransitioning), stopping=\(isStoppingPiP), legacyRetried=\(didRetryLegacyPiPStart), appState=\(UIApplication.shared.applicationState.rawValue), startupTimeout=\(piPStartTimeoutDuration)s, watchdog=\(piPTransitionWatchdogDelay)s"
+        // Readiness polling stays buffered so logging does not add synchronous disk flushes.
+        if attempt != nil {
+            AppDebugLogger.log(message)
+        } else {
+            AppDebugLogger.logCritical(message)
+        }
+    }
+
     private func requestPiPStartWhenReady(attempt: Int = 0) {
         pendingPiPStartWorkItem?.cancel()
         let workItem = DispatchWorkItem { [weak self] in
@@ -4513,9 +4738,11 @@ class ViewController: UIViewController, AVPictureInPictureControllerDelegate {
                 }
             }
             let canStartNow = self.isPlayerReadyForPiP && sourceReady && pipController.isPictureInPicturePossible
+            self.logIOS15PiPStartupCheckpoint("readiness", controller: pipController, attempt: attempt)
 
             if canStartNow {
                 self.pendingPiPStartWorkItem = nil
+                self.logIOS15PiPStartupCheckpoint("startPictureInPicture requested", controller: pipController)
                 pipController.startPictureInPicture()
                 return
             }
@@ -4574,6 +4801,7 @@ class ViewController: UIViewController, AVPictureInPictureControllerDelegate {
             else {
                 return
             }
+            self.logIOS15PiPStartupCheckpoint("startup timeout", controller: pipController)
             if self.retryPiPStartWithLegacyControlsStyleFallbackIfNeeded(reason: "画中画启动超时") {
                 return
             }
@@ -4593,6 +4821,7 @@ class ViewController: UIViewController, AVPictureInPictureControllerDelegate {
     }
 
     private func resetPiPStartStateAfterFailure(preservingShortcutRetry: Bool = false) {
+        cancelBackingVideoJob()
         if !preservingShortcutRetry {
             shouldHidePiPAfterShortcutStart = false
             cancelShortcutPiPStartRetry()
@@ -4989,6 +5218,7 @@ class ViewController: UIViewController, AVPictureInPictureControllerDelegate {
     }
 
     private func configureRunningText() {
+        defer { updateVisibilityDrivenContentRefresh(reason: "content mode or height changed") }
         if isHiddenReferenceSession {
             stopDisplayLinks()
             stopClockTimer()
@@ -5201,7 +5431,7 @@ class ViewController: UIViewController, AVPictureInPictureControllerDelegate {
             range: currentMinimumPiPHeight...maxPiPHeight,
             step: currentPiPHeightStep,
             minimumHintText: shouldUsePlayerLayerPiPCompatibility
-                ? L10n.text("当前为PlayerLayer新方案，最低1pt，调节精度为1pt", "PlayerLayer route: minimum 1 pt, step 1 pt.")
+                ? L10n.text("当前为 PlayerLayer 备选方案，最低1pt，调节精度为1pt", "PlayerLayer alternative route: minimum 1 pt, step 1 pt.")
                 : L10n.text("当前为默认老方案，最低0.1pt，调节精度为0.1pt", "Default route: minimum 0.1 pt, step 0.1 pt."),
             onChange: { [weak self] height in
                 self?.previewPiPHeight(height)
@@ -5218,6 +5448,7 @@ class ViewController: UIViewController, AVPictureInPictureControllerDelegate {
     }
 
     private func previewPiPHeight(_ height: CGFloat) {
+        defer { maintainPiPControlsHidden(reason: "height preview") }
         isPreviewingPiPHeight = true
         pipHeight = clampedHeight(height)
         updateAutoHiddenOverheadState(reason: "预览高度 \(formattedHeight(clampedPiPHeight))")
@@ -5282,7 +5513,14 @@ class ViewController: UIViewController, AVPictureInPictureControllerDelegate {
         pendingPlayerItemReloadWorkItem?.cancel()
         pendingPlayerItemReloadWorkItem = nil
         guard shouldPrepareBackingPlayerForPlayback else { return }
-        guard let playerLayer else { return }
+        guard let playerLayer, !isStoppingPiP else { return }
+        prepareBackingVideo(backingVideoSpec) { [weak self, weak playerLayer] in
+            guard let self, let playerLayer, playerLayer === self.playerLayer, !self.isStoppingPiP else { return }
+            self.replacePreparedPlayerItem(in: playerLayer)
+        }
+    }
+
+    private func replacePreparedPlayerItem(in playerLayer: AVPlayerLayer) {
         guard let playerItem = makePlayerItem() else { return }
         observeLooping(for: playerItem)
         if let player = playerLayer.player {
@@ -5394,12 +5632,16 @@ class ViewController: UIViewController, AVPictureInPictureControllerDelegate {
     }
 
     @objc private func handleProtectedDataWillBecomeUnavailable() {
-        AppDebugLogger.log("收到设备锁定事件：policy=\(currentKeepAlivePolicy.diagnosticsName)，PiP=\(shouldKeepPiPPlaybackAlive)")
+        visibilityProtectedDataUnavailable = true
+        updateVisibilityDrivenContentRefresh(reason: "protected data becoming unavailable")
+        AppDebugLogger.logRuntime("收到设备锁定事件：policy=\(currentKeepAlivePolicy.diagnosticsName)，PiP=\(shouldKeepPiPPlaybackAlive)")
         activateLockScreenAudioBoostIfNeeded(reason: "protectedDataWillBecomeUnavailable")
     }
 
     @objc private func handleProtectedDataDidBecomeAvailable() {
-        AppDebugLogger.log("收到设备解锁事件：policy=\(currentKeepAlivePolicy.diagnosticsName)")
+        visibilityProtectedDataUnavailable = false
+        updateVisibilityDrivenContentRefresh(reason: "protected data available")
+        AppDebugLogger.logRuntime("收到设备解锁事件：policy=\(currentKeepAlivePolicy.diagnosticsName)")
         deactivateLockScreenAudioBoostIfNeeded(reason: "protectedDataDidBecomeAvailable")
     }
 
@@ -5421,7 +5663,7 @@ class ViewController: UIViewController, AVPictureInPictureControllerDelegate {
         }
         updateDiagnosticsPiPState()
         PowerUsageLogger.markForegroundStart()
-        AppDebugLogger.log("Enter foreground, keepAlive=\(shouldKeepPiPPlaybackAlive), policy=\(currentKeepAlivePolicy.diagnosticsName)")
+        AppDebugLogger.logRuntime("Enter foreground, keepAlive=\(shouldKeepPiPPlaybackAlive), policy=\(currentKeepAlivePolicy.diagnosticsName)")
         if shouldKeepPiPPlaybackAlive {
             pipRuntimeDuration = pipRuntimeStartedAt.map { max(0, Date().timeIntervalSince($0)) } ?? pipRuntimeDuration
             updateHomeView()
@@ -5448,6 +5690,8 @@ class ViewController: UIViewController, AVPictureInPictureControllerDelegate {
     }
 
     @objc private func handleDidBecomeActive() {
+        visibilityProtectedDataUnavailable = !UIApplication.shared.isProtectedDataAvailable
+        updateVisibilityDrivenContentRefresh(reason: "App became active")
         if UIApplication.shared.isProtectedDataAvailable {
             deactivateLockScreenAudioBoostIfNeeded(reason: "App已活跃")
         }
@@ -5474,7 +5718,7 @@ class ViewController: UIViewController, AVPictureInPictureControllerDelegate {
         recoverStalePiPTransitionIfNeeded(reason: "进入后台")
         updateDiagnosticsPiPState()
         PowerUsageLogger.markBackgroundStart()
-        AppDebugLogger.log("Enter background, keepAlive=\(shouldKeepPiPPlaybackAlive), policy=\(currentKeepAlivePolicy.diagnosticsName)")
+        AppDebugLogger.logRuntime("Enter background, keepAlive=\(shouldKeepPiPPlaybackAlive), policy=\(currentKeepAlivePolicy.diagnosticsName)")
         guard shouldKeepPiPPlaybackAlive else {
             BackgroundTaskManager.shared.stopPlay()
             PowerUsageLogger.markKeepAliveStop()
@@ -5498,6 +5742,10 @@ class ViewController: UIViewController, AVPictureInPictureControllerDelegate {
     }
 
     @objc private func handleKeepAliveModeDidChange() {
+        if ProcessInfo.processInfo.operatingSystemVersion.majorVersion == 15 {
+            configureRunningText()
+            NotificationCenter.default.post(name: Self.piPEngineRuntimeModeDidChangeNotification, object: nil)
+        }
         if currentKeepAlivePolicy.usesAudioWhileLocked,
            !UIApplication.shared.isProtectedDataAvailable,
            shouldKeepPiPPlaybackAlive,
@@ -5507,7 +5755,7 @@ class ViewController: UIViewController, AVPictureInPictureControllerDelegate {
             isLockScreenAudioBoostActive = false
         }
         updateDiagnosticsPiPState()
-        AppDebugLogger.log("KeepAlive mode changed, policy=\(currentKeepAlivePolicy.diagnosticsName), PiPOnly=\(shouldUsePiPOnlyKeepAlive), active=\(shouldKeepPiPPlaybackAlive)")
+        AppDebugLogger.logRuntime("KeepAlive mode changed, policy=\(currentKeepAlivePolicy.diagnosticsName), PiPOnly=\(shouldUsePiPOnlyKeepAlive), active=\(shouldKeepPiPPlaybackAlive)")
         updateContinuousDiagnosticsForStableVideoCall(reason: "保活方案切换")
         updateHomeView()
         if shouldUsePiPOnlyKeepAlive {
@@ -5537,14 +5785,14 @@ class ViewController: UIViewController, AVPictureInPictureControllerDelegate {
 
         switch type {
         case .began:
-            AppDebugLogger.log("Audio interruption began")
+            AppDebugLogger.logRuntime("Audio interruption began")
             KeepAliveNotificationTester.markAudioInterruptionBegan()
             BackgroundTaskManager.shared.stopPlay()
             PowerUsageLogger.markKeepAliveStop()
         case .ended:
             KeepAliveNotificationTester.markAudioInterruptionEnded()
             guard shouldKeepPiPPlaybackAlive else { return }
-            AppDebugLogger.log("Audio interruption ended, resume keepAlive")
+            AppDebugLogger.logRuntime("Audio interruption ended, resume keepAlive")
             keepPlaybackAlive()
         @unknown default:
             break
@@ -5552,7 +5800,7 @@ class ViewController: UIViewController, AVPictureInPictureControllerDelegate {
     }
 
     @objc private func handleAudioRouteChange(_ notification: Notification) {
-        AppDebugLogger.log("Audio route changed: \(currentAudioRouteDescription), external=\(hasExternalAudioRoute)")
+        AppDebugLogger.logRuntime("Audio route changed: \(currentAudioRouteDescription), external=\(hasExternalAudioRoute)")
         guard shouldKeepPiPPlaybackAlive else { return }
         guard !shouldUsePiPOnlyKeepAlive else { return }
         keepPlaybackAlive()
@@ -5576,6 +5824,8 @@ class ViewController: UIViewController, AVPictureInPictureControllerDelegate {
     }
 
     func pictureInPictureControllerWillStartPictureInPicture(_ pictureInPictureController: AVPictureInPictureController) {
+        guard pictureInPictureController === pipController else { return }
+        logIOS15PiPStartupCheckpoint("willStart callback", controller: pictureInPictureController)
         pipCoexistenceExperiment.checkpoint("willStart")
         AppDebugLogger.log("画中画初始化后，应用窗口数：\(allApplicationWindows().count)")
         updateDiagnosticsPiPState()
@@ -5586,6 +5836,13 @@ class ViewController: UIViewController, AVPictureInPictureControllerDelegate {
     }
 
     func pictureInPictureControllerDidStartPictureInPicture(_ pictureInPictureController: AVPictureInPictureController) {
+        guard pictureInPictureController === pipController else { return }
+        isStoppingMaintainedControls = false
+        pipCoexistenceExperiment.onPostStartStateApplied = { [weak self, weak pictureInPictureController] in
+            guard let self, let pictureInPictureController else { return }
+            self.maintainPiPControlsHidden(reason: "post-start state applied", controller: pictureInPictureController, resubmitAfterTransition: true)
+        }
+        logIOS15PiPStartupCheckpoint("didStart callback", controller: pictureInPictureController)
         configureHiddenReferenceRenderProbe(reason: "didStart")
         pipCoexistenceExperiment.checkpoint("didStart")
         logPiPCompetitionProbe("didStart", controller: pictureInPictureController)
@@ -5637,8 +5894,14 @@ class ViewController: UIViewController, AVPictureInPictureControllerDelegate {
         hidePiPAfterShortcutStartIfNeeded()
         hidePiPForCurrentSuspendedStateIfNeeded(reason: "PiP启动后已吸附")
         performDeferredShortcutPiPStopIfNeeded(reason: "PiP启动完成")
-        AppDebugLogger.log("PiP did start")
-        pipCoexistenceExperiment.schedulePostStartUpdateIfRequested(controller: pictureInPictureController)
+        AppDebugLogger.logRuntime("PiP did start")
+        observePiPVisibilityAfterStart(pictureInPictureController)
+        pipCoexistenceExperiment.schedulePostStartUpdateIfRequested(controller: pictureInPictureController, useNativePostStart: usesIOS15NativeContentRefresh) { [weak self, weak pictureInPictureController] in
+            guard let self, let pictureInPictureController else { return false }
+            return self.pipController === pictureInPictureController && self.wantsPiPActive && !self.isStoppingPiP
+                && !self.shouldUsePlayerLayerPiPCompatibility && self.currentKeepAlivePolicy == .pipOnly
+        }
+        maintainPiPControlsHidden(reason: "didStart completed", controller: pictureInPictureController)
         AppDebugLogger.log("画中画弹出后，应用窗口数：\(allApplicationWindows().count)")
     }
 
@@ -5671,6 +5934,14 @@ class ViewController: UIViewController, AVPictureInPictureControllerDelegate {
     }
 
     func pictureInPictureControllerWillStopPictureInPicture(_ pictureInPictureController: AVPictureInPictureController) {
+        guard pictureInPictureController === pipController else { return }
+        cancelBackingVideoJob()
+        visibilityObserver.reset()
+        observedStashedOrUnderLock = nil
+        isStoppingMaintainedControls = true
+        lastMaintainedControlsController = nil
+        pipCoexistenceExperiment.cancelPendingTransition()
+        pipCoexistenceExperiment.clearMaintainedControls()
         logPiPCompetitionProbe("willStop", controller: pictureInPictureController)
         pipExpectedActiveBeforeStop = wantsPiPActive
             && !isStoppingPiP
@@ -5716,6 +5987,11 @@ class ViewController: UIViewController, AVPictureInPictureControllerDelegate {
     }
 
     func pictureInPictureControllerDidStopPictureInPicture(_ pictureInPictureController: AVPictureInPictureController) {
+        guard pictureInPictureController === pipController else { return }
+        visibilityObserver.reset()
+        observedStashedOrUnderLock = nil
+        isStoppingMaintainedControls = true
+        lastMaintainedControlsController = nil
         endHiddenReferenceDriverSuppression()
         logPiPCompetitionProbe("didStop", controller: pictureInPictureController)
         pipCoexistenceExperiment.restore()
@@ -5751,6 +6027,7 @@ class ViewController: UIViewController, AVPictureInPictureControllerDelegate {
         wantsPiPActive = false
         updatePiPAutomaticStartPolicy()
         updateContinuousDiagnosticsForStableVideoCall(reason: "PiP停止完成")
+        updateVisibilityDrivenContentRefresh(reason: "PiP stopped")
         resetLockScreenAudioBoost(reason: "PiP停止完成")
         BackgroundTaskManager.shared.stopPlay()
         pauseBackingPlayerIfIdle()
@@ -5767,7 +6044,7 @@ class ViewController: UIViewController, AVPictureInPictureControllerDelegate {
         ProcessTerminationDiagnostics.recordCheckpoint(
             reason: wasExpectedStop ? "PiP正常停止" : "PiP异常停止"
         )
-        AppDebugLogger.log("PiP did stop")
+        AppDebugLogger.logRuntime("PiP did stop: expected=\(wasExpectedStop), stopNotificationSuppressed=\(shouldSuppressStopNotification), policy=\(stoppedMode)")
         resignForegroundAfterPiPCloseIfNeeded(reason: "PiP停止完成")
         isClosingPiPFromCustomContentTap = false
         if let pendingRoute = pendingPiPEngineRouteAfterStop {
@@ -5784,6 +6061,7 @@ class ViewController: UIViewController, AVPictureInPictureControllerDelegate {
         _ pictureInPictureController: AVPictureInPictureController,
         restoreUserInterfaceForPictureInPictureStopWithCompletionHandler completionHandler: @escaping (Bool) -> Void
     ) {
+        guard pictureInPictureController === pipController else { completionHandler(false); return }
         if isClosingPiPFromCustomContentTap || isStoppingPiP || pipTransitionExpectedActive == false {
             DiagnosticsRuntimeState.recordUserAction("自定义悬浮窗关闭PiP")
             AppDebugLogger.log("PiP restore UI requested during expected close; keep app out of foreground")
@@ -5807,7 +6085,13 @@ class ViewController: UIViewController, AVPictureInPictureControllerDelegate {
     }
 
     func pictureInPictureController(_ pictureInPictureController: AVPictureInPictureController, failedToStartPictureInPictureWithError error: Error) {
-        AppDebugLogger.log("PiP failed to start: \(error.localizedDescription)")
+        guard pictureInPictureController === pipController else { return }
+        logIOS15PiPStartupCheckpoint("failedToStart callback", controller: pictureInPictureController)
+        if shouldLogIOS15PiPStartup {
+            let systemError = error as NSError
+            AppDebugLogger.logCritical("iOS15 PiP startup error: domain=\(systemError.domain), code=\(systemError.code), description=\(systemError.localizedDescription), failureReason=\(systemError.localizedFailureReason ?? "none")")
+        }
+        AppDebugLogger.logRuntime("PiP failed to start: \(error.localizedDescription)")
         if retryPiPStartWithLegacyControlsStyleFallbackIfNeeded(reason: "画中画启动失败：\(error.localizedDescription)") {
             return
         }
@@ -6316,72 +6600,81 @@ private struct NetworkTrafficSample {
 }
 
 private enum PlaceholderVideoFactory {
-    static func makeBackingVideo(at url: URL, size: CGSize, text: String) throws {
-        try? FileManager.default.removeItem(at: url)
-        try makeVideo(at: url, size: size, text: text)
+    static func prepare(at url: URL, size: CGSize, text: String, longVideo: Bool,
+                        cancelled: @escaping () -> Bool) throws {
+        let fm = FileManager.default
+        func isComplete(_ file: URL) -> Bool {
+            guard fm.fileExists(atPath: file.path) else { return false }
+            let asset = AVURLAsset(url: file)
+            let duration = CMTimeGetSeconds(asset.duration)
+            return duration.isFinite && duration > 0 && !asset.tracks(withMediaType: .video).isEmpty
+        }
+        guard !cancelled() else { throw CocoaError(.userCancelled) }
+        if isComplete(url) { return }
+        let staging = url.deletingLastPathComponent().appendingPathComponent(".\(UUID().uuidString).mov")
+        defer { try? fm.removeItem(at: staging) }
+        try makeVideo(at: staging, size: size, text: text, frameCount: longVideo ? 450 : 1,
+                      frameRate: longVideo ? 30 : 10, cancelled: cancelled)
+        guard !cancelled(), isComplete(staging) else { throw CocoaError(.fileWriteUnknown) }
+        if fm.fileExists(atPath: url.path) {
+            _ = try fm.replaceItemAt(url, withItemAt: staging)
+        } else {
+            try fm.moveItem(at: staging, to: url)
+        }
     }
 
-    static func makeLongBackingVideo(at url: URL, size: CGSize, text: String) throws {
-        try? FileManager.default.removeItem(at: url)
-        try makeVideo(at: url, size: size, text: text, frameCount: 450, frameRate: 30)
-    }
-
-    private static func makeVideo(
-        at url: URL,
-        size: CGSize,
-        text: String,
-        frameCount: Int = 1,
-        frameRate: Int32 = 10
-    ) throws {
+    private static func makeVideo(at url: URL, size: CGSize, text: String, frameCount: Int,
+                                  frameRate: Int32, cancelled: @escaping () -> Bool) throws {
         let writer = try AVAssetWriter(outputURL: url, fileType: .mov)
-        let videoSettings: [String: Any] = [
-            AVVideoCodecKey: AVVideoCodecType.h264,
-            AVVideoWidthKey: Int(size.width),
+        let input = AVAssetWriterInput(mediaType: .video, outputSettings: [
+            AVVideoCodecKey: AVVideoCodecType.h264, AVVideoWidthKey: Int(size.width),
             AVVideoHeightKey: Int(size.height)
-        ]
-        let input = AVAssetWriterInput(mediaType: .video, outputSettings: videoSettings)
-        input.expectsMediaDataInRealTime = false
-
-	        let sourceAttributes: [String: Any] = [
-	            kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA,
-	            kCVPixelBufferWidthKey as String: Int(size.width),
-	            kCVPixelBufferHeightKey as String: Int(size.height)
-	        ]
-        let adaptor = AVAssetWriterInputPixelBufferAdaptor(
-            assetWriterInput: input,
-            sourcePixelBufferAttributes: sourceAttributes
-        )
-
-        guard writer.canAdd(input) else {
-            throw NSError(domain: "PlaceholderVideoFactory", code: 1)
+        ])
+        let adaptor = AVAssetWriterInputPixelBufferAdaptor(assetWriterInput: input, sourcePixelBufferAttributes: [
+            kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA,
+            kCVPixelBufferWidthKey as String: Int(size.width), kCVPixelBufferHeightKey as String: Int(size.height)
+        ])
+        guard writer.canAdd(input), let buffer = makePixelBuffer(size: size, text: text) else {
+            throw CocoaError(.fileWriteUnknown)
         }
         writer.add(input)
-        writer.startWriting()
+        guard writer.startWriting() else { throw writer.error ?? CocoaError(.fileWriteUnknown) }
         writer.startSession(atSourceTime: .zero)
 
-        guard let pixelBuffer = makePixelBuffer(size: size, text: text) else {
-            throw NSError(domain: "PlaceholderVideoFactory", code: 2)
-        }
-        let frameDuration = CMTime(value: 1, timescale: frameRate)
-        for frameIndex in 0..<max(frameCount, 1) {
-            while !input.isReadyForMoreMediaData {
-                Thread.sleep(forTimeInterval: 0.001)
+        // Backpressure callbacks feed the encoder. Only the cache worker waits, with a deadline.
+        let feeder = DispatchQueue(label: "com.yoroin.globalrefresh.video-encoder", qos: .userInitiated)
+        let done = DispatchSemaphore(value: 0)
+        let deadline = DispatchTime.now() + 8
+        var frame = 0
+        var finishing = false
+        input.requestMediaDataWhenReady(on: feeder) {
+            guard !finishing else { return }
+            while input.isReadyForMoreMediaData {
+                guard !cancelled(), DispatchTime.now() < deadline, writer.status == .writing,
+                      adaptor.append(buffer, withPresentationTime: CMTime(value: Int64(frame), timescale: frameRate)) else {
+                    finishing = true
+                    if writer.status == .writing { writer.cancelWriting() }
+                    done.signal()
+                    return
+                }
+                frame += 1
+                if frame == frameCount {
+                    finishing = true
+                    input.markAsFinished()
+                    writer.endSession(atSourceTime: CMTime(value: Int64(frameCount), timescale: frameRate))
+                    writer.finishWriting { done.signal() }
+                    return
+                }
             }
-            let presentationTime = CMTimeMultiply(frameDuration, multiplier: Int32(frameIndex))
-            adaptor.append(pixelBuffer, withPresentationTime: presentationTime)
         }
-
-        input.markAsFinished()
-        let semaphore = DispatchSemaphore(value: 0)
-        writer.finishWriting {
-            semaphore.signal()
+        while done.wait(timeout: .now() + .milliseconds(100)) == .timedOut {
+            if cancelled() || DispatchTime.now() >= deadline {
+                feeder.async { if writer.status == .writing { writer.cancelWriting() } }
+                throw cancelled() ? CocoaError(.userCancelled) : CocoaError(.fileWriteUnknown)
+            }
         }
-        semaphore.wait()
-
-        if let error = writer.error {
-            throw error
-		    }
-	}
+        guard writer.status == .completed else { throw writer.error ?? CocoaError(.fileWriteUnknown) }
+    }
 
     private static func makePixelBuffer(size: CGSize, text: String) -> CVPixelBuffer? {
         var pixelBuffer: CVPixelBuffer?

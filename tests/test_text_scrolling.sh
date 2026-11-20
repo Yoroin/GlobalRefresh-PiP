@@ -4,7 +4,7 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 TEMP=$(mktemp -d /tmp/pip-text-scrolling.XXXXXX)
 trap 'rm -rf "$TEMP"' EXIT
 printf 'import Foundation\nimport CoreGraphics\n' > "$TEMP/render.swift"
-awk '/^enum PiPHiddenReferenceOptions /{copy=1} /^final class PiPCoexistenceExperiment/{exit} copy' \
+awk '/^enum PiPNativePostStartTrial /{copy=1} /^final class PiPCoexistenceExperiment/{exit} copy' \
     "$ROOT/pip_swift/pip_swift/PiPCoexistenceExperiment.swift" >> "$TEMP/render.swift"
 xcrun swiftc "$ROOT/tests/text_scrolling.swift" "$TEMP/render.swift" -o "$TEMP/test"
 "$TEMP/test"

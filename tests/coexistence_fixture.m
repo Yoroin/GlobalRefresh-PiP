@@ -19,10 +19,20 @@
 @property(nonatomic) NSInteger sendCount;
 @property(nonatomic) BOOL deferred;
 @property(nonatomic, strong) NSMutableArray *pending;
+@property(nonatomic) NSInteger controlsStyle;
+@property(nonatomic) NSInteger controlsSendCount;
+@property(nonatomic) BOOL controlsAnimated;
 - (void)updatePlaybackStateUsingBlock:(void (^)(id))block;
 - (void)_updatePlaybackStateContentTypeIfNeeded;
+- (void)setControlsStyle:(NSInteger)style animated:(BOOL)animated withCompletionHandler:(void (^)(void))completion;
 @end
 @implementation PCETestProxy
+- (void)setControlsStyle:(NSInteger)style animated:(BOOL)animated withCompletionHandler:(void (^)(void))completion {
+    self.controlsStyle = style;
+    self.controlsAnimated = animated;
+    self.controlsSendCount++;
+    if (completion) completion();
+}
 - (void)_updatePlaybackStateContentTypeIfNeeded {
     self.playbackState.contentType = PCEProviderType(self.delegate, self);
 }
@@ -40,6 +50,7 @@
 - (NSInteger)_proxyControlsStyle;
 @end
 @implementation PCETestAdapter
+- (id)pegasusProxy { return self.proxy; }
 - (void)_updateProxyPlaybackState { self.proxy.playbackState.contentType = 4; }
 - (NSInteger)_proxyControlsStyle { return 2; }
 @end
@@ -55,6 +66,7 @@ NSObject *PCEMakeProxy(NSInteger type) {
     proxy.playbackState = [PCETestState new];
     proxy.playbackState.contentType = type;
     proxy.lastSentType = -1;
+    proxy.controlsStyle = 4;
     proxy.pending = [NSMutableArray new];
     return proxy;
 }
@@ -87,6 +99,10 @@ BOOL PCENativeStateRoundTrips(NSObject *proxy) {
 }
 NSObject *PCEMakeAdapter(void) { return [PCETestAdapter new]; }
 NSInteger PCEControlsStyle(NSObject *adapter) { return [(PCETestAdapter *)adapter _proxyControlsStyle]; }
+NSInteger PCEProxyControlsStyle(NSObject *proxy) { return ((PCETestProxy *)proxy).controlsStyle; }
+NSInteger PCEControlsSendCount(NSObject *proxy) { return ((PCETestProxy *)proxy).controlsSendCount; }
+BOOL PCEControlsAnimated(NSObject *proxy) { return ((PCETestProxy *)proxy).controlsAnimated; }
+void PCESetProxyControlsStyle(NSObject *proxy, NSInteger style) { ((PCETestProxy *)proxy).controlsStyle = style; }
 NSObject *PCEMakeExistingProviderAdapter(void) { return [PCEExistingProviderAdapter new]; }
 NSInteger PCEProviderType(NSObject *adapter, NSObject *proxy) {
     if (![adapter respondsToSelector:@selector(pictureInPictureProxyContentType:)]) return PCEType(proxy);

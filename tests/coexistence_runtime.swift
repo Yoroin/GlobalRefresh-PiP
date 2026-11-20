@@ -47,16 +47,23 @@ struct CoexistenceRuntimeTests {
         precondition(adapter.responds(to: NSSelectorFromString("description")))
         precondition(!adapter.responds(to: NSSelectorFromString("unsupportedTestSelector")))
         precondition(experiment.diagnosticDescription.contains("proxyDelegateMatches=true"))
+        let logsBeforeQueries = AppDebugLogger.entries.count
         PCERunAdapterUpdate(adapter)
-        precondition(PCEType(proxy) == 4, "Tracing must not override the original write-back")
-        precondition(AppDebugLogger.entries.contains { $0.contains("newValue=4") && $0.contains("WRITE-TRACE") })
+        precondition(PCEType(proxy) == 4, "Native write-back must remain intact")
         PCERunProxyRecalculate(proxy)
         precondition(PCEType(proxy) == 6, "The native recalculation still calls the provider")
-        precondition(AppDebugLogger.entries.contains { $0.contains("[_updatePlaybackStateContentTypeIfNeeded #") })
-        precondition(Thread.current.threadDictionary["com.yoroin.pip.contentTypeTrace.context"] == nil)
-        let setterTraceCount = AppDebugLogger.entries.filter { $0.contains("[setContentType #") }.count
-        for _ in 0..<80 { PCESetType(proxy, 4) }
-        precondition(AppDebugLogger.entries.filter { $0.contains("[setContentType #") }.count <= setterTraceCount + 24)
+        let sendsBeforeQueries = PCESendCount(proxy)
+        for _ in 0..<10000 {
+            precondition(PCEProviderType(adapter, proxy) == 6)
+            PCESetType(proxy, 4)
+        }
+        DispatchQueue.concurrentPerform(iterations: 8) { _ in
+            for _ in 0..<1250 {
+                precondition(PCEProviderType(adapter, proxy) == 6 && PCEProviderType(adapter, siblingProxy) == 1)
+            }
+        }
+        precondition(PCESendCount(proxy) == sendsBeforeQueries && AppDebugLogger.entries.count == logsBeforeQueries,
+                     "Queries must not log, enqueue remote writes or override native setter behavior")
         PCERunProxyRecalculate(proxy)
         PCESetType(proxy, 4)
         PCERecalculate(proxy, adapter)
@@ -117,7 +124,7 @@ struct CoexistenceRuntimeTests {
         }
         precondition(weakAdapter == nil && weakProxy == nil)
         experiment.restore()
-        precondition(experiment.diagnosticDescription == "coexistenceProvider=false")
+        precondition(experiment.diagnosticDescription.hasPrefix("coexistenceProvider=false"))
         if let nativeProxy = PCEMakeNativeStateProxy() {
             precondition(experiment.install(adapter: adapter, proxy: nativeProxy))
             precondition(PCENativeStateRoundTrips(nativeProxy))

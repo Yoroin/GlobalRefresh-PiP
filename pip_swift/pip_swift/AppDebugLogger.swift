@@ -8,12 +8,200 @@ import AVFoundation
 import Darwin
 import OSLog
 
+final class RecentRuntimeLogStore {
+    private let directory: URL
+    private let maximumFileBytes: Int
+    private let maximumEntryBytes: Int
+    private let queue = DispatchQueue(label: "com.yoroin.globalrefresh.recentRuntimeLog", qos: .utility)
+    private var lastWriteError: String?
+    private var pending: [Data] = []
+    private var pendingBytes = 0
+    private var scheduledWrite: DispatchWorkItem?
+
+    init(directory: URL, maximumFileBytes: Int = 4_000_000, maximumEntryBytes: Int = 4096) {
+        precondition(maximumFileBytes >= maximumEntryBytes && maximumEntryBytes >= 64)
+        self.directory = directory
+        self.maximumFileBytes = maximumFileBytes
+        self.maximumEntryBytes = maximumEntryBytes
+    }
+
+    private var currentURL: URL { directory.appendingPathComponent("recent-runtime.log") }
+    private var previousURL: URL { directory.appendingPathComponent("recent-runtime.previous.log") }
+
+    func append(_ entry: String) {
+        let escaped = entry.replacingOccurrences(of: "\r", with: "\\r").replacingOccurrences(of: "\n", with: "\\n")
+        let data = Data((boundedEntry(escaped) + "\n").utf8)
+        queue.async { [self] in
+            pending.append(data)
+            pendingBytes += data.count
+            if pendingBytes >= min(32 * 1024, maximumFileBytes) {
+                writePending()
+            } else if scheduledWrite == nil {
+                let task = DispatchWorkItem { [weak self] in self?.writePending() }
+                scheduledWrite = task
+                queue.asyncAfter(deadline: .now() + .milliseconds(500), execute: task)
+            }
+        }
+    }
+
+    func flush() {
+        queue.async { [self] in writePending() }
+    }
+
+    private func writePending() {
+        scheduledWrite?.cancel()
+        scheduledWrite = nil
+        guard !pending.isEmpty else { return }
+        defer { pending.removeAll(keepingCapacity: true); pendingBytes = 0 }
+        let files = FileManager.default
+        do {
+            try DiagnosticLogFiles.prepare(directory)
+            var size = (try? currentURL.resourceValues(forKeys: [.fileSizeKey]))?.fileSize ?? 0
+            var batch = Data()
+            for entry in pending {
+                if size + batch.count + entry.count > maximumFileBytes {
+                    try appendBatch(batch, to: currentURL)
+                    if files.fileExists(atPath: previousURL.path) { try files.removeItem(at: previousURL) }
+                    try files.moveItem(at: currentURL, to: previousURL)
+                    batch.removeAll(keepingCapacity: true)
+                    size = 0
+                }
+                batch.append(entry)
+            }
+            try appendBatch(batch, to: currentURL)
+            lastWriteError = nil
+        } catch {
+            lastWriteError = error.localizedDescription
+        }
+    }
+
+    private func appendBatch(_ data: Data, to url: URL) throws {
+        guard !data.isEmpty else { return }
+        guard FileManager.default.fileExists(atPath: url.path) else {
+            try DiagnosticLogFiles.writeAtomically(data, to: url)
+            return
+        }
+        let handle = try FileHandle(forWritingTo: url)
+        defer { try? handle.close() }
+        try handle.seekToEnd()
+        try handle.write(contentsOf: data)
+    }
+
+    func exportText(newestFirst: Bool) -> String {
+        queue.sync {
+            writePending()
+            var entries: [String] = []
+            for url in [previousURL, currentURL] where FileManager.default.fileExists(atPath: url.path) {
+                do {
+                    let handle = try FileHandle(forReadingFrom: url)
+                    defer { try? handle.close() }
+                    let data = try handle.read(upToCount: maximumFileBytes) ?? Data()
+                    entries += String(decoding: data, as: UTF8.self).split(separator: "\n").map(String.init)
+                } catch {
+                    lastWriteError = error.localizedDescription
+                }
+            }
+            if newestFirst { entries.reverse() }
+            return """
+            轻量关键事件日志（关闭调试模式时仍保存）
+            存储：本地滚动文件，最多2份，每份\(maximumFileBytes)字节；不逐帧记录，不启动性能采样或常驻写盘定时器。
+            排列顺序：\(newestFirst ? "最新在前" : "按时间顺序")。仅代表成功记录的现场，不等于系统确认的终止原因；进程被杀的瞬间无法保证记录。
+            文件状态：\(lastWriteError.map { "读写失败：\($0)" } ?? "正常")
+            \(entries.isEmpty ? "暂无关键事件" : entries.joined(separator: "\n"))
+            """
+        }
+    }
+
+    func reset() {
+        queue.sync {
+            scheduledWrite?.cancel()
+            scheduledWrite = nil
+            pending.removeAll(keepingCapacity: false)
+            pendingBytes = 0
+            do {
+                for url in [previousURL, currentURL] where FileManager.default.fileExists(atPath: url.path) {
+                    try FileManager.default.removeItem(at: url)
+                }
+                lastWriteError = nil
+            } catch {
+                lastWriteError = error.localizedDescription
+            }
+        }
+    }
+
+    private func boundedEntry(_ entry: String) -> String {
+        guard entry.utf8.count + 1 > maximumEntryBytes else { return entry }
+        let marker = " [truncated]"
+        var prefix = Data(entry.utf8.prefix(maximumEntryBytes - marker.utf8.count - 1))
+        while String(data: prefix, encoding: .utf8) == nil { prefix.removeLast() }
+        return String(decoding: prefix, as: UTF8.self) + marker
+    }
+}
+
+private enum DiagnosticLogFiles {
+    static func prepare(_ directory: URL) throws {
+        guard !FileManager.default.fileExists(atPath: directory.path) else { return }
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        var url = directory
+        var values = URLResourceValues()
+        values.isExcludedFromBackup = true
+        try url.setResourceValues(values)
+    }
+
+    static func writeAtomically(_ data: Data, to url: URL) throws {
+        #if os(iOS)
+        try data.write(to: url, options: [.atomic, .completeFileProtectionUntilFirstUserAuthentication])
+        #else
+        try data.write(to: url, options: .atomic)
+        #endif
+    }
+}
+
+// Access is serialized by AppDebugLogger.logQueue.
+final class DetailedDebugLogArchive {
+    private let url: URL
+    private let minimumInterval: TimeInterval
+    private var lastWrite: TimeInterval?
+    private var hasChanges = false
+
+    init(directory: URL, minimumInterval: TimeInterval = 60) {
+        url = directory.appendingPathComponent("detailed-debug.plist")
+        self.minimumInterval = minimumInterval
+    }
+
+    func load() -> [String]? {
+        guard let size = (try? url.resourceValues(forKeys: [.fileSizeKey]))?.fileSize,
+              size <= 6_100_000, let data = try? Data(contentsOf: url) else { return nil }
+        return try? PropertyListDecoder().decode([String].self, from: data)
+    }
+
+    func markChanged() { hasChanges = true }
+
+    @discardableResult
+    func save(_ entries: [String], at now: TimeInterval, force: Bool = false) throws -> Bool {
+        guard hasChanges, force || lastWrite.map({ now - $0 >= minimumInterval }) != false else { return false }
+        let encoder = PropertyListEncoder()
+        encoder.outputFormat = .binary
+        try DiagnosticLogFiles.prepare(url.deletingLastPathComponent())
+        try DiagnosticLogFiles.writeAtomically(try encoder.encode(entries), to: url)
+        hasChanges = false
+        lastWrite = now
+        return true
+    }
+
+    func reset() {
+        try? FileManager.default.removeItem(at: url)
+        hasChanges = false
+        lastWrite = nil
+    }
+}
+
 enum AppDebugLogger {
-    private static let storageKey = "pip.debug.recentLogs"
+    private static let legacyStorageKey = "pip.debug.recentLogs"
     private static let debugModeKey = "pip.debug.modeEnabled"
-    private static let maximumEntries = 600
-    private static let maximumEntryBytes = 8 * 1024
-    private static let maximumBufferBytes = 1_500_000
+    private static let maximumEntries = 1200
+    private static let maximumEntryBytes = 16 * 1024
+    private static let maximumBufferBytes = 3_000_000
     private static let logger = Logger(subsystem: "com.yoroin.globalrefresh", category: "diagnostics")
     private static let logQueueKey = DispatchSpecificKey<Void>()
     private static let logQueue: DispatchQueue = {
@@ -27,6 +215,11 @@ enum AppDebugLogger {
     // 内存环形缓存：日志只写内存，不实时写 UserDefaults
     private static var memoryBuffer: [String] = []
     private static var memoryBufferBytes = 0
+    private static let directory =
+        FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+            .appendingPathComponent("GlobalRefreshDiagnostics", isDirectory: true)
+    private static let recentRuntimeLogs = RecentRuntimeLogStore(directory: directory)
+    private static let detailedArchive = DetailedDebugLogArchive(directory: directory)
 
     static var isDebugModeEnabled: Bool {
         get { UserDefaults.standard.bool(forKey: debugModeKey) }
@@ -43,18 +236,26 @@ enum AppDebugLogger {
         didTrimOnLaunch = true
         registrationLock.unlock()
         logQueue.async {
-            guard isDebugModeEnabled else {
-                memoryBuffer.removeAll(keepingCapacity: false)
-                memoryBufferBytes = 0
-                UserDefaults.standard.removeObject(forKey: storageKey)
-                return
-            }
-            let stored = UserDefaults.standard.stringArray(forKey: storageKey) ?? []
-            memoryBuffer = stored.suffix(maximumEntries).map(limitEntry)
+            let archived = detailedArchive.load()
+            let legacy = UserDefaults.standard.stringArray(forKey: legacyStorageKey)
+            let stored = archived ?? legacy ?? []
+            memoryBuffer = stored.suffix(maximumEntries).map(limitEntry) + memoryBuffer
             memoryBufferBytes = memoryBuffer.reduce(into: 0) { $0 += $1.utf8.count }
             trimMemoryBuffer()
-            if stored != memoryBuffer {
-                UserDefaults.standard.set(memoryBuffer, forKey: storageKey)
+            if archived == nil, legacy != nil {
+                detailedArchive.markChanged()
+                do {
+                    try detailedArchive.save(memoryBuffer, at: ProcessInfo.processInfo.systemUptime, force: true)
+                    UserDefaults.standard.removeObject(forKey: legacyStorageKey)
+                } catch {
+                    logger.error("Could not migrate detailed debug log archive")
+                }
+            } else if archived != nil, legacy != nil {
+                UserDefaults.standard.removeObject(forKey: legacyStorageKey)
+            }
+            if !isDebugModeEnabled {
+                memoryBuffer.removeAll(keepingCapacity: false)
+                memoryBufferBytes = 0
             }
         }
     }
@@ -72,30 +273,37 @@ enum AppDebugLogger {
             flush()
         }
         NotificationCenter.default.addObserver(forName: UIApplication.willTerminateNotification, object: nil, queue: nil) { _ in
-            flush()
+            flush(force: true)
         }
     }
 
     // 只写内存，不碰 UserDefaults
     static func log(_ message: String, file: StaticString = #fileID, line: UInt = #line) {
-        append(message, persistImmediately: false, file: file, line: line)
+        append(message, recordRecent: false, file: file, line: line)
+    }
+
+    static func logRuntime(_ message: String, file: StaticString = #fileID, line: UInt = #line) {
+        append(message, recordRecent: true, file: file, line: line)
     }
 
     // 生命周期、内存警告和保活切换使用此入口，避免系统直接终止时最后状态只留在内存。
     static func logCritical(_ message: String, file: StaticString = #fileID, line: UInt = #line) {
-        append(message, persistImmediately: true, file: file, line: line)
+        append(message, recordRecent: true, file: file, line: line)
     }
 
     private static func append(
         _ message: String,
-        persistImmediately: Bool,
+        recordRecent: Bool,
         file: StaticString,
         line: UInt
     ) {
-        guard isDebugModeEnabled else { return }
+        let debugEnabled = isDebugModeEnabled
+        guard debugEnabled || recordRecent else { return }
         let limitedMessage = limitEntry(message)
-        DiagnosticsRuntimeState.updateLastEvent(limitedMessage)
-        logger.info("\(limitedMessage, privacy: .public)")
+        if debugEnabled {
+            DiagnosticsRuntimeState.updateLastEvent(limitedMessage)
+            logger.info("\(limitedMessage, privacy: .private)")
+        }
         let device = UIDevice.current
         let entry = limitEntry([
             beijingFormatter.string(from: Date()),
@@ -105,34 +313,39 @@ enum AppDebugLogger {
             limitedMessage
         ].joined(separator: " | "))
 
+        if recordRecent {
+            let info = Bundle.main.infoDictionary
+            let version = info?["CFBundleShortVersionString"] as? String ?? "unknown"
+            let build = info?["CFBundleVersion"] as? String ?? "unknown"
+            recentRuntimeLogs.append("\(version)(\(build)) | \(entry)")
+        }
+        guard debugEnabled else { return }
         logQueue.async {
+            guard isDebugModeEnabled else { return }
             memoryBuffer.append(entry)
             memoryBufferBytes += entry.utf8.count
             trimMemoryBuffer()
-            if persistImmediately {
-                UserDefaults.standard.set(memoryBuffer, forKey: storageKey)
-                UserDefaults.standard.synchronize()
-            }
+            detailedArchive.markChanged()
         }
     }
 
-    // 只在复制日志/进后台/终止时落盘
-    static func flush() {
+    // Export reads the in-memory buffer directly; only lifecycle events archive it.
+    static func flush(force: Bool = false) {
+        recentRuntimeLogs.flush()
         logQueue.async {
-            guard isDebugModeEnabled else {
-                memoryBuffer.removeAll(keepingCapacity: false)
-                memoryBufferBytes = 0
-                UserDefaults.standard.removeObject(forKey: storageKey)
-                return
+            guard isDebugModeEnabled, !memoryBuffer.isEmpty else { return }
+            do {
+                try detailedArchive.save(memoryBuffer, at: ProcessInfo.processInfo.systemUptime, force: force)
+            } catch {
+                logger.error("Could not checkpoint detailed debug logs")
             }
-            guard !memoryBuffer.isEmpty else { return }
-            UserDefaults.standard.set(memoryBuffer, forKey: storageKey)
         }
     }
 
-    static func exportText() -> String {
+    static func exportText(newestFirst: Bool = false) -> String {
         var entries: [String] = []
         logQueue.sync { entries = memoryBuffer }
+        if newestFirst { entries.reverse() }
         let info = Bundle.main.infoDictionary
         let version = info?["CFBundleShortVersionString"] as? String ?? "unknown"
         let build = info?["CFBundleVersion"] as? String ?? "unknown"
@@ -143,7 +356,6 @@ enum AppDebugLogger {
         线程与性能日志记录：开启
         当前现场：\(DiagnosticsRuntimeState.snapshotText())
         实时性能：\(PerformanceDiagnosticsLogger.currentSnapshotText())
-        \(ProcessTerminationDiagnostics.exportText())
         """
             : ""
 
@@ -155,10 +367,15 @@ enum AppDebugLogger {
         设备型号：\(deviceModelIdentifier)
         生成时间：\(beijingFormatter.string(from: Date())) 北京时间
         当前保活模式：\(KeepAliveModeText.current)
-        \(diagnosticsSection)
+        调试模式：\(isDebugModeEnabled ? "开启（详细记录）" : "关闭（仅轻量关键事件与低频采样）")
 
-        最近日志：
+        \(recentRuntimeLogs.exportText(newestFirst: newestFirst))
+
+        详细调试日志（\(newestFirst ? "最新在前" : "按时间顺序")，最多\(maximumEntries)条 / \(maximumBufferBytes / 1_000_000)MB）：
         \(entries.isEmpty ? "暂无日志" : entries.joined(separator: "\n"))
+
+        \(diagnosticsSection)
+        \(ProcessTerminationDiagnostics.exportText())
         """
     }
 
@@ -166,17 +383,19 @@ enum AppDebugLogger {
         UIPasteboard.general.string = exportText()
     }
 
-    static func resetLogs() {
+    static func resetLogs(includingRecentRuntime: Bool = false) {
         let clearBuffer = {
             memoryBuffer.removeAll(keepingCapacity: false)
             memoryBufferBytes = 0
-            UserDefaults.standard.removeObject(forKey: storageKey)
+            detailedArchive.reset()
+            UserDefaults.standard.removeObject(forKey: legacyStorageKey)
         }
         if DispatchQueue.getSpecific(key: logQueueKey) != nil {
             clearBuffer()
         } else {
             logQueue.sync(execute: clearBuffer)
         }
+        if includingRecentRuntime { recentRuntimeLogs.reset() }
         DiagnosticsRuntimeState.reset()
         ProcessTerminationDiagnostics.reset()
     }
@@ -186,7 +405,7 @@ enum AppDebugLogger {
             let retained = memoryBuffer.suffix(100)
             memoryBuffer = Array(retained)
             memoryBufferBytes = memoryBuffer.reduce(into: 0) { $0 += $1.utf8.count }
-            UserDefaults.standard.set(memoryBuffer, forKey: storageKey)
+            if isDebugModeEnabled { detailedArchive.markChanged() }
         }
     }
 
@@ -215,7 +434,7 @@ enum AppDebugLogger {
         return formatter
     }()
 
-    private static var deviceModelIdentifier: String {
+    private static let deviceModelIdentifier: String = {
         var systemInfo = utsname()
         uname(&systemInfo)
         let mirror = Mirror(reflecting: systemInfo.machine)
@@ -223,7 +442,7 @@ enum AppDebugLogger {
             guard let value = element.value as? Int8, value != 0 else { return }
             identifier.append(String(UnicodeScalar(UInt8(value))))
         }
-    }
+    }()
 }
 
 private struct LightweightRuntimeSample: Codable {
@@ -277,8 +496,9 @@ enum LightweightRuntimeDiagnostics {
         )
     }
 
-    static func exportText() -> String {
-        let samples = loadSamplesSynchronously()
+    static func exportText(newestFirst: Bool = false) -> String {
+        var samples = loadSamplesSynchronously()
+        if newestFirst { samples.reverse() }
         guard !samples.isEmpty else {
             return "轻量常驻内存记录（调试模式关闭时仍记录）\n暂无记录"
         }
@@ -310,6 +530,7 @@ enum LightweightRuntimeDiagnostics {
         return """
         轻量常驻内存记录（调试模式关闭时仍记录）
         采样规则：PiP运行期间每10分钟一次，并记录启动、前后台切换和内存警告；最多保留320条。
+        排列顺序：\(newestFirst ? "最新在前" : "按时间顺序")。
         注意：记录物理占用趋势，不等同于系统确认的Jetsam原因。
 
         \(lines.joined(separator: "\n"))
@@ -391,6 +612,7 @@ enum LightweightRuntimeDiagnostics {
                 record(reason: "App即将回前台", force: true)
             },
             center.addObserver(forName: UIApplication.didReceiveMemoryWarningNotification, object: nil, queue: .main) { _ in
+                AppDebugLogger.logRuntime("收到内存警告；仅记录回调，不认定系统终止原因")
                 record(reason: "收到内存警告", force: true)
                 AppDebugLogger.trimForMemoryPressure()
                 BackgroundTaskManager.shared.releasePreparedAudioIfInactive()
@@ -537,7 +759,7 @@ enum DiagnosticsRuntimeState {
 
     static func recordUserAction(_ action: String) {
         update { lastUserAction = action }
-        AppDebugLogger.log("用户操作：\(action)")
+        AppDebugLogger.logRuntime("用户操作：\(action)")
     }
 
     static func updateLastEvent(_ event: String) {
@@ -849,7 +1071,7 @@ enum PerformanceDiagnosticsLogger {
     }
 
     static func lightweightProcessSnapshot() -> LightweightProcessSnapshot {
-        let threadSnapshot = threadUsageSnapshot()
+        let threadSnapshot = threadUsageSnapshot(countOnly: true)
         return LightweightProcessSnapshot(
             physicalFootprintMB: physicalFootprintMB(),
             threadCount: threadSnapshot.threadCount
@@ -974,7 +1196,7 @@ enum PerformanceDiagnosticsLogger {
         let haltedThreadCount: Int
     }
 
-    private static func threadUsageSnapshot() -> ThreadUsageSnapshot {
+    private static func threadUsageSnapshot(countOnly: Bool = false) -> ThreadUsageSnapshot {
         var threadList: thread_act_array_t?
         var threadCount = mach_msg_type_number_t(0)
         let result = task_threads(mach_task_self_, &threadList, &threadCount)
@@ -992,6 +1214,10 @@ enum PerformanceDiagnosticsLogger {
         }
 
         defer {
+            // task_threads returns owned port rights as well as the array storage.
+            for index in 0..<Int(threadCount) {
+                mach_port_deallocate(mach_task_self_, threadList[index])
+            }
             let size = vm_size_t(Int(threadCount) * MemoryLayout<thread_t>.stride)
             vm_deallocate(mach_task_self_, vm_address_t(UInt(bitPattern: threadList)), size)
         }
@@ -1004,7 +1230,7 @@ enum PerformanceDiagnosticsLogger {
         var uninterruptibleCount = 0
         var haltedCount = 0
 
-        for index in 0..<Int(threadCount) {
+        for index in 0..<(countOnly ? 0 : Int(threadCount)) {
             var threadInfo = thread_basic_info()
             var threadInfoCount = mach_msg_type_number_t(THREAD_INFO_MAX)
             let infoResult = withUnsafeMutablePointer(to: &threadInfo) { pointer in
@@ -1117,6 +1343,7 @@ enum ProcessTerminationDiagnostics {
         let previousLastMemoryWarning = defaults.double(forKey: lastMemoryWarningKey)
         let currentUptime = ProcessInfo.processInfo.systemUptime
 
+        var launchEvidenceSummary: String?
         if previousRunWasActive {
             // A reboot resets monotonic uptime. Deriving a boot date from wall-clock time
             // drifts during deep sleep on some iOS versions and causes false reboot reports.
@@ -1138,6 +1365,7 @@ enum ProcessTerminationDiagnostics {
             let checkpointText = dateText(previousCheckpointDate)
             let summary = "上次进程未记录正常终止 | 启动=\(previousLaunchText) | 最后现场=\(checkpointText) | 内存警告=\(previousMemoryWarnings)次 | 推断=\(inference) | 现场{\(previousCheckpoint)}"
             defaults.set(summary, forKey: previousRunSummaryKey)
+            launchEvidenceSummary = summary
             let evidence = ProcessTerminationEvidenceSnapshot(
                 capturedAt: Date(),
                 lastCheckpointAt: previousCheckpointDate > 0 ? Date(timeIntervalSince1970: previousCheckpointDate) : nil,
@@ -1151,8 +1379,6 @@ enum ProcessTerminationDiagnostics {
             if let data = try? JSONEncoder().encode(evidence) {
                 defaults.set(data, forKey: previousRunEvidenceKey)
             }
-        } else {
-            defaults.removeObject(forKey: previousRunEvidenceKey)
         }
 
         defaults.set(true, forKey: runActiveKey)
@@ -1161,23 +1387,27 @@ enum ProcessTerminationDiagnostics {
         defaults.removeObject(forKey: lastMemoryWarningKey)
         installObserversIfNeeded()
         recordCheckpoint(reason: "进程启动")
-        AppDebugLogger.logCritical("进程终止诊断已启动；\(defaults.string(forKey: previousRunSummaryKey) ?? "无上次异常终止记录")")
+        AppDebugLogger.logCritical("进程终止诊断已启动；\(launchEvidenceSummary ?? "本次启动没有新的异常终止证据，已有历史记录保留")")
     }
 
-    static func recordCheckpoint(
-        reason: String,
-        pipSnapshot: String? = nil,
-        persistImmediately: Bool = true
-    ) {
-        guard AppDebugLogger.isDebugModeEnabled else { return }
+    static func markBuildTransition(from previousBuild: String, to currentBuild: String) {
         let defaults = UserDefaults.standard
-        let snapshot = runtimeSnapshot(reason: reason, pipSnapshot: pipSnapshot)
+        let lastCheckpoint = dateText(defaults.double(forKey: lastCheckpointDateKey))
+        let lastRunMarkedActive = defaults.bool(forKey: runActiveKey)
+        defaults.set(false, forKey: runActiveKey)
+        AppDebugLogger.logRuntime("构建变更 \(previousBuild) → \(currentBuild)；旧进程活跃标记=\(lastRunMarkedActive)，旧现场时间=\(lastCheckpoint)。覆盖安装不计为新的后台异常，已记录的诊断保留。")
+    }
+
+    static func recordCheckpoint(reason: String, pipSnapshot: String? = nil) {
+        guard AppDebugLogger.isDebugModeEnabled else { return }
+        storeCheckpoint(runtimeSnapshot(reason: reason, pipSnapshot: pipSnapshot))
+    }
+
+    private static func storeCheckpoint(_ snapshot: String) {
+        let defaults = UserDefaults.standard
         defaults.set(snapshot, forKey: lastCheckpointKey)
         defaults.set(Date().timeIntervalSince1970, forKey: lastCheckpointDateKey)
         defaults.set(ProcessInfo.processInfo.systemUptime, forKey: lastUptimeKey)
-        if persistImmediately {
-            defaults.synchronize()
-        }
     }
 
     static func recordMemoryWarning() {
@@ -1195,7 +1425,6 @@ enum ProcessTerminationDiagnostics {
         recordCheckpoint(reason: reason)
         let defaults = UserDefaults.standard
         defaults.set(false, forKey: runActiveKey)
-        defaults.synchronize()
         AppDebugLogger.logCritical("进程记录正常结束：\(reason)")
     }
 
@@ -1203,7 +1432,7 @@ enum ProcessTerminationDiagnostics {
         let defaults = UserDefaults.standard
         return """
         进程终止推断：
-        上次运行：\(defaults.string(forKey: previousRunSummaryKey) ?? "无异常终止记录")
+        最近一次异常终止推断（可能来自旧构建）：\(defaults.string(forKey: previousRunSummaryKey) ?? "无异常终止记录")
         本次启动：\(dateText(defaults.double(forKey: launchKey)))
         本次内存警告：\(defaults.integer(forKey: memoryWarningCountKey)) 次
         最后诊断现场：\(defaults.string(forKey: lastCheckpointKey) ?? "无")
@@ -1288,8 +1517,10 @@ enum ProcessTerminationDiagnostics {
     }
 
     private static func recordAndLogCritical(_ reason: String) {
-        recordCheckpoint(reason: reason)
-        AppDebugLogger.logCritical("生命周期诊断：\(runtimeSnapshot(reason: reason, pipSnapshot: nil))")
+        guard AppDebugLogger.isDebugModeEnabled else { return }
+        let snapshot = runtimeSnapshot(reason: reason, pipSnapshot: nil)
+        storeCheckpoint(snapshot)
+        AppDebugLogger.logCritical("生命周期诊断：\(snapshot)")
     }
 
     private static func runtimeSnapshot(reason: String, pipSnapshot: String?) -> String {

@@ -8,33 +8,27 @@ import Foundation
 enum DiagnosticsResetManager {
     private static let storedBuildKey = "pip.diagnostics.lastBuild"
 
-    static func resetDiagnosticsIfBuildChanged() {
+    static func applyDiagnosticsDefaultsIfBuildChanged() {
         let defaults = UserDefaults.standard
         let currentBuild = Bundle.main.infoDictionary?["CFBundleVersion"] as? String ?? "unknown"
         let previousBuild = defaults.string(forKey: storedBuildKey)
         guard previousBuild != currentBuild else { return }
 
-        AppDebugLogger.isDebugModeEnabled = false
-        DiagnosticsRuntimeState.stopAppStateTracking()
-        MetricKitLogger.shared.stop()
-        DebugDiagnosticsMonitor.stop()
-        AppDebugLogger.resetLogs()
-        KeepAliveLogger.resetLogs()
-        MetricKitLogger.shared.resetLogs()
-        PowerUsageLogger.resetStatistics()
+        // Only explicit test builds opt in; a user can still disable it afterward.
+        AppDebugLogger.isDebugModeEnabled = Bundle.main.infoDictionary?["DefaultDebugModeEnabled"] as? Bool ?? false
+        if let previousBuild {
+            ProcessTerminationDiagnostics.markBuildTransition(from: previousBuild, to: currentBuild)
+            KeepAliveLogger.markBuildTransition()
+        }
         defaults.set(currentBuild, forKey: storedBuildKey)
     }
 
-    static func clearDiagnosticsIfDebugModeDisabled() {
+    static func stopDiagnosticsIfDebugModeDisabled() {
         guard !AppDebugLogger.isDebugModeEnabled else { return }
 
         DiagnosticsRuntimeState.stopAppStateTracking()
         MetricKitLogger.shared.stop()
         DebugDiagnosticsMonitor.setEnabled(false)
-        AppDebugLogger.resetLogs()
-        KeepAliveLogger.resetLogs()
-        MetricKitLogger.shared.resetLogs()
-        PowerUsageLogger.resetStatistics()
     }
 }
 
@@ -52,10 +46,7 @@ enum CacheCleanupManager {
     static let willResetAllAppDataNotification = Notification.Name("pip.cacheCleanup.willResetAllAppData")
     static let didResetAllAppDataNotification = Notification.Name("pip.cacheCleanup.didResetAllAppData")
 
-    private static let cleanupQueue = DispatchQueue(
-        label: "com.yoroin.globalrefresh.cache-cleanup",
-        qos: .utility
-    )
+    private static let cleanupQueue = GeneratedPiPVideoCache.queue
     private static let firstLaunchKey = "pip.cache.cleanup.firstLaunchCompleted"
     private static let lastBuildKey = "pip.cache.cleanup.lastBuild"
     private static let cleanupRevisionKey = "pip.cache.cleanup.revision"
@@ -90,6 +81,7 @@ enum CacheCleanupManager {
     static func clearManually(completion: @escaping (CacheCleanupReport) -> Void) {
         cleanupQueue.async {
             let report = performCleanup(fullCleanup: true)
+            AppDebugLogger.resetLogs(includingRecentRuntime: true)
             AppDebugLogger.log(
                 "缓存手动清理完成：删除=\(report.removedItems)项，释放=\(formatBytes(report.freedBytes))，失败=\(report.failedItems)项"
             )
@@ -105,6 +97,7 @@ enum CacheCleanupManager {
         DiagnosticsRuntimeState.stopAppStateTracking()
         MetricKitLogger.shared.stop()
         DebugDiagnosticsMonitor.stop()
+        AppDebugLogger.resetLogs(includingRecentRuntime: true)
         KeepAliveNotificationTester.cancelBackgroundProbeNotifications(reason: "清空全部数据")
         KeepAliveNotificationTester.cancelPiPStoppedNotifications(reason: "清空全部数据")
 
@@ -160,14 +153,17 @@ enum CacheCleanupManager {
             let managedEntries = (try? fileManager.contentsOfDirectory(at: managedDirectory, includingPropertiesForKeys: nil)) ?? []
             for entry in managedEntries {
                 let isAbandonedGeneration = entry.lastPathComponent.hasPrefix(".") && entry.pathExtension == "mov"
-                if fullCleanup || isAbandonedGeneration {
+                if (fullCleanup || isAbandonedGeneration) && !GeneratedPiPVideoCache.isInUse(entry) {
                     report = removeItem(entry, fileManager: fileManager, report: report)
                 }
             }
         }
 
         let temporaryEntries = (try? fileManager.contentsOfDirectory(at: fileManager.temporaryDirectory, includingPropertiesForKeys: nil)) ?? []
-        for entry in temporaryEntries where isGeneratedTemporaryFile(entry) {
+        for entry in temporaryEntries where isGeneratedTemporaryFile(entry) && !GeneratedPiPVideoCache.isInUse(entry) {
+            report = removeItem(entry, fileManager: fileManager, report: report)
+        }
+        for entry in DiagnosticsLogExporter.abandonedTemporaryDirectories(in: temporaryEntries) {
             report = removeItem(entry, fileManager: fileManager, report: report)
         }
         if fullCleanup {
@@ -242,6 +238,31 @@ enum CacheCleanupManager {
 /// PlayerLayer routes: generated media is stored in Library/Caches, legacy
 /// temporary files are removed, and old entries are evicted by count/size.
 enum GeneratedPiPVideoCache {
+    static let queue = DispatchQueue(label: "com.yoroin.globalrefresh.video-cache", qos: .userInitiated)
+    private static let leaseLock = NSLock()
+    private static var leaseCounts: [URL: Int] = [:]
+
+    final class Lease {
+        let url: URL
+        init(_ url: URL) {
+            self.url = url.standardizedFileURL
+            leaseLock.lock()
+            leaseCounts[self.url, default: 0] += 1
+            leaseLock.unlock()
+        }
+        deinit {
+            leaseLock.lock()
+            if let count = leaseCounts[url], count > 1 { leaseCounts[url] = count - 1 }
+            else { leaseCounts.removeValue(forKey: url) }
+            leaseLock.unlock()
+        }
+    }
+
+    static func isInUse(_ url: URL) -> Bool {
+        leaseLock.lock()
+        defer { leaseLock.unlock() }
+        return leaseCounts[url.standardizedFileURL] != nil
+    }
     private static let directoryName = "pip-generated-video-cache"
     private static let maximumFileCount = 8
     private static let maximumTotalBytes = 80 * 1024 * 1024
@@ -258,9 +279,11 @@ enum GeneratedPiPVideoCache {
     }
 
     static func prepareForLaunch() {
-        removeLegacyTemporaryVideos()
-        removeAbandonedGenerationFiles()
-        trim(excluding: [])
+        queue.async {
+            removeLegacyTemporaryVideos()
+            removeAbandonedGenerationFiles()
+            trim(excluding: [])
+        }
     }
 
     static func videoURL(named filename: String) -> URL {
@@ -298,7 +321,7 @@ enum GeneratedPiPVideoCache {
         var retainedBytes = entries.reduce(0) { $0 + $1.bytes }
         for entry in entries {
             guard retainedCount > maximumFileCount || retainedBytes > maximumTotalBytes else { break }
-            guard !protectedPaths.contains(entry.url.standardizedFileURL.path) else { continue }
+            guard !protectedPaths.contains(entry.url.standardizedFileURL.path), !isInUse(entry.url) else { continue }
             do {
                 try fileManager.removeItem(at: entry.url)
                 retainedCount -= 1
@@ -331,7 +354,7 @@ enum GeneratedPiPVideoCache {
             options: [.skipsHiddenFiles]
         )) ?? []
 
-        for url in urls where legacyTemporaryPrefixes.contains(where: { url.lastPathComponent.hasPrefix($0) }) {
+        for url in urls where !isInUse(url) && legacyTemporaryPrefixes.contains(where: { url.lastPathComponent.hasPrefix($0) }) {
             try? fileManager.removeItem(at: url)
         }
     }

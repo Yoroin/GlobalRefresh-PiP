@@ -15,13 +15,15 @@ struct HiddenReferenceSwitchTests {
         precondition(!PiPHiddenReferenceOptions.requests120)
         precondition(PiPHiddenReferenceOptions.animatesContent)
         precondition(!PiPHiddenReferenceOptions.preservesMinimumSurface)
-        precondition(PiPHiddenReferenceOptions.contentFramesPerSecond == 60)
+        precondition(PiPHiddenReferenceOptions.contentFramesPerSecond == 30)
         for major in 14...29 {
-            precondition(PiPHiddenReferenceMode.supportsSystemMajorVersion(major) == (major >= 15 && major <= 27))
+            precondition(!PiPHiddenReferenceMode.supportsSystemMajorVersion(major))
             for playerLayer in [false, true] {
                 for pipOnly in [false, true] {
                     precondition(PiPHiddenReferenceMode.supports(systemMajorVersion: major, isPlayerLayer: playerLayer, isPiPOnly: pipOnly)
-                        == ((major >= 15 && major <= 27) && !playerLayer && pipOnly))
+                        == false)
+                    precondition(PiPNativeContentRefreshPolicy.supports(systemMajorVersion: major, isPlayerLayer: playerLayer, isPiPOnly: pipOnly)
+                        == ((15...27).contains(major) && !playerLayer && pipOnly))
                 }
             }
         }
@@ -46,6 +48,6 @@ struct HiddenReferenceSwitchTests {
             PiPHiddenReferenceMode.end(owner: owner)
             precondition(!PiPHiddenReferenceMode.suppressesStrictRefreshRequest)
         }
-        print("PASS: iOS15-27 default content-only policy; unsupported/future systems, PlayerLayer and audio policies stay isolated; legacy switch combinations and owner-scoped cleanup")
+        print("PASS: native optimized startup on iOS15-27; retired hidden route disabled; future systems, PlayerLayer and audio stay isolated; all legacy switch combinations ignored and owner cleanup scoped")
     }
 }

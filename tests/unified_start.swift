@@ -17,6 +17,7 @@ final class StartController {
     var isPictureInPictureActive = false
 }
 final class UnifiedStartHarness {
+    func deferBackingVideoStartIfNeeded(resume: @escaping () -> Void) -> Bool { false }
     var pipController: StartController?
     var isHiddenReferenceSession = false
     var needsHiddenReferenceInfrastructureRefresh = false

@@ -145,6 +145,41 @@ struct PageRefreshIsolationTests {
         let compatibility = CADisplayLink()
         ForegroundRefreshHarness.configureRefreshDriver(compatibility)
         precondition(compatibility.preferredFrameRateRange.maximum == 120, "Foreground OFF must not change compatibility PiP's legacy request")
+        ForegroundRefreshHarness.usesIOS15NativeContentRefresh = true
+        let nativeContent = CADisplayLink()
+        ForegroundRefreshHarness.configureRefreshDriver(nativeContent)
+        precondition(nativeContent.preferredFrameRateRange == .default)
+        precondition(nativeContent.preferredFramesPerSecond == 0)
+        UIApplication.shared.applicationState = .active
+        DemoFrameRatePreference.setEnabled(true)
+        let nativeForeground = CADisplayLink()
+        ForegroundRefreshHarness.configureRefreshDriver(nativeForeground)
+        precondition(nativeForeground.preferredFrameRateRange.maximum == 120)
+        for maximum in [60, 120] {
+            UIScreen.main.maximumFramesPerSecond = maximum
+            for enabled in [false, true] {
+                ForegroundRefreshHarness.requestsTrialBackground120 = enabled
+                for pageEnabled in [false, true] {
+                    DemoFrameRatePreference.setEnabled(pageEnabled)
+                    UIApplication.shared.applicationState = .active
+                    let foreground = CADisplayLink()
+                    ForegroundRefreshHarness.configureRefreshDriver(foreground)
+                    let target = Float(min(maximum, pageEnabled ? 120 : 80))
+                    precondition(foreground.preferredFrameRateRange == CAFrameRateRange(minimum: target, maximum: target, preferred: target), "Trial must not change the App foreground policy")
+                    UIApplication.shared.applicationState = .background
+                    let background = CADisplayLink()
+                    ForegroundRefreshHarness.configureRefreshDriver(background)
+                    let requested = Float(min(120, maximum))
+                    let expected = enabled ? CAFrameRateRange(minimum: requested, maximum: requested, preferred: requested) : .default
+                    precondition(background.preferredFrameRateRange == expected)
+                }
+            }
+        }
+        ForegroundRefreshHarness.requestsTrialBackground120 = false
+        UIScreen.main.maximumFramesPerSecond = 120
+        ForegroundRefreshHarness.usesIOS15NativeContentRefresh = false
+        print("PASS: background120 trial changes only the eligible background request, not App foreground ON/OFF")
+        print("PASS: iOS15 native content policy leaves background link unconfigured; foreground ON policy unchanged")
         print("PASS: page-only setting and notification never change the legacy PiP preference")
         print("PASS: foreground OFF matches v1.0.9 and v1.1.0fix production fields across hardware limits and idle/scroll targets")
         print("PASS: ON strict foreground requests and background PiP policies unchanged")

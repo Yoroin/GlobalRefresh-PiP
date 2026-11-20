@@ -669,7 +669,6 @@ private struct RootFrameRateListView: View {
 }
 
 private struct FrameCadenceComparisonCard: View {
-    @AppStorage(L10n.languageOverrideKey) private var languageOverrideRawValue = ""
     @AppStorage(DemoFrameRatePreference.force120HzKey) private var isHighRefreshEnabled = true
 
     var body: some View {
@@ -686,10 +685,10 @@ private struct FrameCadenceComparisonCard: View {
             .foregroundColor(Color(UIColor.secondaryLabel))
             .fixedSize(horizontal: false, vertical: true)
 
-            TimelineView(.animation(minimumInterval: isHighRefreshEnabled ? 1.0 / 120.0 : 1.0 / 80.0, paused: false)) { context in
+            TimelineView(.animation(minimumInterval: 1.0 / 120.0, paused: false)) { context in
                 VStack(spacing: 12) {
                     cadenceLane(label: "80Hz", sampleRate: 80, date: context.date)
-                    cadenceLane(label: "120Hz", sampleRate: 120, date: context.date)
+                    cadenceLane(label: isHighRefreshEnabled ? "120Hz" : "80Hz", sampleRate: isHighRefreshEnabled ? 120 : 80, date: context.date)
                 }
             }
             .frame(height: 76)
@@ -818,22 +817,11 @@ private struct FrameRateScrollOffsetPreferenceKey: PreferenceKey {
 }
 
 private struct FrameRateDriverView: UIViewRepresentable {
-    private final class VisibilityView: UIView {
-        var visibilityDidChange: (() -> Void)?
-        override func didMoveToWindow() {
-            super.didMoveToWindow()
-            visibilityDidChange?()
-        }
-    }
     @Binding var frameTick: Int
     let targetFrameRate: Int
 
     func makeUIView(context: Context) -> UIView {
-        let view = VisibilityView()
-        context.coordinator.driverView = view
-        view.visibilityDidChange = { [weak coordinator = context.coordinator] in
-            coordinator?.updatePausedState()
-        }
+        let view = UIView()
         view.backgroundColor = .clear
         view.isUserInteractionEnabled = false
 
@@ -844,25 +832,22 @@ private struct FrameRateDriverView: UIViewRepresentable {
         configure(displayLink)
         displayLink.add(to: .main, forMode: .common)
         context.coordinator.displayLink = displayLink
-        context.coordinator.configureDisplayLink = configure
         context.coordinator.installObservers()
         context.coordinator.updatePausedState()
         return view
     }
 
     func updateUIView(_ uiView: UIView, context: Context) {
-        context.coordinator.configureDisplayLink = configure
         if let displayLink = context.coordinator.displayLink {
             configure(displayLink)
             context.coordinator.updatePausedState()
         }
     }
 
-    func dismantleUIView(_ uiView: UIView, coordinator: Coordinator) {
+    static func dismantleUIView(_ uiView: UIView, coordinator: Coordinator) {
         NotificationCenter.default.removeObserver(coordinator)
         coordinator.displayLink?.invalidate()
         coordinator.displayLink = nil
-        coordinator.configureDisplayLink = nil
     }
 
     func makeCoordinator() -> Coordinator {
@@ -870,17 +855,26 @@ private struct FrameRateDriverView: UIViewRepresentable {
     }
 
     private func configure(_ displayLink: CADisplayLink) {
-        DemoFrameRatePreference.configureForegroundRequest(
-            displayLink,
-            targetFrameRate: targetFrameRate,
-            minimumFrameRateWhenDisabled: 30
-        )
+        let maximumFramesPerSecond = UIScreen.main.maximumFramesPerSecond
+        let requestedFrameRate = DemoFrameRatePreference.isHighRefreshEnabled
+            ? targetFrameRate
+            : min(targetFrameRate, DemoFrameRatePreference.targetFrameRate)
+        let targetFramesPerSecond = min(requestedFrameRate, maximumFramesPerSecond)
+        if #available(iOS 15.0, *) {
+            let target = Float(targetFramesPerSecond)
+            // 1.0.8 fix2: 演示页要稳定跑到页面目标帧率；关闭强制120时目标会先被限制到80。
+            displayLink.preferredFrameRateRange = CAFrameRateRange(
+                minimum: 30,
+                maximum: target,
+                preferred: target
+            )
+        } else {
+            displayLink.preferredFramesPerSecond = targetFramesPerSecond
+        }
     }
 
     final class Coordinator {
         var displayLink: CADisplayLink?
-        weak var driverView: UIView?
-        var configureDisplayLink: ((CADisplayLink) -> Void)?
         private var frameTick: Binding<Int>
         private var didInstallObservers = false
 
@@ -895,16 +889,14 @@ private struct FrameRateDriverView: UIViewRepresentable {
             center.addObserver(self, selector: #selector(updatePausedState), name: UIApplication.didBecomeActiveNotification, object: nil)
             center.addObserver(self, selector: #selector(updatePausedState), name: UIApplication.willResignActiveNotification, object: nil)
             center.addObserver(self, selector: #selector(updatePausedState), name: UIApplication.didEnterBackgroundNotification, object: nil)
-            center.addObserver(self, selector: #selector(updatePausedState), name: DemoFrameRatePreference.didChangeNotification, object: nil)
         }
 
         @objc func updatePausedState() {
-            if let displayLink { configureDisplayLink?(displayLink) }
-            displayLink?.isPaused = UIApplication.shared.applicationState != .active || driverView?.window == nil
+            displayLink?.isPaused = UIApplication.shared.applicationState != .active
         }
 
         @objc func step() {
-            guard UIApplication.shared.applicationState == .active, driverView?.window != nil else {
+            guard UIApplication.shared.applicationState == .active else {
                 displayLink?.isPaused = true
                 return
             }

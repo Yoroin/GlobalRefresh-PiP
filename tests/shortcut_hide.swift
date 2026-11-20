@@ -20,6 +20,7 @@ final class ContentStub {
     var preferredContentSize = CGSize(width: 0, height: 0)
 }
 final class ShortcutHideHarness {
+    func deferBackingVideoStartIfNeeded(resume: @escaping () -> Void) -> Bool { false }
     var pipController: PiPStub? = PiPStub()
     var isHiddenReferenceRequested = false
     var isHiddenReferenceSession = false
@@ -93,6 +94,14 @@ struct ShortcutHideTests {
             ("globalrefresh://shortcut?intent=startAndHideFloatingWindow", .startAndHideFloatingWindow)
         ] {
             precondition(ShortcutURLParser.action(from: URL(string: url)!) == expected)
+        }
+        for url in ["globalrefresh://shortcut/start-and-hide", "globalrefresh://shortcut?action=startandhide"] {
+            precondition(ShortcutURLParser.action(from: URL(string: url)!) == .startAndHideFloatingWindow)
+        }
+        for url in ["globalrefresh://start/hide", "globalrefresh://start?action=hide",
+                    "globalrefresh://shortcut?action=start&intent=hide", "globalrefresh://hide#label",
+                    "globalrefresh://shortcut?unknown=hide", "globalrefresh://other/start"] {
+            precondition(ShortcutURLParser.action(from: URL(string: url)!) == nil, url)
         }
         for playerLayer in [false, true] {
             let active = ShortcutHideHarness()
