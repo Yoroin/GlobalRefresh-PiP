@@ -20,8 +20,16 @@ awk '
     /^final class PiPCoexistenceExperiment/ { copy = 1 }
     copy
 ' "$ROOT/pip_swift/pip_swift/PiPCoexistenceExperiment.swift" >> "$TEMP/runtime.swift"
-xcrun clang -fobjc-arc -c "$ROOT/tests/coexistence_fixture.m" -o "$TEMP/fixture.o"
-xcrun swiftc -import-objc-header "$ROOT/tests/coexistence_fixture.h" \
+case "${PIP_SANITIZER:-}" in
+    address|thread)
+        set -- "-sanitize=$PIP_SANITIZER"
+        xcrun clang "-fsanitize=$PIP_SANITIZER" -fobjc-arc -c "$ROOT/tests/coexistence_fixture.m" -o "$TEMP/fixture.o" ;;
+    '')
+        set --
+        xcrun clang -fobjc-arc -c "$ROOT/tests/coexistence_fixture.m" -o "$TEMP/fixture.o" ;;
+    *) echo 'Expected address or thread sanitizer' >&2; exit 2 ;;
+esac
+xcrun swiftc "$@" -import-objc-header "$ROOT/tests/coexistence_fixture.h" \
     "$TEMP/runtime.swift" "$ROOT/tests/coexistence_runtime.swift" "$TEMP/fixture.o" \
     -framework Foundation -o "$TEMP/runtime-tests"
 "$TEMP/runtime-tests"

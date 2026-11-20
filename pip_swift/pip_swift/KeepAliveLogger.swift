@@ -206,15 +206,18 @@ enum KeepAliveLogger {
         KeepAliveNotificationTester.cancelBackgroundInterruptionProbe(reason: "回到前台")
     }
 
-    static func heartbeat(snapshot: String? = nil, persistImmediately: Bool = true) {
+    static func markBuildTransition() {
+        let defaults = UserDefaults.standard
+        defaults.set(false, forKey: sessionActiveKey)
+        defaults.removeObject(forKey: backgroundStartKey)
+    }
+
+    static func heartbeat(snapshot: String? = nil) {
         guard shouldTrackState else { return }
         let defaults = UserDefaults.standard
         defaults.set(Date().timeIntervalSince1970, forKey: lastHeartbeatKey)
         if let snapshot {
             defaults.set(limitStoredText(snapshot), forKey: lastHeartbeatSnapshotKey)
-        }
-        if persistImmediately {
-            defaults.synchronize()
         }
     }
 
@@ -275,13 +278,14 @@ enum KeepAliveLogger {
         KeepAliveNotificationTester.cancelAllTestingNotifications(reason: "保活日志清空")
     }
 
-    static func exportText() -> String {
+    static func exportText(newestFirst: Bool = false) -> String {
         let info = Bundle.main.infoDictionary
         let version = info?["CFBundleShortVersionString"] as? String ?? "unknown"
         let build = info?["CFBundleVersion"] as? String ?? "unknown"
         let bundleID = Bundle.main.bundleIdentifier ?? "unknown"
         let device = UIDevice.current
-        let events = UserDefaults.standard.stringArray(forKey: eventsKey) ?? []
+        var events = UserDefaults.standard.stringArray(forKey: eventsKey) ?? []
+        if newestFirst { events.reverse() }
         let isActive = UserDefaults.standard.bool(forKey: sessionActiveKey)
 
         return """
@@ -303,7 +307,7 @@ enum KeepAliveLogger {
 
         说明：iOS 不会在 App 被杀死的瞬间通知普通 App；若下次启动时发现上次保活未正常停止，会用“最后心跳时间”到“本次启动时间”推断可能中断时间段。
 
-        最近保活事件：
+        最近保活事件（\(newestFirst ? "最新在前" : "按时间顺序")）：
         \(events.isEmpty ? "暂无保活事件" : events.joined(separator: "\n"))
         """
     }
@@ -315,7 +319,6 @@ enum KeepAliveLogger {
             events.removeFirst(events.count - maximumEvents)
         }
         UserDefaults.standard.set(events, forKey: eventsKey)
-        UserDefaults.standard.synchronize()
     }
 
     private static func limitStoredText(_ text: String) -> String {

@@ -6,7 +6,7 @@ trap 'rm -rf "$TEMP"' EXIT
 rg -qF 'guard PiPHiddenReferenceMode.supportsSystemMajorVersion(ProcessInfo.processInfo.operatingSystemVersion.majorVersion),' \
     "$ROOT/pip_swift/pip_swift/PiPCoexistenceExperiment.swift"
 # Compile the production preference/session enums, not copies of their logic.
-awk '/^enum PiPHiddenReferenceOptions /{copy=1} /^final class PiPHiddenReferenceRenderView/{exit} copy' \
+awk '/^enum PiPNativePostStartTrial /{copy=1} /^final class PiPHiddenReferenceRenderView/{exit} copy' \
     "$ROOT/pip_swift/pip_swift/PiPCoexistenceExperiment.swift" > "$TEMP/options.swift"
 sed -i '' '1i\
 import Foundation\

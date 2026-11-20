@@ -7,6 +7,95 @@ import SwiftUI
 import UIKit
 import Combine
 
+final class PiPLiveProcessStatsMonitor: ObservableObject {
+    @Published private(set) var snapshot: LightweightProcessSnapshot?
+    private var timer: Timer?
+    private var isVisible = false
+    private var observers: [NSObjectProtocol] = []
+
+    func setVisible(_ visible: Bool) {
+        isVisible = visible
+        if visible {
+            installObserversIfNeeded()
+            updateSamplingState()
+        } else {
+            stop()
+            observers.forEach(NotificationCenter.default.removeObserver)
+            observers.removeAll()
+        }
+    }
+
+    private func installObserversIfNeeded() {
+        guard observers.isEmpty else { return }
+        let center = NotificationCenter.default
+        observers = [
+            center.addObserver(forName: UIApplication.didBecomeActiveNotification, object: nil, queue: .main) { [weak self] _ in
+                self?.updateSamplingState()
+            },
+            center.addObserver(forName: UIApplication.willResignActiveNotification, object: nil, queue: .main) { [weak self] _ in
+                self?.stop()
+            },
+            center.addObserver(forName: UIApplication.didEnterBackgroundNotification, object: nil, queue: .main) { [weak self] _ in
+                self?.stop()
+            }
+        ]
+    }
+
+    private func updateSamplingState() {
+        guard isVisible && UIApplication.shared.applicationState == .active else {
+            stop()
+            return
+        }
+        guard timer == nil else { return }
+        refresh()
+        AppDebugLogger.logRuntime("Live process stats started: memoryMB=\(snapshot?.physicalFootprintMB ?? 0), threads=\(snapshot?.threadCount ?? 0), appState=\(UIApplication.shared.applicationState.rawValue); UIKit lifecycle, visible-panel only")
+        let timer = Timer(timeInterval: 1, repeats: true) { [weak self] _ in
+            self?.refresh()
+        }
+        timer.tolerance = 0.2
+        RunLoop.main.add(timer, forMode: .common)
+        self.timer = timer
+    }
+
+    private func refresh() {
+        guard UIApplication.shared.applicationState == .active else {
+            stop()
+            return
+        }
+        snapshot = PerformanceDiagnosticsLogger.lightweightProcessSnapshot()
+    }
+
+    private func stop() {
+        timer?.invalidate()
+        timer = nil
+    }
+
+    deinit {
+        timer?.invalidate()
+        observers.forEach(NotificationCenter.default.removeObserver)
+    }
+}
+
+struct PiPHomeViewportLayout {
+    let size: CGSize
+
+    private var isPortraitPhone: Bool {
+        size.width > 0 && size.width < 600 && size.width < size.height
+    }
+
+    var usesCompactControls: Bool {
+        isPortraitPhone && (size.height < 680 || (size.width < 400 && size.height < 760))
+    }
+
+    func controlsBottomPadding(base: CGFloat) -> CGFloat {
+        guard isPortraitPhone else { return base }
+        if usesCompactControls {
+            return size.height < 680 ? 18 : 36
+        }
+        return min(base, 24)
+    }
+}
+
 private struct AdaptiveLayoutMetrics {
     static var current: AdaptiveLayoutMetrics {
         AdaptiveLayoutMetrics(size: UIScreen.main.bounds.size)
@@ -90,14 +179,19 @@ struct PiPHomeView: View {
     @State private var viewportSize: CGSize = .zero
     @State private var isSettingsVisible = false
     @State private var isKeepAliveInfoVisible = false
+    @State private var isKeepAliveHelpPresented = false
     @State private var isNotificationFrequencyInfoVisible = false
     @State private var isPiPStoppedNotificationInfoVisible = false
     @State private var isEngineRouteInfoVisible = false
     @State private var isShortcutInstallGuidePresented = false
     @State private var isShortcutRiskConfirmationPresented = false
+    @State private var isRefreshTrialInfoPresented = false
     @State private var languageRefreshToken = 0
     @AppStorage(L10n.languageOverrideKey) private var languageOverrideRawValue = ""
     @AppStorage(PiPShortcutFeatureAccess.enabledKey) private var shortcutFeaturesEnabled = false
+    @AppStorage(PiPRefreshRequestTrial.backgroundModeKey) private var trialBackgroundMode = PiPRefreshRequestTrial.BackgroundMode.visibilityPaused.rawValue
+    @AppStorage(PiPRefreshRequestTrial.content120Key) private var trialContent120 = false
+    @AppStorage(PiPRefreshRequestTrial.content60Key) private var trialContent60 = false
     @AppStorage(FrameRatePreference.experimentProfileKey) private var frameRateExperimentProfileRawValue = FrameRateExperimentProfile.followSwitch.rawValue
     @AppStorage("frameRateDemo.customMinimum") private var customFrameRateMinimum: Double = 30
     @AppStorage("frameRateDemo.customMaximum") private var customFrameRateMaximum: Double = 120
@@ -155,16 +249,17 @@ struct PiPHomeView: View {
         ZStack {
             Color(UIColor.systemGroupedBackground).ignoresSafeArea()
             GeometryReader { proxy in
+                let viewport = PiPHomeViewportLayout(size: proxy.size)
                 Group {
-                    if verticalSizeClass == .compact {
+                    if verticalSizeClass == .compact || viewport.usesCompactControls {
                         ScrollView(.vertical, showsIndicators: true) {
-                            homePageContent
+                            homePageContent(viewport: viewport)
                                 .frame(minHeight: proxy.size.height)
-                                .padding(.bottom, 72)
+                                .padding(.bottom, verticalSizeClass == .compact && !viewport.usesCompactControls ? 72 : 0)
                         }
                         .background(Color.clear)
                     } else {
-                        homePageContent
+                        homePageContent(viewport: viewport)
                     }
                 }
                 .onAppear { viewportSize = proxy.size }
@@ -173,7 +268,7 @@ struct PiPHomeView: View {
         }
     }
 
-    private var homePageContent: some View {
+    private func homePageContent(viewport: PiPHomeViewportLayout) -> some View {
         ZStack(alignment: .topTrailing) {
             Color(UIColor.systemGroupedBackground)
                 .edgesIgnoringSafeArea(.all)
@@ -187,10 +282,10 @@ struct PiPHomeView: View {
                     dismissSettingsIfNeeded()
                 }
 
-	            VStack(alignment: .leading, spacing: layout.homeOuterSpacing) {
+	            VStack(alignment: .leading, spacing: viewport.usesCompactControls ? 8 : layout.homeOuterSpacing) {
 	                homeHeader
 
-	                VStack(spacing: layout.homeActionSpacing) {
+	                VStack(spacing: viewport.usesCompactControls ? 8 : layout.homeActionSpacing) {
                     ActionButton(title: L10n.text("使用教程", "Tutorial"), systemImage: "book") {
                         runAfterDismissingSettings(onShowTutorial)
                     }
@@ -202,16 +297,21 @@ struct PiPHomeView: View {
                     }
 
                     pipStatusRow
+
+                    if viewport.usesCompactControls && isPiPStatusInfoVisible {
+                        pipStatusInfoPopover
+                            .transition(.opacity)
+                    }
                 }
                 .padding(.horizontal, layout.homeActionHorizontalPadding)
 
-                Spacer(minLength: layout.isCompact ? 8 : 18)
+                Spacer(minLength: viewport.usesCompactControls || layout.isCompact ? 8 : 18)
 
-                VStack(spacing: layout.isCompact ? 9 : 12) {
+                VStack(spacing: viewport.usesCompactControls || layout.isCompact ? 9 : 12) {
                     StartAndHidePiPButton(title: startAndHidePiPButtonTitle) {
                         runAfterDismissingSettings(onStartAndHidePiP)
                     }
-                    .offset(y: layout.isShortHome ? 0 : -5)
+                    .offset(y: viewport.usesCompactControls || layout.isShortHome ? 0 : -5)
 
                     PrimaryPiPButton(title: isPiPActive ? L10n.text("关闭悬浮窗", "Stop PiP") : L10n.text("开启悬浮窗", "Enable PiP")) {
                         runAfterDismissingSettings(onTogglePiP)
@@ -219,9 +319,9 @@ struct PiPHomeView: View {
                 }
                     .frame(maxWidth: 286)
                     .frame(maxWidth: .infinity, alignment: .center)
-                    .offset(y: layout.isShortHome ? 16 : -5)
+                    .offset(y: viewport.usesCompactControls || layout.isShortHome ? 0 : -5)
                     .padding(.horizontal, layout.homePrimaryHorizontalPadding)
-                    .padding(.bottom, layout.homePrimaryBottomPadding)
+                    .padding(.bottom, viewport.controlsBottomPadding(base: layout.homePrimaryBottomPadding))
             }
             .padding(.horizontal, layout.homeContainerHorizontalPadding)
             .contentShape(Rectangle())
@@ -244,7 +344,7 @@ struct PiPHomeView: View {
                 .accessibilityHidden(!isKeepAliveInfoVisible)
                 .zIndex(9)
 
-            if isPiPStatusInfoVisible {
+            if isPiPStatusInfoVisible && !viewport.usesCompactControls {
                 pipStatusInfoPopover
                     .frame(maxWidth: .infinity, alignment: layout.isWideHome ? .leading : .center)
                     .padding(.top, layout.homePiPStatusInfoTop)
@@ -337,6 +437,9 @@ struct PiPHomeView: View {
                 Spacer(minLength: 8)
 
                 HStack(spacing: 8) {
+                    #if PIP_REFRESH_COMPARISON
+                    refreshRequestTrialMenu
+                    #endif
                     Button {
                         UIImpactFeedbackGenerator(style: .light).impactOccurred()
                         dismissKeepAliveInfoIfNeeded()
@@ -368,43 +471,175 @@ struct PiPHomeView: View {
             }
 
             HStack(spacing: 7) {
-                Text(L10n.text("当前保活模式", "Keep-alive mode"))
-                    .font(.system(size: 14, weight: .semibold))
-                    .foregroundColor(Color(UIColor.secondaryLabel))
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.82)
-                    .fixedSize(horizontal: true, vertical: false)
-
-                Button {
-                    UIImpactFeedbackGenerator(style: .light).impactOccurred()
-                    dismissSettingsIfNeeded()
-                    withAnimation(.interpolatingSpring(mass: 0.45, stiffness: 420, damping: 36, initialVelocity: 0.12)) {
-                        isKeepAliveInfoVisible.toggle()
-                    }
-                } label: {
-                    HStack(spacing: 4) {
-                        Text(keepAliveMode)
-                            .font(.system(size: 13, weight: .bold))
-                            .lineLimit(1)
-                            .minimumScaleFactor(0.74)
-                        Image(systemName: "questionmark.circle.fill")
-                            .font(.system(size: 12, weight: .bold))
-                    }
-                    .foregroundColor(Color(UIColor.systemBlue))
-                    .padding(.leading, 10)
-                    .padding(.trailing, 8)
-                    .frame(height: 26)
-                    .background(keepAliveModeBadgeBackground)
-                }
-                .buttonStyle(.plain)
-                .layoutPriority(1)
-
+                keepAliveModeTitle
+                keepAliveModeButton
+                keepAliveHelpButton
                 Spacer(minLength: 0)
             }
         }
         .padding(.horizontal, layout.headerHorizontalPadding)
         .padding(.top, layout.headerTopPadding)
         .padding(.bottom, layout.headerBottomPadding)
+    }
+
+    private var keepAliveModeTitle: some View {
+        Text(L10n.text("当前保活模式", "Keep-alive mode"))
+            .font(.system(size: 14, weight: .semibold))
+            .foregroundColor(Color(UIColor.secondaryLabel))
+            .lineLimit(1)
+            .minimumScaleFactor(0.82)
+            .fixedSize(horizontal: true, vertical: false)
+    }
+
+    private var refreshRequestTrialMenu: some View {
+        Menu {
+            Picker(L10n.text("后台刷新驱动", "Background driver"), selection: Binding(
+                get: { trialBackgroundMode },
+                set: {
+                    trialBackgroundMode = $0
+                    PiPRefreshRequestTrial.select(
+                        background: PiPRefreshRequestTrial.BackgroundMode(rawValue: $0) ?? .visibilityPaused,
+                        contentFPS: trialContent60 ? 60 : 30, content120: trialContent120
+                    )
+                }
+            )) {
+                Text(L10n.text("隐藏／收起时暂停 · beta3", "Pause when hidden/stashed · beta3"))
+                    .tag(PiPRefreshRequestTrial.BackgroundMode.visibilityPaused.rawValue)
+                Text(L10n.text("保留 · 不指定帧率", "Keep · system default"))
+                    .tag(PiPRefreshRequestTrial.BackgroundMode.systemDefault.rawValue)
+                Text(L10n.text("保留 · 明确请求120Hz", "Keep · request 120Hz"))
+                    .tag(PiPRefreshRequestTrial.BackgroundMode.explicit120.rawValue)
+            }
+            Picker(L10n.text("内容基础帧率", "Content baseline"), selection: Binding(
+                get: { trialContent60 },
+                set: {
+                    trialContent60 = $0
+                    PiPRefreshRequestTrial.select(background: PiPRefreshRequestTrial.backgroundMode,
+                                                  contentFPS: $0 ? 60 : 30, content120: trialContent120)
+                }
+            )) {
+                Text("30 fps").tag(false)
+                Text("60 fps").tag(true)
+            }
+            .disabled(trialContent120)
+            Toggle(L10n.text("内容明确请求120Hz", "Request content 120Hz"), isOn: Binding(
+                get: { trialContent120 },
+                set: {
+                    trialContent120 = $0
+                    PiPRefreshRequestTrial.select(background: PiPRefreshRequestTrial.backgroundMode,
+                                                  contentFPS: trialContent60 ? 60 : 30, content120: $0)
+                }
+            ))
+            Menu(L10n.text("快速对照组", "Comparison presets")) {
+                Button(L10n.text("A · beta3：按可见性暂停＋30fps", "A · beta3: visibility pause + 30fps")) {
+                    PiPRefreshRequestTrial.select(background: .visibilityPaused, contentFPS: 30)
+                }
+                Button(L10n.text("B · 保留后台驱动＋30fps", "B · keep default driver + 30fps")) {
+                    PiPRefreshRequestTrial.select(background: .systemDefault, contentFPS: 30)
+                }
+                Button(L10n.text("C · 后台120Hz＋30fps", "C · background 120Hz + 30fps")) {
+                    PiPRefreshRequestTrial.select(background: .explicit120, contentFPS: 30)
+                }
+                Button(L10n.text("D · 1.1.1请求参照：保留＋60fps", "D · 1.1.1 policy reference: keep + 60fps")) {
+                    PiPRefreshRequestTrial.select(background: .systemDefault, contentFPS: 60)
+                }
+            }
+            Button {
+                let info = Bundle.main.infoDictionary ?? [:]
+                let version = info["CFBundleShortVersionString"] as? String ?? ""
+                let build = info["CFBundleVersion"] as? String ?? ""
+                UIPasteboard.general.string = "GlobalRefresh beta4 refresh comparison\nVersion: \(version) (\(build))\nTime: \(ISO8601DateFormatter().string(from: Date()))\n\(PiPRefreshRequestTrial.summary)\nRequested policy only; export diagnostics for actual driver running/stopped events. Not measured system FPS or proof of coexistence."
+            } label: {
+                Label(L10n.text("复制当前对照设置", "Copy comparison settings"), systemImage: "doc.on.doc")
+            }
+            Button {
+                isRefreshTrialInfoPresented = true
+            } label: {
+                Label(L10n.text("对照说明", "Comparison details"), systemImage: "info.circle")
+            }
+        } label: {
+            Image(systemName: "flask")
+                .font(.system(size: 19, weight: .semibold))
+                .foregroundColor(Color(UIColor.systemBlue))
+                .frame(width: 40, height: 44)
+                .contentShape(Rectangle())
+        }
+        .accessibilityLabel(L10n.text("刷新请求对照", "Refresh request comparison"))
+        .help(L10n.text("刷新请求对照", "Refresh request comparison"))
+        .disabled(pipEngineRoute.usesPlayerLayer || KeepAlivePolicy.current != .pipOnly)
+        .alert(L10n.text("刷新请求对照", "Refresh Request Comparison"), isPresented: $isRefreshTrialInfoPresented) {
+            Button(L10n.ok, role: .cancel) {}
+        } message: {
+            Text(L10n.text(
+                "适用于默认VideoCall＋仅PiP。\n后台驱动：按可见性暂停＝beta3策略，隐藏／收起／锁屏等状态才暂停；保留不指定帧率＝驱动持续存在但由系统调度；明确120Hz＝保留驱动并明确请求120Hz。\n\n30／60fps控制悬浮窗内容更新；内容120Hz打开时暂时覆盖基础帧率，关闭后恢复原选择。\n\n内容设置立即应用；后台设置在下次退到后台时应用，不重建悬浮窗。三种后台模式都不改变App前台80／120Hz开关。\n\nA→B先比较是否保留驱动，B→C比较是否明确120Hz，B→D比较30／60fps。D只对照1.1.1刷新请求，不是完整回退；1.1.0fix隐藏内容策略也不同。\n\n两项120Hz在此前实测中均可能造成弹幕卡顿，也可能影响耗电、熄屏和实际高刷效果。驱动及内容请求不是实测帧率，不保证后台保活；日志区分设置与实际运行／停止。",
+                "Default VideoCall + PiP-only. Visibility pause retains the beta3 policy: pause the extra driver only when hidden, stashed or locked. System default keeps the driver without an explicit frame-rate request. Explicit120 keeps it and requests120Hz.\n\nContent30/60fps controls PiP content updates. Content120 temporarily overrides that baseline. Content changes apply immediately; background policies apply on the next background transition without restarting PiP. Foreground80/120 preferences are unchanged.\n\nCompare A/B for driver presence, B/C for explicit120 and B/D for30/60fps. D references only the1.1.1 refresh policy, not a full rollback.1.1.0fix also differs in hidden content behavior.\n\nBoth120 options may cause danmaku stutter and affect power, auto-lock or actual refresh. Requests are not measured FPS or a keep-alive guarantee; diagnostics distinguish requested policy from driver running/stopped events."
+            ))
+        }
+    }
+
+    private var keepAliveModeButton: some View {
+        Button {
+            UIImpactFeedbackGenerator(style: .light).impactOccurred()
+            dismissSettingsIfNeeded()
+            withAnimation(.interpolatingSpring(mass: 0.45, stiffness: 420, damping: 36, initialVelocity: 0.12)) {
+                isKeepAliveInfoVisible.toggle()
+            }
+        } label: {
+            HStack(spacing: 4) {
+                Text(keepAliveMode)
+                    .font(.system(size: 13, weight: .bold))
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.74)
+                Image(systemName: "questionmark.circle.fill")
+                    .font(.system(size: 12, weight: .bold))
+            }
+            .foregroundColor(Color(UIColor.systemBlue))
+            .padding(.leading, 10)
+            .padding(.trailing, 8)
+            .frame(height: 26)
+            .background(keepAliveModeBadgeBackground)
+        }
+        .buttonStyle(.plain)
+        .layoutPriority(1)
+    }
+
+    private var keepAliveHelpButton: some View {
+        Button {
+            UIImpactFeedbackGenerator(style: .light).impactOccurred()
+            dismissKeepAliveInfoIfNeeded()
+            dismissPiPStatusInfoIfNeededRespectingPersistence()
+            dismissNotificationFrequencyInfoIfNeeded()
+            dismissPiPStoppedNotificationInfoIfNeeded()
+            dismissEngineRouteInfoIfNeeded()
+            dismissSettingsIfNeeded()
+            DiagnosticsRuntimeState.recordUserAction("打开经常掉后台说明")
+            isKeepAliveHelpPresented = true
+        } label: {
+            HStack(spacing: 4) {
+                Text(L10n.text("经常掉后台？", "Stops?"))
+                    .font(.system(size: 13, weight: .bold))
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.74)
+                Image(systemName: "questionmark.circle.fill")
+                    .font(.system(size: 12, weight: .bold))
+            }
+            .foregroundColor(Color(UIColor.systemOrange))
+            .fixedSize(horizontal: true, vertical: false)
+            .padding(.leading, 10)
+            .padding(.trailing, 8)
+            .frame(height: 26)
+            .background(keepAliveModeBadgeBackground)
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(L10n.text("经常掉后台？", "Frequent stops?"))
+        .alert(L10n.text("经常掉后台？", "Frequent stops?"), isPresented: $isKeepAliveHelpPresented) {
+            Button(L10n.text("知道了", "Got It"), role: .cancel) {}
+        } message: {
+            Text(L10n.text(
+                "可以清空当前所有后台后再运行悬浮窗，实测100+小时运行没问题，后台较多时也会导致本app被杀",
+                "You can close all apps in the app switcher before starting PiP. Testing has achieved over 100 hours of operation without issues. Having many apps in the background can also cause this app to be terminated."
+            ))
+        }
     }
 
     private var keepAliveModeBadgeBackground: AnyView {
@@ -820,6 +1055,8 @@ struct PiPHomeView: View {
                 .font(.system(size: 14, weight: .semibold))
                 .foregroundColor(Color(UIColor.secondaryLabel))
                 .fixedSize(horizontal: false, vertical: true)
+
+            PiPLiveProcessStatsView()
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 12)
@@ -833,16 +1070,65 @@ struct PiPHomeView: View {
         .shadow(color: Color.black.opacity(0.14), radius: 16, x: 0, y: 10)
     }
 
+    private struct PiPLiveProcessStatsView: View {
+        @StateObject private var monitor = PiPLiveProcessStatsMonitor()
+
+        var body: some View {
+            HStack(spacing: 10) {
+                PiPRollingMetricText(
+                    label: L10n.text("App 运存：", "App memory: "),
+                    value: monitor.snapshot.map { String(format: "%.0f MB", $0.physicalFootprintMB) } ?? "--",
+                    reservedValue: "000 MB"
+                )
+                PiPRollingMetricText(
+                    label: L10n.text("线程数：", "Threads: "),
+                    value: monitor.snapshot.map { String($0.threadCount) } ?? "--",
+                    reservedValue: "00"
+                )
+            }
+            .font(.system(size: 14, weight: .semibold))
+            .monospacedDigit()
+            .foregroundColor(Color(UIColor.secondaryLabel))
+            .lineLimit(1)
+            .minimumScaleFactor(0.7)
+            .fixedSize(horizontal: false, vertical: true)
+            .onAppear {
+                monitor.setVisible(true)
+            }
+            .onDisappear {
+                monitor.setVisible(false)
+            }
+        }
+    }
+
     private struct PiPRuntimeText: View {
         let startedAt: Date?
         let label: String
         let fallbackDuration: String
 
         var body: some View {
-            Text(label + fallbackDuration)
+            PiPRollingMetricText(label: label, value: fallbackDuration)
                 .lineLimit(1)
                 .minimumScaleFactor(0.78)
                 .allowsTightening(true)
+        }
+    }
+
+    private struct PiPRollingMetricText: View {
+        let label: String
+        let value: String
+        var reservedValue: String? = nil
+
+        var body: some View {
+            ZStack(alignment: .leading) {
+                if let reservedValue {
+                    Text(label + reservedValue)
+                        .hidden()
+                        .accessibilityHidden(true)
+                }
+                Text(label + value)
+                    .modifier(PiPNumericRoll(value: value))
+            }
         }
     }
 
@@ -864,7 +1150,7 @@ struct PiPHomeView: View {
                                 return L10n.text("每次打开使用默认高度", "Use the default height each time.")
                             }
                             if pipEngineRoute.usesPlayerLayer {
-                                return L10n.text("下次打开自动恢复当前高度；新方案若记住1pt，会自动回显22pt，避免白线过细看不清楚", "Restore this height next time. In the new route, remembered 1 pt opens as 22 pt so the thin line remains visible.")
+                                return L10n.text("下次打开自动恢复当前高度；备选方案若记住1pt，会自动回显22pt，避免白线过细看不清楚", "Restore this height next time. In the alternative route, remembered 1 pt opens as 22 pt so the thin line remains visible.")
                             }
                             return L10n.text("下次打开自动恢复当前高度，0.1pt自动恢复44pt", "Restore this height next time. 0.1 pt restores to 44 pt automatically.")
                         }
@@ -979,7 +1265,7 @@ struct PiPHomeView: View {
                         isEnabled: isClockModeAvailable && !pipEngineRoute.usesPlayerLayer,
                         statusText: { isOn in
                             if pipEngineRoute.usesPlayerLayer {
-                                return L10n.text("新方案固定使用视频文本素材，暂不支持时间悬浮窗", "The new route uses fixed video text and does not support Clock PiP.")
+                                return L10n.text("备选方案固定使用视频文本素材，暂不支持时间悬浮窗", "The alternative route uses fixed video text and does not support Clock PiP.")
                             }
                             guard isClockModeAvailable else {
                                 return L10n.text("iOS 26 以下会导致120Hz失效，已强制禁用", "Disabled below iOS 26 because it may break 120 Hz.")
@@ -998,7 +1284,7 @@ struct PiPHomeView: View {
                         isEnabled: !isClockModeEnabled && !pipEngineRoute.usesPlayerLayer,
                         statusText: { _ in
                             if pipEngineRoute.usesPlayerLayer {
-                                return L10n.text("新方案固定使用视频文本素材，内容滚动不可调节", "The new route uses fixed video text, so text scrolling is unavailable.")
+                                return L10n.text("备选方案固定使用视频文本素材，内容滚动不可调节", "The alternative route uses fixed video text, so text scrolling is unavailable.")
                             }
                             return L10n.text("关闭后可停止文本滚动，仅防止晃眼，并不影响全局120，仅文本悬浮窗生效", "Stops text scrolling only. It does not affect 120 Hz and only applies to text PiP.")
                         }
@@ -1571,6 +1857,7 @@ struct VersionPageView: View {
     let onShowChangelog: () -> Void
     let onShowFAQ: () -> Void
     let onCopyDiagnosticsLog: () -> Void
+    let onShareDiagnosticsLog: () -> Void
     let onRequestCacheCleanup: () -> Void
     let onRequestUpdateCheck: () -> Void
     let onRequestClearAllData: () -> Void
@@ -1606,6 +1893,7 @@ struct VersionPageView: View {
         onShowChangelog: @escaping () -> Void,
         onShowFAQ: @escaping () -> Void,
         onCopyDiagnosticsLog: @escaping () -> Void,
+        onShareDiagnosticsLog: @escaping () -> Void,
         onRequestCacheCleanup: @escaping () -> Void,
         onRequestUpdateCheck: @escaping () -> Void,
         onRequestClearAllData: @escaping () -> Void,
@@ -1627,6 +1915,7 @@ struct VersionPageView: View {
         self.onShowChangelog = onShowChangelog
         self.onShowFAQ = onShowFAQ
         self.onCopyDiagnosticsLog = onCopyDiagnosticsLog
+        self.onShareDiagnosticsLog = onShareDiagnosticsLog
         self.onRequestCacheCleanup = onRequestCacheCleanup
         self.onRequestUpdateCheck = onRequestUpdateCheck
         self.onRequestClearAllData = onRequestClearAllData
@@ -2129,9 +2418,22 @@ struct VersionPageView: View {
                 dismissDebugDiagnosticsInfoPanel()
                 onCopyDiagnosticsLog()
             }
+            Button {
+                UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                dismissDebugPanel()
+                dismissKeepAliveInfoPanel()
+                dismissDebugDiagnosticsInfoPanel()
+                onShareDiagnosticsLog()
+            } label: {
+                Image(systemName: "square.and.arrow.up")
+                    .font(.system(size: 16, weight: .semibold))
+                    .foregroundColor(Color(UIColor.systemBlue))
+                    .frame(width: 44, height: 44)
+            }
+            .buttonStyle(GlassCapsuleButtonStyle())
+            .accessibilityLabel(L10n.text("分享完整诊断日志", "Share Full Diagnostics"))
+            .help(L10n.text("导出TXT并分享", "Export and Share TXT"))
         }
-        .opacity(displayedDebugModeEnabled ? 1 : 0)
-        .allowsHitTesting(displayedDebugModeEnabled)
     }
 
 	    private var debugModeStatusLabel: some View {
@@ -3071,6 +3373,21 @@ private struct StartAndHidePiPButton: View {
     private var layout: AdaptiveLayoutMetrics { .current }
 }
 
+private struct PiPNumericRoll: ViewModifier {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    let value: String
+
+    func body(content: Content) -> some View {
+        if #available(iOS 16.0, *), !reduceMotion {
+            content
+                .contentTransition(.numericText(countsDown: true))
+                .animation(.easeInOut(duration: 0.22), value: value)
+        } else {
+            content
+        }
+    }
+}
+
 private struct ActionButton: View {
     let title: String
     let systemImage: String
@@ -3105,6 +3422,7 @@ private struct ActionButton: View {
                         .font(.system(size: layout.isCompact ? 14 : 15, weight: .black, design: .rounded))
                         .foregroundColor(Color(UIColor.secondaryLabel))
                         .lineLimit(1)
+                        .modifier(PiPNumericRoll(value: detail))
                 }
 
                 Spacer(minLength: 8)
@@ -3467,7 +3785,8 @@ private struct SettingsToggleRow: View {
 
 enum PiPRouteDescriptions {
     static var updatedDefaultAvailable: Bool {
-        PiPHiddenReferenceMode.supportsSystemMajorVersion(ProcessInfo.processInfo.operatingSystemVersion.majorVersion)
+        (PiPHiddenReferenceMode.supportsSystemMajorVersion(ProcessInfo.processInfo.operatingSystemVersion.majorVersion)
+            || PiPNativePostStartTrial.supportsSystemMajorVersion(ProcessInfo.processInfo.operatingSystemVersion.majorVersion))
             && KeepAlivePolicy.current == .pipOnly
     }
     static var defaultPrefix: String {
@@ -3524,7 +3843,7 @@ private extension PiPEngineRoute {
         case .videoCall:
             return L10n.text("默认方案", "Default")
         case .playerLayerGenerated:
-            return L10n.text("新方案", "New")
+            return L10n.text("备选方案", "Alternative")
         case .referenceIPA:
             return L10n.text("参考方案", "Reference")
         case .referenceIPAPure:
@@ -3537,7 +3856,7 @@ private extension PiPEngineRoute {
         case .videoCall:
             return L10n.text("当前：VideoCall 默认方案", "Current: VideoCall default")
         case .playerLayerGenerated:
-            return L10n.text("当前：PlayerLayer 新方案", "Current: PlayerLayer new")
+            return L10n.text("当前：PlayerLayer 备选方案", "Current: PlayerLayer alternative")
         case .referenceIPA:
             return L10n.text("当前：PlayerLayer 参考方案", "Current: PlayerLayer reference")
         case .referenceIPAPure:
@@ -3563,7 +3882,7 @@ private extension PiPEngineRoute {
         case .videoCall:
             return L10n.text("原", "Old")
         case .playerLayerGenerated:
-            return L10n.text("新", "New")
+            return L10n.text("备", "Alt")
         case .referenceIPA:
             return L10n.text("参考", "Ref")
         case .referenceIPAPure:
@@ -3626,7 +3945,7 @@ private struct EngineRoutePickerRow: View {
                     .font(.system(size: 14, weight: .bold))
                     .frame(width: 20, alignment: .center)
 
-                Text(L10n.text("底层切换", "Engine Switch"))
+                Text(L10n.text("备选方案", "Alternative Route"))
                     .font(.system(size: 14, weight: .bold))
 
                 if L10n.isBetaBuild {

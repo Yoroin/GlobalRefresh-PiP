@@ -5,7 +5,7 @@
 # Global Refresh PiP
 
 <h3>
-  <a href="README.md">Simplified Chinese</a> | English | <a href="DEVELOPMENT_PRD.md">开发文档 PRD</a> | <a href="DEVELOPMENT_PRD_EN.md">Development Document PRD</a>
+  <a href="README.md">Simplified Chinese</a> | English | <a href="docs/IMPLEMENTATION.md">开发实现说明</a> | <a href="docs/IMPLEMENTATION_EN.md">Implementation Guide</a>
 </h3>
 
 > Continued development based on [CaiWanFeng/PiP](https://github.com/CaiWanFeng/PiP), maintained by [Yoroin](http://www.coolapk.com/u/3233328).
@@ -137,6 +137,18 @@ Use your own Apple ID, certificate, or device environment to sign and install th
 
 ## Changelog
 
+### 1.1.2 (2026.11.20)
+
+- \* Fixed the PiP close control occasionally reappearing on iOS 16 and later (the droplet icon in the center of the screen).
+- \* Restored the native startup flow to fix PiP failing to start on some iOS 15 devices.
+- Improved PiP coexistence with session-scoped checks and limited retries. Temporary system suspension is no longer treated as closure.
+- Reduced content updates from 60 fps to 30 fps for the default VideoCall and PiP-only combination to lower background refresh overhead.
+- Adjusted the Home layout on smaller displays so the tab bar does not cover the start button.
+- Added a display for the app's memory usage and thread count.
+- Fixed resource cleanup for thread sampling and the frame-rate demo. PlayerLayer now prepares video in the background to avoid blocking the interface.
+- Export and share diagnostics. Reduced repeated writes and preserved exit records and system diagnostics across upgrades.
+- Improved shortcut link validation without removing existing entry points. Fixed stale results when switching update channels and added detection of newer builds of the same version.
+
 ### 1.1.1 (2026.10.9)
 
 - \* Improved the default VideoCall implementation to address stuttering in some 60fps games and Bilibili comments.
@@ -251,7 +263,7 @@ Use your own Apple ID, certificate, or device environment to sign and install th
 
 ## Debug Logs
 
-The About page provides a Debug Mode switch. When enabled, it can copy recent diagnostic logs for checking:
+The Version page can copy, export, and share diagnostic logs. Debug Mode is off by default. Key events rotate across two files of up to 4 MB each. Enable Debug Mode before reproducing an issue to capture more detailed performance and system diagnostics; earlier details are not backfilled. The logs can help investigate:
 
 - Whether PiP was prepared successfully
 - Whether the system allows Picture in Picture
@@ -259,7 +271,7 @@ The About page provides a Debug Mode switch. When enabled, it can copy recent di
 - Audio interruptions and recovery
 - Compatibility branches for older iOS versions
 
-Logs are stored locally only. They are copied to the clipboard only after the user taps the copy button.
+Logs stay on the device and are not uploaded automatically. Review and redact personal information before sharing.
 
 ## Credits
 

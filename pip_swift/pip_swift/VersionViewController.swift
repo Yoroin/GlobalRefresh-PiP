@@ -16,40 +16,76 @@ private func updateVersionFont(size: CGFloat, weight: UIFont.Weight) -> UIFont {
 }
 
 enum DiagnosticsLogExporter {
+    private static let temporaryDirectoryPrefix = "globalrefresh-diagnostics-"
+    private static let currentSessionPrefix = temporaryDirectoryPrefix + UUID().uuidString + "-"
+
     static func exportText() -> String {
         [
-            AppDebugLogger.exportText(),
-            LightweightRuntimeDiagnostics.exportText(),
+            AppDebugLogger.exportText(newestFirst: true),
+            LightweightRuntimeDiagnostics.exportText(newestFirst: true),
             PowerUsageLogger.exportText(),
-            KeepAliveLogger.exportText(),
+            KeepAliveLogger.exportText(newestFirst: true),
             MetricKitLogger.shared.exportText()
         ].joined(separator: "\n\n==============================\n\n")
+    }
+
+    static func writeTextFile(_ text: String, in temporaryDirectory: URL = FileManager.default.temporaryDirectory) throws -> URL {
+        let directory = temporaryDirectory.appendingPathComponent(
+            currentSessionPrefix + UUID().uuidString, isDirectory: true
+        )
+        do {
+            try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+            let url = directory.appendingPathComponent("GlobalRefresh-diagnostics.txt")
+            try text.write(to: url, atomically: true, encoding: .utf8)
+            return url
+        } catch {
+            try? FileManager.default.removeItem(at: directory)
+            throw error
+        }
+    }
+
+    static func abandonedTemporaryDirectories(in entries: [URL]) -> [URL] {
+        entries.filter { url in
+            let name = url.lastPathComponent
+            guard name.hasPrefix(temporaryDirectoryPrefix), !name.hasPrefix(currentSessionPrefix) else { return false }
+            let identifier = name.dropFirst(temporaryDirectoryPrefix.count)
+            // Recognize both legacy export names and the new session-scoped names.
+            guard UUID(uuidString: String(identifier.prefix(36))) != nil else { return false }
+            let remainder = identifier.dropFirst(36)
+            guard remainder.isEmpty || (remainder.first == "-" && UUID(uuidString: String(remainder.dropFirst())) != nil) else { return false }
+            let values = try? url.resourceValues(forKeys: [.isDirectoryKey, .isSymbolicLinkKey])
+            return values?.isDirectory == true && values?.isSymbolicLink == false
+        }
     }
 }
 
 struct AppUpdateInfo {
     let version: String
+    let build: Int?
     let notes: String
     let releaseURL: URL
     let releaseNotes: [String]
     let cloudDriveURL: URL
     let githubReleasesURL: URL
 
-    var latestVersion: String { version }
+    var latestVersion: String { build.map { "\(version) (\($0))" } ?? version }
 }
 
 enum AppUpdateChecker {
     private struct Release: Decodable {
+        struct Asset: Decodable { let name: String; let state: String? }
         let tagName: String
         let body: String?
         let htmlURL: URL
         let isDraft: Bool
+        let assets: [Asset]?
 
         enum CodingKeys: String, CodingKey {
             case tagName = "tag_name"
             case body
             case htmlURL = "html_url"
             case isDraft = "draft"
+            case assets
         }
     }
 
@@ -71,10 +107,10 @@ enum AppUpdateChecker {
         return URLSession(configuration: configuration)
     }()
 
-    static func check(
+    @discardableResult static func check(
         includePrereleases: Bool = false,
         completion: @escaping (Result<AppUpdateInfo?, Error>) -> Void
-    ) {
+    ) -> URLSessionDataTask? {
         let endpoint = includePrereleases ? allReleasesAPI : latestReleaseAPI
         guard var endpointComponents = URLComponents(url: endpoint, resolvingAgainstBaseURL: false),
               let requestURL = {
@@ -84,7 +120,7 @@ enum AppUpdateChecker {
                   return endpointComponents.url
               }() else {
             DispatchQueue.main.async { completion(.failure(UpdateCheckError.invalidEndpoint)) }
-            return
+            return nil
         }
 
         var request = URLRequest(url: requestURL)
@@ -95,7 +131,7 @@ enum AppUpdateChecker {
         request.setValue("no-cache, no-store, max-age=0", forHTTPHeaderField: "Cache-Control")
         request.setValue("no-cache", forHTTPHeaderField: "Pragma")
 
-        updateSession.dataTask(with: request) { data, response, error in
+        let task = updateSession.dataTask(with: request) { data, response, error in
             let result: Result<AppUpdateInfo?, Error>
             if let error {
                 result = .failure(error)
@@ -122,9 +158,14 @@ enum AppUpdateChecker {
                     let localVersion = normalizedVersion(
                         Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "0.0.0"
                     )
-                    let update: AppUpdateInfo? = isNewer(remoteVersion, than: localVersion)
+                    let remoteBuild = publishedBuild(for: remoteVersion, assetNames: (release.assets ?? [])
+                        .filter { $0.state == nil || $0.state == "uploaded" }.map(\.name))
+                    let localBuild = Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String
+                    let update: AppUpdateInfo? = offersUpdate(version: remoteVersion, build: remoteBuild,
+                                                             localVersion: localVersion, localBuild: localBuild)
                         ? AppUpdateInfo(
                             version: remoteVersion,
+                            build: remoteBuild,
                             notes: release.body ?? "",
                             releaseURL: release.htmlURL,
                             releaseNotes: releaseNotes(from: release.body ?? ""),
@@ -143,7 +184,29 @@ enum AppUpdateChecker {
             DispatchQueue.main.async {
                 completion(result)
             }
-        }.resume()
+        }
+        task.resume()
+        return task
+    }
+
+    static func publishedBuild(for version: String, assetNames: [String]) -> Int? {
+        let prefix = "globalrefresh_\(normalizedVersion(version).lowercased())_"
+        let suffix = "_unsigned.ipa"
+        return assetNames.compactMap { name -> Int? in
+            let lower = name.lowercased()
+            guard lower.hasPrefix(prefix), lower.hasSuffix(suffix),
+                  lower.count == prefix.count + 10 + suffix.count else { return nil }
+            let digits = lower.dropFirst(prefix.count).dropLast(suffix.count)
+            guard digits.utf8.allSatisfy({ (48...57).contains($0) }) else { return nil }
+            return Int(digits)
+        }.max()
+    }
+
+    static func offersUpdate(version: String, build: Int?, localVersion: String, localBuild: String?) -> Bool {
+        if isNewer(version, than: localVersion) { return true }
+        guard normalizedVersion(version).lowercased() == normalizedVersion(localVersion).lowercased(),
+              let build, let localBuild, let installed = Int(localBuild) else { return false }
+        return build > installed
     }
 
     private static func normalizedVersion(_ value: String) -> String {
@@ -265,9 +328,12 @@ final class VersionViewController: UIViewController {
     private var isDebugPanelVisible = false
     private var debugPanelResetToken = 0
     private var isCheckingForUpdate = false
+    private var updateRequestID: UUID?
+    private var updateTask: URLSessionDataTask?
     private var hasCompletedUpdateCheck = false
     private var hasUpdateCheckFailed = false
     private var availableUpdate: AppUpdateInfo?
+    private var isExportingDiagnostics = false
     private var isBetaUpdateChannelEnabled = UserDefaults.standard.bool(forKey: betaUpdateChannelKey)
     private var keepAlivePolicy: KeepAlivePolicy {
         get { KeepAlivePolicy.current }
@@ -287,6 +353,7 @@ final class VersionViewController: UIViewController {
     }
 
     deinit {
+        updateTask?.cancel()
         NotificationCenter.default.removeObserver(self)
     }
 
@@ -318,6 +385,9 @@ final class VersionViewController: UIViewController {
             },
             onCopyDiagnosticsLog: { [weak self] in
                 self?.copyDiagnosticsLog()
+            },
+            onShareDiagnosticsLog: { [weak self] in
+                self?.requestDiagnosticsShare()
             },
             onRequestCacheCleanup: { [weak self] in
                 self?.requestCacheCleanup()
@@ -390,6 +460,9 @@ final class VersionViewController: UIViewController {
             onCopyDiagnosticsLog: { [weak self] in
                 self?.copyDiagnosticsLog()
             },
+            onShareDiagnosticsLog: { [weak self] in
+                self?.requestDiagnosticsShare()
+            },
             onRequestCacheCleanup: { [weak self] in
                 self?.requestCacheCleanup()
             },
@@ -443,6 +516,10 @@ final class VersionViewController: UIViewController {
         guard isBetaUpdateChannelEnabled != isEnabled else { return }
         isBetaUpdateChannelEnabled = isEnabled
         UserDefaults.standard.set(isEnabled, forKey: Self.betaUpdateChannelKey)
+        updateRequestID = nil
+        updateTask?.cancel()
+        updateTask = nil
+        isCheckingForUpdate = false
         availableUpdate = nil
         hasCompletedUpdateCheck = false
         hasUpdateCheckFailed = false
@@ -451,16 +528,101 @@ final class VersionViewController: UIViewController {
         checkForUpdates(presentResult: false)
     }
 
+    private var diagnosticsDetailNotice: String {
+        L10n.text(
+            "调试模式未开启，本次只能导出已有的轻量记录。需要更完整的日志，请在复现问题前开启调试模式；之前的详细日志不会补录。",
+            "Debug Mode is off. This export includes only the available lightweight records. Before reproducing the issue, turn on Debug Mode to capture more detail. Earlier details cannot be recovered."
+        )
+    }
+
     private func copyDiagnosticsLog() {
         DiagnosticsRuntimeState.recordUserAction("复制诊断日志")
-        UIPasteboard.general.string = DiagnosticsLogExporter.exportText()
+        let text = DiagnosticsLogExporter.exportText()
+        UIPasteboard.general.string = text
+        let shareAdvice = L10n.text("最新事件排在前面。聊天粘贴可能截断长日志，建议分享TXT文件；发送前请检查个人信息。", "Newest events appear first. Chat apps may truncate pasted logs; share the TXT file instead. Check for personal information before sending.")
         let alert = UIAlertController(
             title: L10n.text("诊断日志已复制", "Diagnostics Copied"),
-            message: L10n.text("可以直接粘贴发送给开发者", "You can paste it directly to the developer."),
+            message: isDebugModeEnabled ? shareAdvice : diagnosticsDetailNotice + "\n\n" + shareAdvice,
             preferredStyle: .alert
         )
+        alert.addAction(UIAlertAction(title: L10n.text("分享TXT", "Share TXT"), style: .default) { [weak self] _ in
+            self?.shareDiagnosticsLog(text)
+        })
         alert.addAction(UIAlertAction(title: L10n.ok, style: .default))
         present(alert, animated: true)
+    }
+
+    private func requestDiagnosticsShare() {
+        guard !isExportingDiagnostics else { return }
+        DiagnosticsRuntimeState.recordUserAction("快捷分享完整诊断日志")
+        if isDebugModeEnabled {
+            shareDiagnosticsLog(DiagnosticsLogExporter.exportText())
+            return
+        }
+        let alert = UIAlertController(
+            title: L10n.text("分享诊断日志", "Share Diagnostics"),
+            message: diagnosticsDetailNotice,
+            preferredStyle: .alert
+        )
+        alert.addAction(UIAlertAction(title: L10n.cancel, style: .cancel))
+        alert.addAction(UIAlertAction(title: L10n.text("继续分享", "Continue Sharing"), style: .default) { [weak self] _ in
+            self?.shareDiagnosticsLog(DiagnosticsLogExporter.exportText())
+        })
+        present(alert, animated: true)
+    }
+
+    private func shareDiagnosticsLog(_ text: String) {
+        guard !isExportingDiagnostics else { return }
+        isExportingDiagnostics = true
+        DispatchQueue.global(qos: .utility).async { [weak self] in
+            let result = Result { try DiagnosticsLogExporter.writeTextFile(text) }
+            DispatchQueue.main.async { [weak self] in
+                guard let self else {
+                    if case .success(let url) = result {
+                        try? FileManager.default.removeItem(at: url.deletingLastPathComponent())
+                    }
+                    return
+                }
+                let showResult = { [weak self] in
+                    guard let self, self.viewIfLoaded?.window != nil,
+                          self.presentedViewController == nil else {
+                        self?.isExportingDiagnostics = false
+                        if case .success(let url) = result {
+                            try? FileManager.default.removeItem(at: url.deletingLastPathComponent())
+                        }
+                        return
+                    }
+                    switch result {
+                    case .success(let url):
+                        let activity = UIActivityViewController(activityItems: [url], applicationActivities: nil)
+                        activity.popoverPresentationController?.sourceView = self.view
+                        activity.popoverPresentationController?.sourceRect = CGRect(
+                            x: self.view.bounds.midX, y: self.view.bounds.midY, width: 1, height: 1
+                        )
+                        activity.popoverPresentationController?.permittedArrowDirections = []
+                        activity.completionWithItemsHandler = { [weak self] _, _, _, _ in
+                            self?.isExportingDiagnostics = false
+                            try? FileManager.default.removeItem(at: url.deletingLastPathComponent())
+                        }
+                        self.present(activity, animated: true)
+                    case .failure(let error):
+                        self.isExportingDiagnostics = false
+                        let alert = UIAlertController(
+                            title: L10n.text("日志导出失败", "Log Export Failed"),
+                            message: error.localizedDescription,
+                            preferredStyle: .alert
+                        )
+                        alert.addAction(UIAlertAction(title: L10n.ok, style: .default))
+                        self.present(alert, animated: true)
+                    }
+                }
+                if let presented = self.presentedViewController {
+                    presented.dismiss(animated: true, completion: showResult)
+                } else {
+                    showResult()
+                }
+            }
+        }
     }
 
     private func requestCacheCleanup() {
@@ -468,8 +630,8 @@ final class VersionViewController: UIViewController {
         let alert = UIAlertController(
             title: L10n.text("清理缓存", "Clear Cache"),
             message: L10n.text(
-                "将清理临时素材、过期缓存和生成的视频缓存，不会删除应用设置。",
-                "This removes temporary assets, expired cache entries, and generated video cache. App settings are kept."
+                "将清理临时素材、过期缓存、生成的视频缓存、近期关键日志和详细调试日志，不会删除应用设置。建议先分享需要排查的日志。",
+                "This removes temporary assets, expired and generated video cache, recent key events and detailed debug logs. App settings are kept. Share any logs you need before clearing."
             ),
             preferredStyle: .alert
         )
@@ -478,10 +640,10 @@ final class VersionViewController: UIViewController {
             CacheCleanupManager.clearManually { [weak self] report in
                 let message = report.hasChanges
                     ? L10n.text(
-                        "已清理 \(report.removedItems) 项，释放约 \(ByteCountFormatter.string(fromByteCount: report.freedBytes, countStyle: .file))。",
-                        "Removed \(report.removedItems) item(s), freeing about \(ByteCountFormatter.string(fromByteCount: report.freedBytes, countStyle: .file))."
+                        "已清理缓存 \(report.removedItems) 项，释放约 \(ByteCountFormatter.string(fromByteCount: report.freedBytes, countStyle: .file))。近期关键日志和详细调试日志已清理。",
+                        "Removed \(report.removedItems) cache item(s), freeing about \(ByteCountFormatter.string(fromByteCount: report.freedBytes, countStyle: .file)). Recent key events and detailed debug logs were cleared."
                     )
-                    : L10n.text("没有发现可清理的缓存。", "No removable cache was found.")
+                    : L10n.text("没有发现可清理的缓存；近期关键日志和详细调试日志已清理。", "No removable cache was found. Recent key events and detailed debug logs were cleared.")
                 let result = UIAlertController(
                     title: L10n.text("清理完成", "Cache Cleared"),
                     message: message,
@@ -534,8 +696,12 @@ final class VersionViewController: UIViewController {
             presentResult ? "手动检查应用更新" : "进入版本页自动检查更新"
         )
 
-        AppUpdateChecker.check(includePrereleases: isBetaUpdateChannelEnabled) { [weak self] result in
-            guard let self else { return }
+        let requestID = UUID()
+        updateRequestID = requestID
+        updateTask = AppUpdateChecker.check(includePrereleases: isBetaUpdateChannelEnabled) { [weak self] result in
+            guard let self, self.updateRequestID == requestID else { return }
+            self.updateRequestID = nil
+            self.updateTask = nil
             self.isCheckingForUpdate = false
 
             switch result {
@@ -632,6 +798,7 @@ final class VersionViewController: UIViewController {
             MetricKitLogger.shared.resetLogs()
             PowerUsageLogger.resetStatistics()
         }
+        AppDebugLogger.logRuntime(isEnabled ? "调试模式已开启；轻量关键日志保留" : "调试模式已关闭；继续保存轻量关键日志，不启用详细性能采样")
         updateSwiftUI()
     }
 
@@ -639,7 +806,7 @@ final class VersionViewController: UIViewController {
         DiagnosticsRuntimeState.recordUserAction("请求开启调试模式")
         let alert = UIAlertController(
             title: L10n.text("打开调试模式可能引发不稳定因素，请谨慎开启", "Debug mode may introduce instability. Enable with care."),
-            message: nil,
+            message: L10n.text("开启后才会记录更完整的性能与诊断日志。请在复现问题前开启，导出后可关闭。", "Enabling Debug Mode starts recording more detailed performance and diagnostic logs. Enable it before reproducing the issue, then turn it off after exporting."),
             preferredStyle: .alert
         )
         alert.addAction(UIAlertAction(title: L10n.cancel, style: .cancel) { [weak self] _ in
@@ -667,10 +834,35 @@ final class VersionViewController: UIViewController {
 struct AppChangelogSection {
     let version: String
     let items: [String]
+    var starredItemCount = 0
+
+    var displayItems: [String] {
+        items.enumerated().map { index, item in
+            index < starredItemCount ? "* \(item)" : item
+        }
+    }
 }
 
 enum AppChangelogCatalog {
     static var latest: AppChangelogSection {
+        AppChangelogSection(
+            version: L10n.text("1.1.2（26.11.20）", "1.1.2 (2026.11.20)"),
+            items: [
+                L10n.text("修复 iOS 16 及以上悬浮窗关闭按钮偶尔重新出现的问题（即屏幕中间的水滴图标）", "Fixed the PiP close control occasionally reappearing on iOS 16 and later (the droplet icon in the center of the screen)."),
+                L10n.text("修复部分 iOS 15 设备无法启动悬浮窗的问题，恢复原生启动流程", "Restored the native startup flow to fix PiP failing to start on some iOS 15 devices."),
+                L10n.text("优化画中画并存，增加当前会话内的检查和有限补试；系统暂时挂起悬浮窗时，不再误判为关闭", "Improved PiP coexistence with session-scoped checks and limited retries. Temporary system suspension is no longer treated as closure."),
+                L10n.text("默认 VideoCall 与仅 PiP 保活组合的内容更新由 60fps 调整为 30fps，减少后台刷新开销", "Reduced content updates from 60 fps to 30 fps for the default VideoCall and PiP-only combination to lower background refresh overhead."),
+                L10n.text("优化小屏首页布局，避免启动按钮被底栏遮挡", "Adjusted the Home layout on smaller displays so the tab bar does not cover the start button."),
+                L10n.text("新增当前 App 的运存和线程数显示", "Added a display for the app's memory usage and thread count."),
+                L10n.text("修复线程统计资源未释放、离开帧率演示页后刷新驱动未清理的问题；PlayerLayer 兼容方案改为在后台准备视频素材，避免阻塞界面", "Fixed resource cleanup for thread sampling and the frame-rate demo. PlayerLayer now prepares video in the background to avoid blocking the interface."),
+                L10n.text("支持导出和分享诊断日志；减少日志重复写盘，覆盖更新后保留已有退出记录和系统诊断", "Export and share diagnostics. Reduced repeated writes and preserved exit records and system diagnostics across upgrades."),
+                L10n.text("优化快捷指令链接识别，保留原有入口；修复切换更新渠道时可能显示旧结果的问题，支持检测同版本的新构建", "Improved shortcut link validation without removing existing entry points. Fixed stale results when switching update channels and added detection of newer builds of the same version.")
+            ],
+            starredItemCount: 2
+        )
+    }
+
+    static var version111: AppChangelogSection {
         AppChangelogSection(
             version: L10n.text("1.1.1（26.10.9）", "1.1.1 (2026.10.9)"),
             items: [
@@ -686,40 +878,8 @@ enum AppChangelogCatalog {
                 L10n.text("帧率演示的120Hz开关仅改变App前台页面和动画的刷新请求，关闭后按旧正式版请求最高80Hz，不再更改后台悬浮窗的刷新与播放策略；实际帧率仍由系统决定", "The Frame Rate Demo 120 Hz switch changes foreground page and animation refresh requests only. Turning it off requests up to 80 Hz as in earlier releases without changing background PiP refresh or playback policy. Actual frame rate remains system-managed."),
                 L10n.text("新增默认悬浮窗方案升级演示，优化首次显示与重播动画，并同步常见问题说明", "Added a default PiP upgrade demo, improved its initial display and replay, and updated the FAQ."),
                 L10n.text("默认方案优化适用于iOS15-27的VideoCall与仅PiP保活组合；并存、熄屏及高刷效果仍依赖系统、设备与前台App，其他模式保留兼容流程", "The improved default applies to VideoCall with PiP-only keep-alive on iOS 15-27. Coexistence, auto-lock and higher refresh still depend on the system, device and foreground app; other modes retain their compatibility flows.")
-            ]
-        )
-    }
-
-    static var version111Beta3: AppChangelogSection {
-        AppChangelogSection(
-            version: L10n.text("1.1.1beta3（26.10.8）", "1.1.1beta3 (2026.10.8)"),
-            items: [
-                L10n.text("优化首页一键隐藏按钮：未开启时显示一键开启并隐藏，开启后显示当前方案的最小高度操作", "Improved the Home hide button: shows Start & Hide PiP when inactive and the current route's minimum-height action when active."),
-                L10n.text("精简快捷指令入口，仅保留打开并隐藏悬浮窗；已保存的旧指令继续兼容，默认方案与首页按钮保持一致", "Simplified shortcut entries to Start & Hide PiP. Previously saved actions remain compatible; the default route shares the Home button's behavior."),
-                L10n.text("统一App内120Hz开关对前台页面及动画的作用，关闭后不主动请求120Hz，由系统自适应，不改变悬浮窗内容、播放或并存策略", "Unified the in-app 120 Hz switch across foreground pages and animations. Turning it off releases the explicit 120 Hz request to the system without changing PiP content, playback or coexistence policy."),
-                L10n.text("优化默认悬浮窗方案升级演示，修复首次显示和重播时可能闪过结束画面的问题", "Improved the default PiP upgrade demo to prevent a flash of the final frame on first display or replay."),
-                L10n.text("精简升级弹窗底部说明，保留功能亮点及操作按钮", "Simplified the upgrade popup by removing its bottom explanatory text while retaining highlights and action buttons.")
-            ]
-        )
-    }
-
-    static var version111Beta2: AppChangelogSection {
-        AppChangelogSection(
-            version: L10n.text("1.1.1beta2（26.10.7）", "1.1.1beta2 (2026.10.7)"),
-            items: [
-                L10n.text("优化默认悬浮窗方案，改善部分游戏和B站弹幕卡顿，支持与其他画中画并存；需使用仅PiP保活，本次开放iOS15-27实验，当前设备已验证，iOS15-26及长期效果待测试", "Improved default PiP behavior for some games and Bilibili danmaku, with coexistence support. Requires PiP-only keep-alive; this experiment is enabled on iOS 15-27. Tested on the current device, with iOS 15-26 and long-term behavior still pending."),
-                L10n.text("优化一键0.1pt：未开启时直接启动隐藏悬浮窗，已开启时调整高度；首页、快捷指令及URL入口保持一致，其他兼容模式保留原开启流程", "Improved One-tap 0.1 pt: starts hidden PiP when inactive and adjusts height when active. Home, Shortcuts and URL entries share the same flow; compatibility modes retain their original startup behavior."),
-                L10n.text("并存切换改为悬浮窗启动成功后1秒，默认启用并移除两个实验开关；本次缩短时序仍需测试", "Coexistence is attempted 1 second after successful PiP startup, enabled by default with both experiment switches removed. The shorter delay still needs testing."),
-                L10n.text("默认方案内容保持60fps刷新，时钟保留原有白底样式、时间和网速，隐藏帧率显示并停止帧率采样；不另启旧时钟刷新器，隐藏后停止网速采样", "Default-route content stays at 60 fps. The clock retains its original white style, time and network speed, with FPS display and sampling disabled. No second clock driver is started; network sampling stops when hidden."),
-                L10n.text("修复默认方案关闭悬浮窗内容滚动后仍滚动的问题，暂停文字时保留内容刷新，不改变并存时序", "Fixed text continuing to scroll after PiP Text Scrolling was disabled on the default route. Pausing text retains content updates without changing coexistence timing."),
-                L10n.text("对齐首页、快捷指令和URL的开启与隐藏行为，修复低版本启动重试后未隐藏及过渡中隐藏动作丢失，关闭或启动失败时清理待执行动作，已运行时普通开启不改变高度", "Aligned Home, Shortcuts and URL start/hide behavior. Fixed lost hiding during startup and older-iOS retries, cleared queued actions on stop or terminal failure, and preserved height when opening an already active window."),
-                L10n.text("优化 上次关闭时间 显示逻辑", "Improved the Last Stopped time display logic."),
-                L10n.text("减少仅PiP模式的音频预加载及后台页面刷新开销，内存紧张时清理未使用的音频和诊断缓存，不销毁悬浮窗", "Reduced silent-audio preloading and background page refresh work in PiP-only mode. Memory warnings trim unused audio and diagnostic caches without destroying PiP."),
-                L10n.text("补充轻量运行记录和系统诊断，便于排查异常中断；关闭调试模式时仍保留有限的低频记录，不强行判断唯一原因", "Added lightweight runtime records and system diagnostics for unexpected interruptions. Limited low-frequency records remain with Debug Mode off; no single termination cause is assumed."),
-                L10n.text("适配iPhone Duo布局 进行了界面调整", "Adjusted the interface layout for iPhone Duo."),
-                L10n.text("帧率演示的120Hz开关仅改变App前台页面的刷新请求，不再更改后台悬浮窗的刷新与播放策略；实际帧率仍由系统决定", "The Frame Rate Demo 120 Hz switch changes foreground app refresh requests only, without changing background PiP refresh or playback policy. Actual frame rate remains system-managed."),
-                L10n.text("beta兼容实验：将默认VideoCall内容更新与画中画并存路径开放至iOS15-27；需使用仅PiP保活，iOS15-26的启动、高刷、弹幕与熄屏效果待实测，不支持所需系统接口时取消实验启动，其他模式保留原流程", "Beta compatibility experiment: enabled the default VideoCall content-update and PiP coexistence path on iOS 15-27 with PiP-only keep-alive. Startup, higher refresh, danmaku and auto-lock on iOS 15-26 need device testing; startup is canceled if required system interfaces are unsupported. Other modes retain their previous flow.")
-            ]
+            ],
+            starredItemCount: 3
         )
     }
 
@@ -1007,9 +1167,9 @@ final class LatestChangelogViewController: UIViewController {
                 items.addArrangedSubview(row)
             }
         } else {
-            for (index, item) in AppChangelogCatalog.latest.items.enumerated() {
+            for item in AppChangelogCatalog.latest.displayItems {
                 let label = UILabel()
-                label.text = index < 3 ? "* \(item)" : item
+                label.text = item
                 label.font = .systemFont(ofSize: 15, weight: .semibold)
                 label.textColor = .secondaryLabel
                 label.numberOfLines = 0
@@ -1122,7 +1282,8 @@ final class ChangelogViewController: UIViewController {
         titleLabel.numberOfLines = 1
 
         let stackView = UIStackView(arrangedSubviews: [
-            makeSection(section: AppChangelogCatalog.latest, showsAsterisks: true),
+            makeSection(section: AppChangelogCatalog.latest),
+            makeSection(section: AppChangelogCatalog.version111),
             makeSection(section: AppChangelogCatalog.version110Fix),
             makeSection(section: AppChangelogCatalog.version110),
             makeSection(
@@ -1248,11 +1409,8 @@ final class ChangelogViewController: UIViewController {
         }
     }
 
-    private func makeSection(section: AppChangelogSection, showsAsterisks: Bool = false) -> UIView {
-        let items = showsAsterisks ? section.items.enumerated().map { index, item in
-            index < 3 ? "* \(item)" : item
-        } : section.items
-        return makeSection(version: section.version, items: items)
+    private func makeSection(section: AppChangelogSection) -> UIView {
+        makeSection(version: section.version, items: section.displayItems)
     }
 
     private func makeSection(version: String, items: [String]) -> UIView {

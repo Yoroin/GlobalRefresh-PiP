@@ -163,11 +163,8 @@ enum PiPShortcutActionCenter {
         guard let rawValue = defaults.string(forKey: pendingActionKey) else { return nil }
         let timestamp = defaults.double(forKey: pendingActionTimestampKey)
         guard timestamp > 0 else {
-            guard PiPShortcutAction(rawValue: rawValue) != nil else {
-                discardPendingAction(defaults: defaults, reason: "missing timestamp", shouldRemove: shouldRemoveExpired)
-                return nil
-            }
-            return rawValue
+            discardPendingAction(defaults: defaults, reason: "missing timestamp", shouldRemove: shouldRemoveExpired)
+            return nil
         }
 
         let age = Date().timeIntervalSince1970 - timestamp
@@ -197,7 +194,7 @@ enum PiPShortcutActionCenter {
             supportedURLSchemes.contains(scheme),
             let action = action(from: url)
         else {
-            AppDebugLogger.log("Shortcut URL ignored: \(url.absoluteString)")
+            AppDebugLogger.log("Shortcut URL ignored: unsupported or ambiguous format")
             return false
         }
 
@@ -205,24 +202,23 @@ enum PiPShortcutActionCenter {
     }
 
     private static func action(from url: URL) -> PiPShortcutAction? {
-        var tokens = ([url.host] + url.pathComponents)
-            .compactMap { $0 }
-            .map { $0.trimmingCharacters(in: CharacterSet(charactersIn: "/")).lowercased() }
-            .filter { !$0.isEmpty && $0 != "shortcut" }
-
-        if let components = URLComponents(url: url, resolvingAgainstBaseURL: false) {
-            let queryTokens = (components.queryItems ?? []).flatMap { item -> [String] in
-                [item.name, item.value].compactMap { $0 }
-            }
-            tokens.append(contentsOf: queryTokens)
+        guard url.absoluteString.utf8.count <= 1024,
+              let parts = URLComponents(url: url, resolvingAgainstBaseURL: false),
+              parts.user == nil, parts.password == nil, parts.port == nil, parts.fragment == nil else { return nil }
+        var route = ([parts.host].compactMap { $0 }.filter { !$0.isEmpty }
+            + parts.percentEncodedPath.split(separator: "/").map(String.init)).map { $0.lowercased() }
+        if route.first == "shortcut" { route.removeFirst() }
+        let token: String
+        if parts.percentEncodedQuery != nil {
+            guard route.isEmpty, let items = parts.queryItems, items.count == 1,
+                  ["intent", "action"].contains(items[0].name.lowercased()),
+                  let value = items[0].value else { return nil }
+            token = value
+        } else {
+            guard route.count == 1 else { return nil }
+            token = route[0]
         }
-
-        if let fragment = url.fragment, !fragment.isEmpty {
-            tokens.append(fragment)
-        }
-
-        for token in tokens.reversed() {
-            switch normalizedActionToken(token) {
+        switch normalizedActionToken(token) {
             case "start", "open", "enable", "openfloatingwindow", "startfloatingwindow":
                 return .startFloatingWindow
             case "hide", "hidden", "shrink", "hidefloatingwindow", "shrinkfloatingwindow":
@@ -230,10 +226,8 @@ enum PiPShortcutActionCenter {
             case "starthide", "startandhide", "openhide", "openandhide", "startandhidefloatingwindow", "openandhidefloatingwindow":
                 return .startAndHideFloatingWindow
             default:
-                continue
-            }
+                return nil
         }
-        return nil
     }
 
     private static func normalizedActionToken(_ token: String) -> String {

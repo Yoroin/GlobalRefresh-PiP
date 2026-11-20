@@ -194,6 +194,12 @@ final class MainTabBarController: UITabBarController, UITabBarControllerDelegate
         NotificationCenter.default.addObserver(
             self,
             selector: #selector(handleEngineRuntimeModeChange),
+            name: PiPRefreshRequestTrial.didChangeNotification,
+            object: nil
+        )
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(handleEngineRuntimeModeChange),
             name: PiPHiddenReferenceMode.didChangeNotification,
             object: nil
         )
@@ -368,8 +374,17 @@ final class MainTabBarController: UITabBarController, UITabBarControllerDelegate
         refreshDisplayLink?.invalidate()
         refreshDisplayLink = nil
 
-        // The visible demo owns its page-only refresh request; background PiP is unchanged.
-        guard UIApplication.shared.applicationState != .active || selectedIndex != 1 else { return }
+        if PiPVisibilityRefreshPolicy.pauseExtraBackgroundDriver,
+           PiPRefreshRequestTrial.shouldPauseBackgroundDriver(
+               eligible: (viewControllers?.first as? ViewController)?.isRefreshRequestTrialEligible == true,
+               isBackground: UIApplication.shared.applicationState != .active,
+               visibilityPause: (viewControllers?.first as? ViewController)?.shouldPauseBackgroundRefreshForVisibilityTrial == true
+           ) {
+            AppDebugLogger.logCritical("Refresh trial background driver APPLIED: stopped for visibility; content updates retained; \(PiPRefreshRequestTrial.summary); foreground refresh preference unchanged")
+            return
+        }
+
+        // Keep the foreground request consistent on every tab, including the demo.
         let isPlayerLayerRouteEnabled = UserDefaults.standard.bool(forKey: "pip.home.playerLayerRouteEnabled")
         let isExtremeSilentModeEnabled = UserDefaults.standard.bool(forKey: "pip.home.extremeSilentModeEnabled")
         guard UIApplication.shared.applicationState == .active || (!isPlayerLayerRouteEnabled && !isExtremeSilentModeEnabled) else {
@@ -381,7 +396,11 @@ final class MainTabBarController: UITabBarController, UITabBarControllerDelegate
         configureRefreshDriver(displayLink)
         if UIApplication.shared.applicationState == .active {
             let request = DemoFrameRatePreference.isHighRefreshEnabled ? "120Hz" : "80Hz (released OFF policy, hardware capped)"
-            AppDebugLogger.log("Foreground App refresh request: \(request); actual display refresh remains system-managed; PiP preferences unchanged")
+            AppDebugLogger.logRuntime("Foreground App refresh request: \(request); tab=\(selectedIndex), applies to all foreground tabs; actual display refresh remains system-managed; PiP preferences unchanged")
+        } else if requestsTrialBackground120 {
+            AppDebugLogger.logRuntime("Refresh trial background driver APPLIED: strict120, range=\(displayLink.preferredFrameRateRange); \(PiPRefreshRequestTrial.summary); system effect unverified")
+        } else if usesIOS15NativeContentRefresh {
+            AppDebugLogger.logCritical("Native startup background refresh: no preferredFrameRateRange/preferredFramesPerSecond assignment; original VideoCall host content policy: \(PiPRefreshRequestTrial.summary); coexistence is negotiated separately after didStart and requires system verification")
         } else if PiPHiddenReferenceMode.suppressesStrictRefreshRequest {
             AppDebugLogger.logCritical("Hidden reference beta refresh policy: fresh DisplayLink kept on common run loop; no preferredFrameRateRange/preferredFramesPerSecond assignment; high-refresh opt-in retained; 120Hz effect unverified")
         } else if PiPHiddenReferenceMode.suppressesRefreshDriver {
@@ -390,6 +409,10 @@ final class MainTabBarController: UITabBarController, UITabBarControllerDelegate
         // Use the 1.0.7 driver mode for every supported iOS version; hidden 0.1 pt PiP depends on this driver more than visible PiP content.
         displayLink.add(to: .main, forMode: .common)
         refreshDisplayLink = displayLink
+        if UIApplication.shared.applicationState != .active,
+           (viewControllers?.first as? ViewController)?.isRefreshRequestTrialEligible == true {
+            AppDebugLogger.logRuntime("Refresh trial background driver RUNNING: preferredFPS=\(displayLink.preferredFramesPerSecond), range=\(displayLink.preferredFrameRateRange); \(PiPRefreshRequestTrial.summary); requests/callbacks are not measured system FPS")
+        }
     }
 
     private func stopRefreshDriver(reason: String) {
@@ -543,13 +566,28 @@ final class MainTabBarController: UITabBarController, UITabBarControllerDelegate
     @objc private func stepRefreshDriver() {
     }
 
+    private var usesIOS15NativeContentRefresh: Bool {
+        (viewControllers?.first as? ViewController)?.usesIOS15NativeContentRefresh == true
+    }
+
+    private var requestsTrialBackground120: Bool {
+        PiPRefreshRequestTrial.requestsBackground120(
+            eligible: (viewControllers?.first as? ViewController)?.isRefreshRequestTrialEligible == true
+        )
+    }
+
     private func configureRefreshDriver(_ displayLink: CADisplayLink) {
         if UIApplication.shared.applicationState == .active {
             DemoFrameRatePreference.configureForegroundRequest(displayLink)
             return
         }
+        if requestsTrialBackground120 {
+            let target = Float(min(120, UIScreen.main.maximumFramesPerSecond))
+            displayLink.preferredFrameRateRange = CAFrameRateRange(minimum: target, maximum: target, preferred: target)
+            return
+        }
         // Session changes recreate the link, so the experiment never inherits a strict range.
-        guard !PiPHiddenReferenceMode.suppressesStrictRefreshRequest else { return }
+        guard !usesIOS15NativeContentRefresh, !PiPHiddenReferenceMode.suppressesStrictRefreshRequest else { return }
         let maximumFramesPerSecond = UIScreen.main.maximumFramesPerSecond
         let requested = PiPHiddenReferenceMode.suppressesRefreshDriver ? 120 : FrameRatePreference.targetFrameRate
         let targetFramesPerSecond = min(requested, maximumFramesPerSecond)

@@ -5,7 +5,7 @@
 # 全局高刷悬浮窗
 
 <h3>
-  简体中文 | <a href="README_EN.md">English</a> | <a href="DEVELOPMENT_PRD.md">开发文档 PRD</a> | <a href="DEVELOPMENT_PRD_EN.md">Development Document PRD</a>
+  简体中文 | <a href="README_EN.md">English</a> | <a href="docs/IMPLEMENTATION.md">开发实现说明</a> | <a href="docs/IMPLEMENTATION_EN.md">Implementation Guide</a>
 </h3>
 
 > 基于 [CaiWanFeng/PiP](https://github.com/CaiWanFeng/PiP) 继续开发，完善：[Yoroin](http://www.coolapk.com/u/3233328)。
@@ -107,8 +107,6 @@ let pipController = AVPictureInPictureController(contentSource: contentSource)
 - `pip_swift/pip_swift/PiPShortcutIntents.swift`：原生快捷指令入口
 - `pip_swift/pip_swift/FrameRateTestTabBarController.swift`：App 前台帧率演示
 
-旧版开发文档中的固定 120Hz 说明也需要按此范围同步修订，不应把“刷新内容”描述为跨系统保证有效的公开解锁 API。
-
 ## 自签安装
 
 项目导出的通用未签名 IPA 可通过以下工具自行签名安装：
@@ -121,6 +119,18 @@ let pipController = AVPictureInPictureController(contentSource: contentSource)
 请使用自己的 Apple ID、证书或设备环境完成签名安装。
 
 ## 版本日志
+
+### 1.1.2（26.11.20）
+
+- \* 修复 iOS 16 及以上悬浮窗关闭按钮偶尔重新出现的问题（即屏幕中间的水滴图标）
+- \* 修复部分 iOS 15 设备无法启动悬浮窗的问题，恢复原生启动流程
+- 优化画中画并存，增加当前会话内的检查和有限补试；系统暂时挂起悬浮窗时，不再误判为关闭
+- 默认 VideoCall 与仅 PiP 保活组合的内容更新由 60fps 调整为 30fps，减少后台刷新开销
+- 优化小屏首页布局，避免启动按钮被底栏遮挡
+- 新增当前 App 的运存和线程数显示
+- 修复线程统计资源未释放、离开帧率演示页后刷新驱动未清理的问题；PlayerLayer 兼容方案改为在后台准备视频素材，避免阻塞界面
+- 支持导出和分享诊断日志；减少日志重复写盘，覆盖更新后保留已有退出记录和系统诊断
+- 优化快捷指令链接识别，保留原有入口；修复切换更新渠道时可能显示旧结果的问题，支持检测同版本的新构建
 
 ### 1.1.1（26.10.9）
 
@@ -237,7 +247,7 @@ let pipController = AVPictureInPictureController(contentSource: contentSource)
 
 ## 调试日志
 
-关于页提供“调试模式”开关。开启后可以复制最近运行日志，方便定位：
+版本页可以复制、导出和分享诊断日志。调试模式默认关闭，轻量关键日志最多保留两份，每份 4 MB，满后自动淘汰旧文件。需要更详细的性能和系统诊断时，请在复现问题前开启调试模式，之前的详细日志不会补录。诊断日志可辅助定位：
 
 - 悬浮窗是否成功准备
 - 系统是否允许开启画中画
@@ -245,7 +255,7 @@ let pipController = AVPictureInPictureController(contentSource: contentSource)
 - 音频中断与恢复
 - 低版本 iOS 兼容分支状态
 
-日志仅保存在本机，不会联网上传。用户主动点击复制后，才会写入剪贴板。
+日志仅保存在本机，不会自动上传。分享前请检查并遮盖个人信息。
 
 ## 致谢与署名
 
