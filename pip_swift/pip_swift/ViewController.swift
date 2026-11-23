@@ -2073,7 +2073,8 @@ class ViewController: UIViewController, AVPictureInPictureControllerDelegate {
             } else {
                 if usesIOS15NativeContentRefresh {
                     pipController = PiPHiddenReferenceControls.makeNativeController(
-                        source: contentSource, systemMajorVersion: ProcessInfo.processInfo.operatingSystemVersion.majorVersion)
+                        source: contentSource, systemMajorVersion: ProcessInfo.processInfo.operatingSystemVersion.majorVersion,
+                        onRetainedControls: pipCoexistenceExperiment.trackRetainedControlsAdapter)
                 } else {
                     pipController = AVPictureInPictureController(contentSource: contentSource)
                 }
@@ -3182,9 +3183,12 @@ class ViewController: UIViewController, AVPictureInPictureControllerDelegate {
     }
 
     private func updatePiPAutomaticStartPolicy() {
-        if #available(iOS 14.2, *) {
-            pipController?.canStartPictureInPictureAutomaticallyFromInline = wantsPiPActive
+        guard #available(iOS 14.2, *), let pipController else { return }
+        if wantsPiPActive, !isStoppingPiP, !pipController.isPictureInPictureActive, usesIOS15NativeContentRefresh {
+            pipCoexistenceExperiment.prepareControlsBeforeNativeStart(
+                controller: pipController, systemMajorVersion: ProcessInfo.processInfo.operatingSystemVersion.majorVersion)
         }
+        pipController.canStartPictureInPictureAutomaticallyFromInline = wantsPiPActive
     }
 
     private func beginPiPTransition(expectedActive: Bool, reason: String) {
@@ -3368,6 +3372,7 @@ class ViewController: UIViewController, AVPictureInPictureControllerDelegate {
 
     private func handleOwnPiPInvalidated(reason: String) {
         endHiddenReferenceDriverSuppression()
+        pipCoexistenceExperiment.clearMaintainedControls()
         shouldHidePiPAfterShortcutStart = false
         cancelShortcutPiPStartRetry()
         let hadOwnSession = isOwnPiPConfirmedActive || pipRuntimeStartedAt != nil

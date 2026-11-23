@@ -237,18 +237,20 @@ enum PiPHiddenReferenceControls {
             && supportsMaintainedHiding(systemMajorVersion: systemMajorVersion)
     }
 
-    static func makeNativeController(source: AVPictureInPictureController.ContentSource, systemMajorVersion: Int) -> AVPictureInPictureController? {
+    static func makeNativeController(source: AVPictureInPictureController.ContentSource, systemMajorVersion: Int,
+                                     onRetainedControls: ((NSObject) -> Void)? = nil) -> AVPictureInPictureController? {
         if hidesDuringNativeConstruction(systemMajorVersion: systemMajorVersion) {
-            // Restore released iOS16+ control initialization without installing an early content-type provider.
-            if let styled = makeController(source: source) { return styled }
+            // Keep the same adapter hidden through startup without installing an early content-type provider.
+            if let styled = makeController(source: source, onRetainedControls: onRetainedControls) { return styled }
             AppDebugLogger.logCritical("PiP construction styling unavailable; using native controller")
         }
         return AVPictureInPictureController(contentSource: source)
     }
 
-    static func makeController(source: AVPictureInPictureController.ContentSource) -> AVPictureInPictureController? {
+    static func makeController(source: AVPictureInPictureController.ContentSource,
+                               onRetainedControls: ((NSObject) -> Void)? = nil) -> AVPictureInPictureController? {
         guard let adapterClass = NSClassFromString("AVPictureInPicturePlatformAdapter") else { return nil }
-        return withPolicy(adapterClass: adapterClass, make: {
+        return withPolicy(adapterClass: adapterClass, onRetainedControls: onRetainedControls, make: {
             AVPictureInPictureController(contentSource: source)
         }, adapter: { controller in
             guard let cls = object_getClass(controller),
@@ -258,7 +260,8 @@ enum PiPHiddenReferenceControls {
         })
     }
 
-    static func withPolicy<T>(adapterClass: AnyClass, make: () -> T, adapter: (T) -> NSObject?) -> T? {
+    static func withPolicy<T>(adapterClass: AnyClass, onRetainedControls: ((NSObject) -> Void)? = nil,
+                              make: () -> T, adapter: (T) -> NSObject?) -> T? {
         precondition(Thread.isMainThread)
         guard construction == nil, install(adapterClass: adapterClass) else {
             AppDebugLogger.logCritical("Hidden reference controls unavailable: unsupported signature or nested construction; startup canceled")
@@ -273,8 +276,12 @@ enum PiPHiddenReferenceControls {
             AppDebugLogger.logCritical("Hidden reference controls NOT applied: no matching adapter captured during construction; startup canceled")
             return nil
         }
-        clear(adapter: captured)
-        AppDebugLogger.logCritical("Hidden reference controls applied DURING construction: _proxyControlsStyle=5, hits=\(context.hits); override RELEASED after construction; native content type unchanged by controls policy; animation/controls require device validation")
+        if let onRetainedControls {
+            onRetainedControls(captured)
+        } else {
+            clear(adapter: captured)
+        }
+        AppDebugLogger.logCritical("Hidden reference controls applied DURING construction: _proxyControlsStyle=5, hits=\(context.hits), retainedThroughStart=\(onRetainedControls != nil); native content type unchanged; on-screen controls require device validation")
         return value
     }
 
@@ -1014,6 +1021,26 @@ final class PiPCoexistenceExperiment {
         return true
     }
 
+    func trackRetainedControlsAdapter(_ candidate: NSObject) {
+        guard maintainedControlsAdapter !== candidate else { return }
+        clearMaintainedControls()
+        maintainedControlsAdapter = candidate
+    }
+
+    @discardableResult
+    func prepareControlsBeforeNativeStart(controller: AVPictureInPictureController, systemMajorVersion: Int) -> Bool {
+        guard Thread.isMainThread,
+              PiPHiddenReferenceControls.hidesDuringNativeConstruction(systemMajorVersion: systemMajorVersion),
+              !controller.isPictureInPictureActive,
+              let candidate = Self.object(controller, selector: "platformAdapter") else { return false }
+        if maintainedControlsAdapter === candidate { return true }
+        guard PiPHiddenReferenceControls.maintainHidden(adapter: candidate) else { return false }
+        trackRetainedControlsAdapter(candidate)
+        // Do not access the lazy proxy before the system starts PiP.
+        AppDebugLogger.logCritical("PiP controls hiding prepared BEFORE native start: adapter scoped; no proxy or playback-state write")
+        return true
+    }
+
     func maintainControlsHidden(controller: AVPictureInPictureController, systemMajorVersion: Int, resubmitAfterTransition: Bool = false) -> Bool {
         guard Thread.isMainThread,
               PiPHiddenReferenceControls.supportsMaintainedHiding(systemMajorVersion: systemMajorVersion),
@@ -1029,12 +1056,9 @@ final class PiPCoexistenceExperiment {
             AppDebugLogger.logCritical("PiP proxy controls hiding skipped: unsupported setter signature; native controller unchanged")
             return false
         }
-        if let previous = maintainedControlsAdapter, previous !== candidate {
-            PiPHiddenReferenceControls.clear(adapter: previous)
-        }
         let applied = PiPHiddenReferenceControls.maintainHidden(adapter: candidate)
         guard applied else { return false }
-        maintainedControlsAdapter = candidate
+        trackRetainedControlsAdapter(candidate)
         let getterIMP = unsafeBitCast(method_getImplementation(getter), to: IntegerGetter.self)
         let getterSelector = NSSelectorFromString("controlsStyle")
         let before = getterIMP(candidateProxy, getterSelector)

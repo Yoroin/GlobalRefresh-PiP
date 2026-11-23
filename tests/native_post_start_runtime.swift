@@ -18,7 +18,44 @@ private final class OtherStyleController: AVPictureInPictureController {
 @main
 struct NativePostStartTests {
     static func pump(_ seconds: Double) { RunLoop.main.run(until: Date().addingTimeInterval(seconds)) }
+
+    static func checkControlsBeforeFirstFrame() {
+        let adapter = PCEMakeAdapter()!
+        let sibling = PCEMakeAdapter()!
+        let proxy = PCEMakeProxy(4)!
+        PCESetDelegate(proxy, adapter)
+        let controller = AVPictureInPictureController(contentSource: .init())
+        controller.platformAdapter = adapter
+        let trial = PiPCoexistenceExperiment()
+        let constructed = PiPHiddenReferenceControls.withPolicy(
+            adapterClass: object_getClass(adapter)!,
+            onRetainedControls: trial.trackRetainedControlsAdapter, make: { () -> NSObject in
+                precondition(PCEControlsStyle(adapter) == 5)
+                return adapter
+            }, adapter: { $0 })
+        precondition(constructed === adapter && PCEControlsStyle(adapter) == 5)
+        precondition(PCEControlsStyle(sibling) == 2)
+        precondition(!controller.isPictureInPictureActive, "Construction retains hiding before PiP starts")
+
+        trial.restore()
+        precondition(PCEControlsStyle(adapter) == 2)
+        precondition(!trial.prepareControlsBeforeNativeStart(controller: controller, systemMajorVersion: 15))
+        precondition(PCEControlsStyle(adapter) == 2, "iOS 15 keeps its native controls startup")
+        precondition(trial.prepareControlsBeforeNativeStart(controller: controller, systemMajorVersion: 16))
+        precondition(trial.prepareControlsBeforeNativeStart(controller: controller, systemMajorVersion: 27))
+        precondition(PCEControlsStyle(adapter) == 5 && PCEControlsStyle(sibling) == 2)
+        precondition(PCEType(proxy) == 4 && PCEControlsSendCount(proxy) == 0 && PCESendCount(proxy) == 0,
+                     "Preparing a reused controller must not write proxy controls or playback state before start")
+        controller.platformAdapter = sibling
+        precondition(trial.prepareControlsBeforeNativeStart(controller: controller, systemMajorVersion: 27))
+        precondition(PCEControlsStyle(adapter) == 2 && PCEControlsStyle(sibling) == 5)
+        trial.restore()
+        precondition(PCEControlsStyle(sibling) == 2)
+        print("PASS: controls remain hidden after construction, rearm before reuse, and clear on replacement or restore; iOS 15 and pre-start proxy state unchanged")
+    }
+
     static func main() {
+        checkControlsBeforeFirstFrame()
         let provider = NSSelectorFromString("pictureInPictureProxyContentType:")
         let matching = IntegerStyleController(contentSource: .init())
         let different = OtherStyleController(contentSource: .init())
